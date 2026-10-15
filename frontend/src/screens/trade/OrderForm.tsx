@@ -1,0 +1,1087 @@
+import { useEffect, useState, type ReactNode } from 'react'
+import { Num, fracWidth, fractionText, priceHint, readPrice, signSpace, stepPrice } from '../../lib/number'
+import type { MarketContext, OpenOrder, Position, ProductKind, Quote } from '../../lib/types'
+import { PENDING_TEXT, needsLeg } from '../../data/instruments'
+import type { OrderableState } from '../../data/orderable'
+import type { OrderKind, OrderResult } from '../../data/orders'
+import { fillCondsFor } from '../../data/strategyRules'
+import {
+  PRODUCT_INFO_FAILED,
+  ceilWon,
+  useProductInfo,
+  type ProductInfoEntry,
+} from '../../data/productInfo'
+
+/* 주문 폼.
+ *
+ * 매수와 매도가 대등하므로 세그먼트가 최상단 첫 컨트롤이고, 고른 쪽만 그
+ * 방향색으로 채워집니다. 실행 버튼도 같은 색이라 한 묶음으로 읽힙니다.
+ *
+ * 라벨은 입력 위가 아니라 왼쪽 열에 둡니다. 위에 쌓으면 행마다 라벨 높이가
+ * 더해져 폼이 길어집니다. 이 카드에서는 세로 길이가 곧 안전입니다.
+ *
+ * 실행 버튼은 가능수량 조회 바로 아래에 붙습니다. 창이 낮아 폼이 다 안
+ * 들어가면 입력 칸만 스크롤하고, 방향 세그먼트와 실행 버튼은 스크롤 밖에
+ * 두어 어느 창 크기에서도 보이게 합니다.
+ *
+ * 폼 자체가 시장마다 다릅니다. 국내는 체결조건이 붙고 스탑가격이 없으며,
+ * 해외는 스탑가격이 붙고 체결조건이 없습니다.
+ *
+ * 새 주문 · 정정 · 취소 세 가지 일을 한 카드가 합니다. 정정과 취소는 이미
+ * 낸 주문을 건드리는 것이라 카드 전체가 초록으로 물듭니다 — 폼 어딘가에
+ * 작은 배지 하나로 알리면, 새 주문을 내는 줄 알고 수량을 고치는 일이 납니다.
+ */
+
+export type Side = 'buy' | 'sell'
+
+/** 낸 주문에 하는 일. 새 주문이면 없습니다. */
+export type EditMode = 'amend' | 'cancel'
+
+/** 정정·취소 대상. 어느 주문에 무엇을 하는지가 늘 붙어 다닙니다. */
+export interface OrderEdit {
+  order: OpenOrder
+  mode: EditMode
+}
+
+/** 국내 주문유형. 스탑가격이 없습니다. */
+const DOMESTIC_TYPES = ['지정가', '시장가', '조건부지정가', '최유리지정가']
+/** 해외 주문유형. 뒤 둘은 스탑가격을 함께 받습니다. */
+const OVERSEAS_TYPES = ['시장가', '지정가', 'STOP-M', 'STOP-L']
+
+/* 가격 칸.
+ *
+ * 값은 숫자로 들고 다니지만 칸에는 그 품목이 부르는 대로 보여야 합니다 —
+ * 425.9 로 채워 두면 아래 표의 425.90 과 같은 값인데 다른 값처럼 읽힙니다.
+ * 그렇다고 매번 다듬어 넣으면 「425.」 처럼 치는 중인 글자가 끊깁니다.
+ * 그래서 치는 동안은 친 그대로 두고, 밖에서 값이 바뀌거나 칸을 떠날 때만
+ * 다듬습니다.
+ *
+ * **분수로 부르는 품목에서는 글자 칸입니다.** 숫자 칸은 `99'30` 을 못 받습니다 —
+ * `'` 를 치는 순간 칸이 값을 통째로 비웁니다. 대신 숫자 칸이 주던 화살표
+ * 증감을 직접 답니다. 한 번에 그 품목의 호가단위 하나입니다.
+ *
+ * **분수 칸은 칸을 떠날 때 값이 확정됩니다.** 십진 칸은 치는 대로 값이
+ * 가는데, 그건 친 글자의 앞부분이 겨냥한 값 근처라서 그렇습니다 — 425.90 을
+ * 치는 도중의 425 는 목표에서 1 도 안 떨어져 있습니다. 분수는 다릅니다:
+ * `99'32` 를 치는 도중의 `99'3` 은 99.09 라, 겨냥한 100 언저리에서 27/32
+ * 포인트 떨어진 **다른 값**입니다. 그 잔재가 주문에 남으면 안 됩니다.
+ *
+ * 못 읽은 글자는 칸에 그대로 두고 이유도 그대로 둡니다. **값은 마지막으로
+ * 받아들인 것 그대로이고 이유 줄도 안 지웁니다** — 지우면 틀린 값이 정상인
+ * 얼굴로 남습니다. 그동안 실행 단추는 막힙니다. */
+function PriceField({
+  id,
+  label,
+  value,
+  decimals,
+  fraction,
+  tick,
+  note,
+  noteWhy,
+  signed,
+  step,
+  disabled,
+  placeholder,
+  onChange,
+  onBlocked,
+}: {
+  /** 이유 줄과 이어 붙일 이름. 폼 안에서 겹치지 않아야 합니다. */
+  id: string
+  label: string
+  value: number | null
+  decimals: number
+  /** 분수로 적는 품목이면 그 분모. 있으면 칸이 분수 표기를 주고받습니다. */
+  fraction?: number | null
+  /** 그 품목의 호가단위. 분수 품목의 화살표 한 단이 이 값입니다. */
+  tick?: number | null
+  /** 값과 상관없이 늘 서는 한 줄. 지금은 **호가단위를 모를 때** 씁니다 —
+   *  못 받은 것을 말하지 않으면 사용자가 지금 눈금을 거래소 눈금으로 읽습니다. */
+  note?: string | null
+  /** 그 한 줄이 선 까닭. **서버가 낸 문장 그대로**이고, 칸이 좁아 본문에
+   *  세우지 못해 마우스를 올리면 보입니다. */
+  noteWhy?: string | null
+  /** 값이 음수로 설 수 있는 종목인가(스프레드). 칸이 음수를 받을지, 화살표가
+   *  0 아래로 갈지를 정합니다. */
+  signed: boolean
+  /** 호가단위를 모르는 시장(국내)에서 숫자 칸이 쓰는 증감 폭. */
+  step: number
+  disabled: boolean
+  placeholder?: string
+  onChange: (next: number | null) => void
+  /** 이 칸이 못 읽은 글자를 안고 있는지. 폼이 실행 단추를 막는 데 씁니다. */
+  onBlocked: (blocked: boolean) => void
+}) {
+  const format = (v: number | null) =>
+    v === null ? '' : fraction ? fractionText(v, fraction) : v.toFixed(decimals)
+  const [text, setText] = useState(() => format(value))
+  /* 못 받은 이유. 받은 순간에만 서 있습니다. */
+  const [reason, setReason] = useState<string | null>(null)
+
+  /* 밖에서 값이 바뀌면 칸도 따라갑니다. **글자가 아니라 값으로 견줍니다** —
+     같은 수를 적는 방식이 둘이라(`99'30` 과 `99.9375`) 글자로 비교하면 치는
+     족족 다시 씌워집니다. */
+  useEffect(() => {
+    setText((current) => {
+      const read = readPrice(current, fraction, tick, signed)
+      return read.state === 'ok' && read.value === value ? current : format(value)
+    })
+    setReason(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, decimals, fraction, tick])
+
+  /* 못 읽은 글자를 안고 있는 동안은 폼이 실행을 막습니다. 칸이 사라질 때는
+     막을 이유도 사라지므로 풀어 줍니다 — 주문유형을 바꿔 스탑가격 칸이
+     없어졌는데 그 칸 때문에 못 내는 상태가 남으면 안 됩니다. */
+  useEffect(() => {
+    onBlocked(reason !== null)
+    return () => onBlocked(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reason])
+
+  /** 분수 칸은 칸을 떠날 때 확정합니다. 십진 칸만 치는 대로 값이 갑니다. */
+  const live = !fraction
+
+  const apply = (raw: string) => {
+    setText(raw)
+    const read = readPrice(raw, fraction, tick, signed)
+    setReason(read.state === 'bad' ? read.reason : null)
+    if (!live) return
+    if (read.state === 'ok') onChange(read.value)
+    else if (read.state === 'empty') onChange(null)
+  }
+
+  /* 칸을 떠날 때. 읽히면 그때 값이 되고, 못 읽으면 **값도 이유도 그대로**
+     둡니다 — 반쯤 친 글자(`99'`)도 떠나는 순간에는 못 읽은 것입니다. */
+  const settle = () => {
+    const read = readPrice(text, fraction, tick, signed)
+    if (read.state === 'ok') {
+      setText(format(read.value))
+      setReason(null)
+      onChange(read.value)
+      return
+    }
+    if (read.state === 'empty') {
+      setText('')
+      setReason(null)
+      onChange(null)
+      return
+    }
+    /* 못 읽은 글자는 십진 칸에서도 그대로 둡니다. 조용히 되돌리면 틀린 값이
+       정상인 얼굴로 남고, 그동안 실행 단추는 막혀 있습니다. */
+    setReason(read.state === 'bad' ? read.reason : fraction ? priceHint(fraction, tick) : null)
+  }
+
+  /* 화살표 증감. 눈금을 모르는 품목에서는 분모 한 칸이 한 단입니다 — 화면이
+     적을 수 있는 가장 잔 자리라, 그보다 잘게 움직이면 값이 안 바뀌어 보입니다. */
+  const bump = (direction: 1 | -1) => {
+    const grid = tick && tick > 0 ? tick : fraction ? 1 / fraction : null
+    if (grid === null) return
+    const read = readPrice(text, fraction, tick, signed)
+    /* 치는 중이면 마지막으로 받은 값에서 셉니다. 빈 칸에서는 셀 자리가 없어
+       아무 일도 하지 않습니다 — 없던 가격이 화살표 한 번에 생기면 안 됩니다. */
+    const from = read.state === 'ok' ? read.value : value
+    if (from === null) return
+    const next = stepPrice(from, grid, direction, signed)
+    setText(format(next))
+    setReason(null)
+    onChange(next)
+  }
+
+  const why = `${id}-why`
+  return (
+    <label className="order-field">
+      <span className="control-label">{label}</span>
+      <input
+        className={`control${reason ? ' is-bad' : ''}`}
+        type={fraction ? 'text' : 'number'}
+        inputMode={fraction ? undefined : 'decimal'}
+        /* 화살표 한 번은 **그 품목의 호가단위**입니다. 품목과 무관한 고정값으로
+           두면 미니 S&P 500(0.25)에서 `6850.30` 처럼 낼 수 없는 값이 나오고,
+           바로 옆 호가 사다리는 품목 호가단위로 서 있어 둘이 어긋납니다.
+           마스터가 호가단위를 안 주는 시장(국내)에서만 넘겨받은 값을 씁니다. */
+        step={fraction ? undefined : tick && tick > 0 ? tick : step}
+        /* 글자 칸이지만 하는 일은 숫자 칸과 같습니다. 화살표로 오르내리는
+           값이라고 적어 두어야 화면을 읽어 주는 도구가 그렇게 안내합니다. */
+        role={fraction ? 'spinbutton' : undefined}
+        aria-valuenow={fraction && value !== null ? value : undefined}
+        aria-valuetext={fraction && value !== null ? text : undefined}
+        value={text}
+        disabled={disabled}
+        placeholder={placeholder}
+        aria-invalid={reason ? true : undefined}
+        aria-describedby={reason ? why : undefined}
+        onChange={(event) => apply(event.target.value)}
+        onKeyDown={
+          fraction
+            ? (event) => {
+                if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                event.preventDefault()
+                bump(event.key === 'ArrowUp' ? 1 : -1)
+              }
+            : undefined
+        }
+        onBlur={settle}
+      />
+      {/* 왜 안 받았는지 그 자리에서 말합니다. 값만 조용히 안 바뀌면 자기가
+          잘못 친 줄 모르고 그대로 냅니다.
+
+          **고쳐야 할 것이 먼저입니다.** 안내 한 줄과 겹치면 지금 손봐야 하는
+          쪽이 그 자리를 갖습니다 — 두 줄을 겹쳐 세우면 칸 밑이 두 겹이 되고,
+          급한 쪽이 아래로 밀립니다. */}
+      {reason ? (
+        <span className="order-limit" id={why}>
+          {reason}
+        </span>
+      ) : (
+        note && (
+          <span className="order-limit order-note" title={noteWhy ?? undefined}>
+            {note}
+          </span>
+        )
+      )}
+    </label>
+  )
+}
+
+/** 호가단위를 모를 때 화살표가 움직이는 폭. **그 종목의 눈금이 아닙니다** —
+ *  모르는 채로 멈춰 세우면 값을 아예 못 넣으므로 움직이게 두고, 대신 칸 밑에
+ *  그 사실을 적습니다. */
+const DEFAULT_STEP = 0.05
+
+interface Props {
+  quote: Quote
+  context: MarketContext
+  /** 선물·옵션·스프레드. 국내 스프레드는 스프레드 종목 자체의 매수·매도로 나가고,
+   *  **해외 스프레드는 아직 낼 수 없어** 폼이 이 값으로 막습니다. */
+  kind: ProductKind
+  /* 청산할 포지션. 있으면 폼이 청산 모드입니다 — 새 주문이지만 값이 이미
+     정해져 있습니다. 방향은 반대, 수량은 들고 있는 만큼, 가격은 현재가입니다. */
+  closing?: Position | null
+  /** 청산 가격을 잔고 조회 때 값으로 채운 동안 참입니다. 가격 칸 아래 한 줄이 섭니다. */
+  closePriceNote?: boolean
+  side: Side
+  orderType: string
+  condition: string
+  price: number | null
+  stopPrice: number | null
+  quantity: number
+  /** 최우선 매수호가 — 매수 버튼에 붙습니다. **걸린 호가가 없으면 `null`**
+   *  입니다. 거래가 뜸한 종목에서는 한 단계도 안 서는 때가 있습니다. */
+  bestBid: number | null
+  /** 최우선 매도호가 — 매도 버튼에 붙습니다. 없으면 `null` 입니다. */
+  bestAsk: number | null
+  /** 시세를 몰라 주문을 막아야 하는지. **못 받았거나 아직 받는 중이면** 낼 값을
+   *  지어낼 수 없어 가격 칸을 잠그고 실행도 막습니다 — 값이 안 든 채로 나가는
+   *  주문이 이 화면에서 가장 나쁜 일입니다.
+   *
+   *  **아직 거래가 없는 종목은 막지 않습니다.** 그건 우리가 아는 사실이고,
+   *  상장되어 호가가 서 있으면 첫 거래를 만드는 것이 지정가 주문입니다. */
+  orderBlocked?: boolean
+  /** 값을 모르는 까닭. 헤더가 그 자리에서 쓰는 말과 같아야 합니다 — 한 화면에서
+   *  같은 사실을 두 낱말로 부르면 다른 일이 일어난 것으로 읽힙니다. */
+  priceWhy?: string
+  /** 그 시장의 인증 정보가 없어 못 내는 까닭. **모든 까닭 가운데 맨 앞**입니다 —
+   *  설정에서 넣기 전에는 다른 무엇을 고쳐도 낼 수 없습니다. */
+  credentialsWhy?: string
+  /** 모의인지 실전인지 몰라 못 내는 까닭. 있으면 인증 정보 다음, **다른 어떤 까닭보다
+   *  앞에** 섭니다 — 행사가를 고르고 값을 고쳐도 이것이 풀리지 않으면 낼 수 없어서,
+   *  앞의 둘을 먼저 말하면 사용자가 할 수 있는 일이 없는 것을 시키는 셈입니다. */
+  environmentWhy?: string
+  /** 국내 종목의 주간·야간을 몰라 못 내는 까닭. 환경 다음, 행사가 앞에 섭니다. */
+  sessionWhy?: string
+  /** 세션을 못 받았을 때 다시 묻는 손. 있을 때만 사유 줄 곁에 「다시」가 섭니다. */
+  onRetrySession?: () => void
+  /** 정정·취소 모드면 폼이 그 주문을 다루는 자리로 바뀝니다. */
+  editing: OrderEdit | null
+  /** 조회해서 받아온 주문가능수량과 그 자리의 상태.
+   *
+   *  **누르기 전에는 값 자리에 아무것도 안 섭니다.** 어느 시장이든 마찬가지라,
+   *  한쪽에만 표지를 세우면 덜 아는 쪽이 더 많이 말하는 화면이 됩니다. */
+  orderable: OrderableState
+  /** 지금 물어볼 수 있는지. **가격을 모르면 못 물어봅니다** — 두 시장 모두
+   *  주문가격이 있어야 답이 나오고, 시장가로 물을 때는 그 종목의 지금 값을
+   *  대신 싣습니다. 그 값마저 없으면 부를 곳이 없어 단추가 안 눌립니다. */
+  canCheckOrderable?: boolean
+  /** 두 차트 중 이 폼이 어느 종목인지를 머리에 크게 답니다. 한 차트면 안 답니다. */
+  subject?: boolean
+  /** 보낸 주문의 답이 오기를 기다리는 중인지. **단추를 잠그고 폼도 잠급니다** —
+   *  답을 기다리는 동안 값을 고치면, 무슨 값으로 나갔는지 화면이 말할 수 없게
+   *  됩니다. */
+  sending?: boolean
+  /** 마지막으로 보낸 주문의 답. **시간으로 사라지지 않습니다** — 사용자의 다음
+   *  손(값·종목 바꿈·다시 보내기)이 걷어냅니다. */
+  result?: OrderResult | null
+  onSideChange: (side: Side) => void
+  onOrderTypeChange: (type: string) => void
+  onConditionChange: (condition: string) => void
+  onPriceChange: (price: number | null) => void
+  onStopPriceChange: (price: number | null) => void
+  onQuantityChange: (quantity: number) => void
+  onCheckOrderable: () => void
+  onCancelEditing: () => void
+  /** 계좌가 바뀌어 주문을 접은 직후라 실행 단추를 잠깐 멈춰 둡니다. 누르면 아무 일도
+   *  없고, 시간이 지나면 저절로 풀립니다. */
+  submitPaused?: boolean
+  /** 실행 단추를 눌렀습니다. **여기서 보내지 않습니다** — 되묻는 창이 먼저
+   *  뜨고, 보내는 일은 그 창의 답을 받은 쪽이 합니다. */
+  onSubmit: () => void
+  /** 결과를 모를 때 주문체결상세로 가는 길. 그 자리에서 다시 조회합니다. */
+  onOpenOrders: () => void
+}
+
+export function OrderForm({
+  quote,
+  context,
+  kind,
+  side,
+  orderType,
+  condition,
+  price,
+  stopPrice,
+  quantity,
+  bestBid,
+  bestAsk,
+  orderBlocked = false,
+  priceWhy = '시세를 받지 못했습니다',
+  credentialsWhy,
+  environmentWhy,
+  sessionWhy,
+  onRetrySession,
+  closing,
+  closePriceNote = false,
+  editing,
+  orderable,
+  canCheckOrderable = true,
+  subject = false,
+  sending = false,
+  result = null,
+  onSideChange,
+  onOrderTypeChange,
+  onConditionChange,
+  onPriceChange,
+  onStopPriceChange,
+  onQuantityChange,
+  onCheckOrderable,
+  onCancelEditing,
+  submitPaused = false,
+  onSubmit,
+  onOpenOrders,
+}: Props) {
+  const overseas = context === 'overseas'
+
+  /* 국내 호가단위를 담아 둔 자리. **해외는 안 묻습니다** — 마스터가 종목마다
+     주므로 이 자리가 비어 있어도 눈금은 이미 있습니다.
+
+     **그래서 해외에서는 아래 안내가 서지 않습니다.** 마스터가 품목마다
+     호가단위를 주는 것을 전제로 선 조건입니다 — 안 주는 품목이 나오면 그
+     종목은 눈금 없이 조용히 움직이게 되므로, 그때 이 자리를 고칩니다. */
+  const tick = useProductInfo(overseas ? '' : quote.code)
+
+  /* **「아직 안 왔다」에는 아무 말도 안 합니다.** 종목을 고를 때마다 답이 오기
+     전 한 박자가 있는데, 그 사이에 「못 받았다」를 세우면 곧 값이 설 자리에서
+     화면이 거짓을 말합니다. 답이 왔는데 값이 없거나(`ready`) 못 받은
+     때(`failed`)만 섭니다.
+
+     **눈금을 모르는 채로 멈춰 세우지는 않습니다.** 화살표는 그대로 움직이되
+     그 폭이 거래소 눈금이 아니라는 것을 적습니다 — 말이 없으면 사용자가 그
+     폭을 그 종목의 눈금으로 읽습니다. 왜 못 받았는지는 서버가 낸 문장을
+     그대로 답니다. */
+  const tickMissing =
+    quote.code !== '' &&
+    quote.tickSize == null &&
+    (tick.status === 'ready' || tick.status === 'failed')
+  /* 한 줄에 들어야 합니다 — 쓸 수 있는 폭이 164px 이고, 「호가단위를 못
+     받았습니다 · 0.05 씩」은 170 이라 낱말 하나가 다음 줄로 넘어갑니다.
+
+     **눈금을 모르는 동안에는 값을 거절하지 않습니다.** 값 읽기가 눈금을 받았을
+     때만 격자를 보므로(`readPrice`), 이 줄이 선 종목에서는 아무 값이나 통과
+     합니다 — 모르는 눈금으로 사용자의 값을 막으면, 맞는 값을 틀렸다고 말하게
+     됩니다. */
+  const tickNote = tickMissing ? `호가단위 못 받음 · ${DEFAULT_STEP} 씩` : null
+  const tickWhy = tickMissing ? (tick.row?.why ?? '') || null : null
+  /* 스프레드는 스프레드 종목 하나를 매수·매도합니다. 매수·매도가 두 다리에 어떻게
+     걸리는지는 서버 답에 없어, **화면이 다리별 방향을 문장으로 적지 않습니다.**
+     증거금 어림과 가능수량 조회도 두 다리의 셈을 몰라 세우지 않습니다. */
+  const spread = kind === 'spread'
+  /* 해외 스프레드는 아직 붙는 길이 없습니다. */
+  const overseasSpread = overseas && spread
+  const types = overseas ? OVERSEAS_TYPES : DOMESTIC_TYPES
+  /* 정정·취소로 옮겨 온 원주문의 유형이 목록에 없는 낱말이면 그 낱말 그대로 한
+     줄 더 둡니다. 목록 첫 줄이 대신 보이면 폼이 원주문과 다른 유형을 말합니다. */
+  const typeOptions = types.includes(orderType) ? types : [...types, orderType]
+  /* 값을 정하지 않고 나가는 유형. **최유리지정가도 여기입니다** — 명세가 주문가격을
+     `0` 으로 실으라고 하므로, 칸을 열어 두면 받아 놓고 안 쓰는 값이 생깁니다. */
+  const needsPrice = orderType !== '시장가' && orderType !== '최유리지정가' && orderType !== 'STOP-M'
+  const needsStop = overseas && orderType.startsWith('STOP')
+  const d = quote.decimals
+
+  /* 취소는 낸 그대로를 물러 달라는 것이라 고칠 값이 없습니다.
+     칸을 열어 두면 고친 값이 반영되는 것처럼 보입니다. */
+  const cancelling = editing?.mode === 'cancel'
+  /* 청산은 새 주문이지만 값이 이미 정해져 있습니다. 정정·취소와 같은 자리에
+     띠가 서지만 하는 일이 달라 모드를 따로 둡니다. */
+  const mode = editing ? (cancelling ? 'cancel' : 'amend') : closing ? 'close' : 'new'
+
+  /* 수량 상한.
+   *
+   * 청산은 들고 있는 만큼입니다 — 넘겨서 넣으면 청산에 신규 진입이 섞이는데,
+   * 「청산」이라고 이름 붙인 단추가 그 일을 하면 안 됩니다.
+   * 정정은 낸 주문의 수량까지입니다 — 그보다 늘리는 것은 정정이 아니라 새
+   * 주문입니다. 둘 다 더 넣으려면 그만두기로 나가서 새로 냅니다. */
+  /* 청산·정정의 수량 상한.
+   *
+   *  **수량을 모르는 줄은 여기까지 오지 않습니다** — 목록에서 단추를 안 세우고,
+   *  폼을 여는 자리에서 한 번 더 막습니다. 그래도 0 으로 둡니다: 혹 새어 들어와도
+   *  **막히는 쪽으로 실패**해야 합니다. 상한을 무한으로 두면 모르는 수량이
+   *  그대로 주문에 실립니다. */
+  const maxQuantity =
+    (closing ? closing.quantity : editing ? editing.order.quantity : Number.POSITIVE_INFINITY) ?? 0
+  const capQuantity = (value: number) => Math.min(maxQuantity, Math.max(1, value))
+  /* 옵션인데 아직 안 고른 축이 있으면 낼 종목이 없습니다. 헤더·차트 배지가
+     보는 것과 같은 자리에서 보고, 남은 축의 말도 같은 한 벌에서 가져옵니다. */
+  const pendingLeg = needsLeg(quote.code)
+  const pendingAsk = PENDING_TEXT[quote.pendingAxis ?? 'strike'].ask
+  const limitLabel = closing ? '보유' : '낸 주문'
+  /* 상한을 넘겨 친 적이 있는지. 넘긴 그 순간에만 한 줄이 뜹니다. */
+  const [overLimit, setOverLimit] = useState(false)
+
+  /* 가격 칸이 못 읽은 글자를 안고 있는지. **되돌릴 수 없는 자리의 마지막
+     방어선입니다** — 그 상태에서는 칸에 보이는 글자와 주문에 실린 값이 다르므로,
+     단추를 살려 두면 사용자가 안 친 값이 나갑니다. */
+  const [priceBad, setPriceBad] = useState(false)
+  const [stopBad, setStopBad] = useState(false)
+  /* STOP 은 스탑가격이 있어야 나갑니다. 비어 있는 것도 「고칠 칸」입니다 — 서버가
+     돌려보낼 요청을 단추가 살아서 보내게 두지 않습니다. 취소는 칸이 잠겨 고칠 수
+     없어 여기서 막지 않고, 보내는 자리가 원주문의 값을 모르면 멈춥니다. */
+  const stopMissing = needsStop && !cancelling && !pendingLeg && stopPrice === null
+  const badFields = [priceBad ? '주문가격' : '', stopBad || stopMissing ? '스탑가격' : ''].filter(
+    Boolean,
+  )
+  /* 못 내는 이유는 하나만 답니다. 종목이 아직 없으면 값을 고칠 자리도 없어
+     그쪽이 먼저입니다. 어투는 같은 자리에 서는 「행사가를 고르세요」와
+     맞춥니다 — 한 자리에 두 말투가 서면 다음 문장을 더할 기준이 없습니다.
+     겹치면 사용자가 지금 할 수 있는 것(환경·행사가·값)부터 말합니다. */
+  const blocked =
+    credentialsWhy !== undefined ||
+    overseasSpread ||
+    environmentWhy !== undefined ||
+    sessionWhy !== undefined ||
+    pendingLeg ||
+    orderBlocked ||
+    badFields.length > 0
+  const blockedWhy =
+    /* 인증 정보가 없으면 그 말이 맨 앞입니다. 그다음 **해외 스프레드는 아직 붙는 길이
+       없습니다** — 값을 고치고 행사가를 골라도 이것이 풀리지 않습니다. */
+    credentialsWhy !== undefined
+      ? credentialsWhy
+      : overseasSpread
+      ? '해외 스프레드 주문은 아직 연결되지 않았습니다'
+      : environmentWhy !== undefined
+        ? environmentWhy
+        : sessionWhy !== undefined
+          ? sessionWhy
+          : pendingLeg
+          ? pendingAsk
+          : orderBlocked
+            ? priceWhy
+            : `${badFields.join('과 ')}을 고치세요`
+
+  /* 모드가 바뀌면 지난 경고를 지웁니다 — 다른 주문에 붙은 말이 남아 있으면
+     지금 값이 잘못된 것으로 보입니다. */
+  useEffect(() => {
+    setOverLimit(false)
+  }, [closing, editing])
+
+  /* 칸에 친 값을 상한 안으로 들여놓습니다.
+   *
+   * 다듬은 값이 지금 값과 같으면 React 는 다시 그리지 않습니다. 그러면 상태는
+   * 3 인데 칸에는 방금 친 9 가 남아, **화면이 주문과 다른 수를 말합니다.**
+   * 그래서 칸의 값도 직접 되돌려 놓습니다. */
+  const applyQuantity = (input: HTMLInputElement) => {
+    const typed = Number(input.value)
+    const next = capQuantity(Number.isFinite(typed) && typed > 0 ? typed : 1)
+    setOverLimit(input.value !== '' && typed > maxQuantity)
+    if (next !== quantity) onQuantityChange(next)
+    if (String(next) !== input.value) input.value = String(next)
+  }
+
+  return (
+    /* 이름은 카드 머리 띠가 답니다. 여기서 한 번 더 붙이면 같은 이름의 영역이
+       둘로 겹쳐, 보조 기술이 「주문 안의 주문」으로 읽습니다. */
+    <section className={`order-form order-form-${side} order-form-${mode}`}>
+      {/* 차트가 둘일 때 이 폼이 어느 종목인지. 왼쪽 초록 세로 바는 차트의 주문
+          대상 배지와 같은 표시이고, 종목명이 큽니다 — 다른 칸의 종목을 보며
+          이 폼으로 주문하는 일이 없어야 합니다. 머리를 색으로 채우지 않습니다:
+          그러면 방향 세그먼트의 빨강·파랑 옆에 색 덩어리가 하나 더 섭니다. */}
+      {subject && (
+        <div className="order-subject">
+          <span className="order-subject-title">주문 대상</span>
+          <b className="order-subject-name">{quote.name}</b>
+          {/* 아직 종목이 아니면 값 자리에 남은 축을 세웁니다. 그 값은 기초
+              선물의 것이라, 「주문 대상」이라고 적힌 자리에 그대로 두면 이 값으로
+              낸다는 뜻이 됩니다 — 차트 배지가 값을 뺀 것과 같은 자리입니다. */}
+          {pendingLeg ? (
+            <span className="order-subject-pending">{PENDING_TEXT[quote.pendingAxis ?? 'strike'].pick}</span>
+          ) : (
+            <span className="order-subject-quote">
+              {quote.last !== null && (
+                <Num value={quote.last} decimals={d} fraction={quote.fraction} />
+              )}{' '}
+              {quote.change !== null && (
+                <Num value={quote.change} decimals={d} fraction={quote.fraction} signed toned />
+              )}
+            </span>
+          )}
+        </div>
+      )}
+
+      {editing && (
+        <div className="order-editing">
+          <span className="badge badge-brand">{cancelling ? '취소' : '정정'}</span>
+          <span className="t-label">
+            {editing.order.side === 'buy' ? '매수' : '매도'} {editing.order.quantity}계약
+          </span>
+          <button type="button" className="btn order-editing-cancel" onClick={onCancelEditing}>
+            그만두기
+          </button>
+        </div>
+      )}
+
+      {/* 청산은 「무엇을 덜어내는가」가 먼저입니다 — 들고 있는 방향과 수량을
+          적어 두어야, 반대 방향으로 바뀐 폼이 실수로 보이지 않습니다.
+          배지는 중립색입니다. 초록은 정정·취소가 쓰는데, 그 둘은 시장에 새
+          주문을 안 냅니다 — 청산은 냅니다. */}
+      {closing && (
+        <div className="order-editing">
+          <span className="badge">청산</span>
+          <span className="t-label">
+            {closing.side === 'long' ? '매수' : '매도'} {closing.quantity}계약 보유
+          </span>
+          <button type="button" className="btn order-editing-cancel" onClick={onCancelEditing}>
+            그만두기
+          </button>
+        </div>
+      )}
+
+      {/* 선물은 매수와 매도가 대등하므로 이것이 첫 컨트롤입니다.
+          각 버튼에 그 방향의 최우선 호가가 함께 섭니다.
+
+          **종목이 아직 안 정해졌으면 값은 빼고 방향만 둡니다.** 그때 호가는
+          기초 선물의 것이라, 옵션을 고르는 중인 화면에서 그 값이 방향 단추에
+          붙으면 「이 값으로 낸다」로 읽힙니다. 방향은 미리 골라 둘 수 있으므로
+          단추 자체는 그대로 삽니다(차트 배지와 같은 판단). */}
+      <div className="seg order-side">
+        <button
+          type="button"
+          className="seg-item seg-buy"
+          aria-pressed={side === 'buy'}
+          disabled={sending || editing !== null || closing != null}
+          onClick={() => onSideChange('buy')}
+        >
+          매수
+          {/* 걸린 호가가 없으면 **숫자 자리를 통째로 뺍니다.** 「—」를 세우면
+              그 글리프가 이 화면에서 이미 맡은 뜻(「이 자리에 값이 안 선다 —
+              할 일이 없다」)과 부딪힙니다. 값을 못 받은 것은 할 일이 있는
+              상태이고, 그 이유는 실행 단추 밑이 한 번 말합니다. 단추의 이름은
+              「매수」이고 값은 덤이라, 덤이 없으면 이름만 남습니다. */}
+          {!pendingLeg && bestBid !== null && (
+            <span className="seg-price" style={fracWidth(d, signSpace(quote.kind), quote.fraction)}>
+              <Num value={bestBid} decimals={d} fraction={quote.fraction} />
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          className="seg-item seg-sell"
+          aria-pressed={side === 'sell'}
+          disabled={sending || editing !== null || closing != null}
+          onClick={() => onSideChange('sell')}
+        >
+          매도
+          {!pendingLeg && bestAsk !== null && (
+            <span className="seg-price" style={fracWidth(d, signSpace(quote.kind), quote.fraction)}>
+              <Num value={bestAsk} decimals={d} fraction={quote.fraction} />
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* 정정·취소는 원주문의 매매구분을 그대로 따릅니다. 방향을 바꾸려면
+          취소하고 새로 내야 하므로, 누를 수 있어 보이면 안 됩니다. */}
+      {(editing || closing) && (
+        <p className="order-locked">
+          {cancelling
+            ? '취소는 낸 주문 그대로 나갑니다'
+            : editing
+              ? overseas
+                ? '정정은 방향·주문유형을 바꿀 수 없습니다'
+                : '정정은 방향을 바꿀 수 없습니다'
+              : '보유와 반대 방향으로 채웠습니다. 수량·가격은 바꿔도 됩니다'}
+        </p>
+      )}
+
+      <div className="order-fields">
+        <label className="order-field">
+          <span className="control-label">주문유형</span>
+          {/* 해외 정정은 원주문의 주문유형으로 나갑니다 — 바꿀 수 있어 보이면
+              바꾼 유형으로 고쳐지는 것처럼 읽힙니다. */}
+          <select
+            className="control"
+            value={orderType}
+            disabled={sending || cancelling || (overseas && editing !== null)}
+            onChange={(event) => onOrderTypeChange(event.target.value)}
+          >
+            {typeOptions.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* 체결조건은 국내에만 있습니다. 선택지는 주문유형이 받는 것만 둡니다 —
+            시장가는 FAS 만 받습니다(`fillCondsFor`). */}
+        {!overseas && (
+          <label className="order-field">
+            <span className="control-label">체결조건</span>
+            <select
+              className="control"
+              value={condition}
+              disabled={sending || cancelling}
+              onChange={(event) => onConditionChange(event.target.value)}
+            >
+              {fillCondsFor(orderType).map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* 값 칸 둘은 **낼 값**이라 대기 중에 기초 선물 값을 담지 않습니다.
+            보이는 값은 그대로 두는데 이 둘만 비우는 이유는, 이것이 읽는 값이
+            아니라 실제로 실려 나갈 숫자이기 때문입니다 — 기초 선물은 수백 단위,
+            옵션 프리미엄은 한 자리 단위라 그 값을 기준으로 지정가를 잡으면
+            자릿수가 어긋납니다. 왜 못 쓰는지는 실행 단추 밑에 한 번 적혀 있어
+            칸에 또 적지 않습니다. */}
+        <PriceField
+          id="order-price"
+          label="주문가격"
+          /* 시장가로 나가는 주문에는 가격이 없습니다. 값을 남겨 두면 안 나가는
+             값이 칸에 서 있습니다. */
+          value={needsPrice && !pendingLeg ? price : null}
+          decimals={d}
+          fraction={quote.fraction}
+          tick={quote.tickSize}
+          signed={spread}
+          step={DEFAULT_STEP}
+          note={tickNote}
+          noteWhy={tickWhy}
+          disabled={sending || !needsPrice || cancelling || pendingLeg || orderBlocked}
+          /* 값을 안 싣는 유형은 종목이 정해져도 안 쓰는 칸이라, 남은 할 일보다
+             「이 칸은 안 쓴다」가 먼저입니다. **고른 유형의 이름을 그대로** 적되
+             조사를 붙이지 않습니다 — 유형 이름의 끝소리가 제각각이라(「시장가」·
+             「STOP-M」) 조사를 붙이면 어느 하나는 반드시 어색해집니다. */
+          placeholder={needsPrice ? '' : `${orderType} · 가격 없이 나갑니다`}
+          onChange={onPriceChange}
+          onBlocked={setPriceBad}
+        />
+        {/* 잔고 조회 때의 값으로 채운 청산 가격. 지금 값이 아닐 수 있다는 것과
+            시세가 오면 바뀐다는 것을 함께 말합니다 — 조용히 바뀌면 사용자는
+            자기가 본 값이 왜 달라졌는지 모릅니다. */}
+        {closePriceNote && needsPrice && (
+          <p className="order-close-price-note">잔고 조회 때 값 — 시세가 오면 바꿉니다</p>
+        )}
+
+        {/* 스탑가격은 해외에만 있습니다. 값의 성질이 주문가격과 같아 적는
+            방식도 같습니다 — 한쪽만 분수로 두면 같은 종목의 두 가격이 다른
+            꼴로 서서, 어느 쪽이 어느 값인지 대볼 수 없습니다. */}
+        {needsStop && (
+          <PriceField
+            id="order-stop"
+            label="스탑가격"
+            value={pendingLeg ? null : stopPrice}
+            decimals={d}
+            fraction={quote.fraction}
+            tick={quote.tickSize}
+            signed={spread}
+            step={0.01}
+            /* 주문가격 칸과 **같은 대접**입니다. 한 카드에서 한 칸은 막히고
+               한 칸은 쳐지면, 못 내는 화면에서 값을 채우게 되고 그 값이
+               가능수량을 묻는 길로 나갑니다. */
+            disabled={sending || cancelling || pendingLeg || orderBlocked}
+            onChange={onStopPriceChange}
+            onBlocked={setStopBad}
+          />
+        )}
+
+        <div className="order-field">
+          <span className="control-label" id="order-qty-label">
+            주문수량
+          </span>
+          {/* 선물 수량은 대개 한 자리 수라 타이핑보다 스테퍼가 빠르고,
+              오타로 자릿수가 튀는 사고를 막습니다. */}
+          <div className="qty-stepper">
+            <button
+              type="button"
+              disabled={sending || cancelling}
+              onClick={() => onQuantityChange(capQuantity(quantity - 1))}
+              aria-label="수량 하나 줄이기"
+            >
+              −
+            </button>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={Number.isFinite(maxQuantity) ? maxQuantity : undefined}
+              value={quantity}
+              disabled={sending || cancelling}
+              aria-labelledby="order-qty-label"
+              onChange={(event) => applyQuantity(event.target)}
+              onBlur={(event) => applyQuantity(event.target)}
+            />
+            <button
+              type="button"
+              disabled={sending || cancelling || quantity >= maxQuantity}
+              onClick={() => onQuantityChange(capQuantity(quantity + 1))}
+              aria-label="수량 하나 늘리기"
+            >
+              +
+            </button>
+          </div>
+
+          {/* 왜 되돌아갔는지 그 자리에서 말합니다. 값만 조용히 바뀌면 자기가
+              잘못 친 줄 알고 다시 칩니다. */}
+          {overLimit && (
+            <p className="order-limit">
+              {limitLabel} {maxQuantity}계약까지만 {closing ? '청산할' : '정정할'} 수 있습니다
+            </p>
+          )}
+          {/* 청산하러 왔는데 계좌가 청산가능을 0 으로 답했을 때. **막지 않습니다** —
+              그 값의 뜻(보유와 어떻게 맞물리는지)을 실서버로 확인하기 전이라, 서버가
+              받을 수도 있는 주문을 화면이 막으면 안 됩니다. 값이 없거나 0 보다 크거나
+              못 물었으면 말하지 않습니다. */}
+          {closing && orderable.status === 'ready' && orderable.closeQuantity === 0 && (
+            <p className="order-limit order-close-zero">
+              청산가능 0계약 — 서버가 이 청산을 받지 않을 수 있습니다
+            </p>
+          )}
+        </div>
+
+        {/* 이 주문이 묶을 개시증거금의 어림. **국내 신규 주문에서만** 값이 섭니다 —
+            해외는 증거금을 주는 표가 없어 셈할 근거가 없고, 청산은 증거금을 푸는
+            쪽이라 「이 주문 Y원」이 거짓이 되며, 정정·취소는 새로 묶는 것이 없습니다.
+            스프레드는 두 다리에 증거금이 어떻게 걸리는지 확인되지 않아 세우지
+            않습니다.
+            국내에서는 신규가 아닐 때도 **같은 높이의 빈 자리**를 둡니다 — 신규와 청산을
+            오갈 때 아래 「가능수량 조회」 단추가 오르내리지 않게 합니다. */}
+        {!overseas && !spread && (
+          <MarginLine
+            blank={mode !== 'new'}
+            option={kind === 'option'}
+            entry={tick}
+            quantity={quantity}
+          />
+        )}
+
+        {/* 가능수량은 계좌를 물어봐야 나오는 값이라 저절로 채워지지 않습니다.
+            받은 값을 수량 칸에 넣어주지도 않습니다 — 증거금 한도까지 채우는
+            것은 이 화면에서 가장 위험한 선택이라 한 번 눌러 들어가면 안 됩니다. */}
+        {/* **자리를 늘 잡아 둡니다.** 누르기 전에는 비어 있지만 높이는 그대로라,
+            답이 오고 가는 동안 아래 조회 단추가 오르내리지 않습니다 — 누르려던
+            자리가 누르는 순간 움직이면 두 번째 누름이 엉뚱한 데로 갑니다. */}
+        <p className="order-orderable">
+          {orderable.status === 'loading' && (
+            <>
+              가능수량 <span className="skeleton" style={{ minWidth: '4ch' }} />
+            </>
+          )}
+          {/* 값이 비어 올 수 있습니다. 그때 0 을 적으면 「낼 수 없다」가 되는데
+              우리가 아는 것은 「받은 답에 수가 없다」까지입니다. */}
+          {/* 서는 수는 **신규와 청산의 합** — 서버가 준 뜻 그대로 적습니다. 신규·청산
+              가능수가 따로 오지만 셋의 관계를 실서버로 확인하기 전이라 합을 그 이름으로
+              보입니다. 확인되면 모드마다 값 하나(신규 「가능수량 N」·청산 「청산가능 N」,
+              `newQuantity`/`closeQuantity`)로 바꿉니다. */}
+          {orderable.status === 'ready' &&
+            (orderable.quantity === null ? (
+              '가능수량 값 없음'
+            ) : (
+              <>
+                신규·청산 합 <b>{orderable.quantity}</b>계약
+              </>
+            ))}
+          {orderable.status === 'failed' && (
+            <>
+              가능수량 받지 못했습니다
+              {/* 거절은 눌러도 같은 답이 옵니다. 다시 부를 길은 조건을 바꾸는
+                  것이고 그 칸들은 바로 위에 있습니다. */}
+              {orderable.failure === 'retry' && (
+                <button
+                  type="button"
+                  className="btn btn-quiet order-orderable-retry"
+                  onClick={onCheckOrderable}
+                >
+                  다시
+                </button>
+              )}
+            </>
+          )}
+        </p>
+        <div className="order-check">
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={sending || cancelling || !canCheckOrderable}
+            onClick={onCheckOrderable}
+          >
+            가능수량 조회
+          </button>
+        </div>
+      </div>
+
+      {/* 실행 버튼은 가능수량 조회 바로 아래, 스크롤 밖에 섭니다. 입력 칸이
+          다 안 들어가는 낮은 창에서도 버튼은 밀려나지 않습니다.
+
+          새 주문은 되돌릴 수 없어 방향색으로 채웁니다.
+          정정과 취소는 이미 낸 주문을 줄이거나 고치는 쪽이라 초록입니다 —
+          이 앱에서 초록은 「눌러도 되는 것」이고, 그 뜻이 여기서 맞습니다. */}
+      <button
+        type="button"
+        /* 청산 단추는 방향색입니다. 초록으로 두면 정정·취소와 같은 무게로
+           읽히는데, 그 둘과 달리 이건 시장에 새 주문을 냅니다. */
+        /* 값이 상한을 넘은 채로는 나가지 않습니다. 들여놓기가 먼저 막지만,
+           되돌릴 수 없는 자리라 단추에서 한 번 더 봅니다.
+           **답을 기다리는 동안에도 잠깁니다** — 두 번 누르면 두 건이 나갑니다. */
+        disabled={quantity > maxQuantity || sending}
+        /* 누르면 되묻는 창이 뜹니다. 여기서 바로 보내지 않습니다. */
+        onClick={() => {
+          if (blocked || submitPaused || sending || quantity > maxQuantity) return
+          onSubmit()
+        }}
+        /* 낼 종목이 없거나(콜/풋·행사가 미정) 가격 칸이 못 읽은 글자를 안고
+           있으면 못 냅니다. `disabled` 가 아니라 `aria-disabled` 인 것은 초점을
+           받아야 왜 못 내는지 적어 둔 말에 키보드로도 닿기 때문입니다. */
+        aria-disabled={blocked || submitPaused || undefined}
+        aria-describedby={blocked ? 'order-submit-why' : undefined}
+        className={`btn order-submit ${editing ? 'btn-primary' : `order-submit-${side}`}`}
+      >
+        {cancelling
+          ? '주문 취소'
+          : editing
+            ? '주문 정정'
+            : side === 'buy'
+              ? closing
+                ? '매수 청산'
+                : '매수'
+              : closing
+                ? '매도 청산'
+                : '매도'}
+        {/* 어느 종목에 내는지가 단추에 붙습니다. 차트가 둘이면 눈은 차트에
+            있고 손은 여기 있어, 단추만 보고도 종목이 맞는지 알아야 합니다. */}
+        <small className="order-submit-name">{quote.name}</small>
+      </button>
+      {/* 못 누르는 이유는 단추 바로 아래입니다. 고를 자리(체인)도 고칠 자리
+          (가격 칸)도 같은 화면에 있어, 이 말이 시키는 것과 눈이 갈 곳이 같습니다.
+
+          **보낸 결과도 같은 자리에 섭니다.** 한 자리에 둘이 겹치면 못 내는
+          이유가 먼저입니다 — 지난 주문의 결과보다 지금 못 내는 사정이 급합니다. */}
+      {blocked ? (
+        /* 단추는 사유 문장 **밖**에 둡니다. 실행 단추가 이 문장을 설명으로 가리키므로
+           (`aria-describedby`), 안에 두면 읽어 주는 도구가 사유 끝에 「다시」까지
+           읽어 문장이 틀려집니다. 보이는 꼴은 문장 뒤에 붙은 그대로입니다. */
+        <div className="order-submit-why">
+          <p id="order-submit-why">{blockedWhy}</p>
+          {/* 세션을 못 받아 막힌 때만 다시 묻는 손이 섭니다. */}
+          {credentialsWhy === undefined &&
+            environmentWhy === undefined &&
+            sessionWhy !== undefined &&
+            onRetrySession && (
+            <button type="button" className="btn btn-quiet order-submit-retry" onClick={onRetrySession}>
+              다시
+            </button>
+          )}
+        </div>
+      ) : (
+        <OrderResultLine sending={sending} result={result} onOpenOrders={onOpenOrders} />
+      )}
+    </section>
+  )
+}
+
+/** 옵션 카드의 증거금 안내. 빈 자리가 높이를 맞추려고 같은 문장을 씁니다. */
+const OPTION_MARGIN_NOTE = '옵션 증거금은 품목정보에 없습니다'
+
+/** 개시증거금 어림 한 줄 —「계약당 X원 · 이 주문 Y원」과 그 셈을 밝히는 한 줄.
+ *
+ *  **두 수는 각각 원 단위 올림입니다.** 증거금은 모자라면 안 되는 값이라, 내린 수를
+ *  「묶인다」고 적으면 실제보다 적게 말합니다. 곱셈은 **받은 원값**으로 합니다 —
+ *  계약당을 먼저 올려 곱하면 수량만큼 오차가 불어납니다.
+ *
+ *  **자리 높이는 늘 같습니다.** 값이 오기 전에도, 수량이 비어 뒷마디와 셈 줄이
+ *  빠져도 두 줄의 자리를 잡아 두어, 아래 「가능수량 조회」 단추가 오르내리지
+ *  않습니다. 좁은 카드에서는 「·」 뒤에서 다음 줄로 넘어갑니다. */
+function MarginLine({
+  blank,
+  option,
+  entry,
+  quantity,
+}: {
+  /** 신규가 아닌 주문(청산·정정·취소) — 라벨도 값도 없이 자리만 잡습니다. */
+  blank: boolean
+  option: boolean
+  entry: ProductInfoEntry
+  quantity: number
+}) {
+  if (blank) {
+    /* 옵션의 안내 문장은 좁은 카드에서 두 줄로 꺾입니다. 빈 자리에도 **같은 문장을
+       보이지 않게** 넣어, 폭이 바뀌어도 신규일 때와 같은 높이를 잡습니다. */
+    return (
+      <div className="order-field order-margin" aria-hidden="true">
+        <span className="control-label" />
+        <div>
+          <p className="order-margin-value" />
+          <p className="order-margin-note" style={{ visibility: 'hidden' }}>
+            {option ? OPTION_MARGIN_NOTE : ''}
+          </p>
+        </div>
+      </div>
+    )
+  }
+  let value: ReactNode = null
+  let title: string | undefined
+  let note = ''
+  if (option) {
+    /* 옵션은 품목정보에 증거금이 없습니다. 셈할 값이 없다는 사실만 적습니다. */
+    value = '계약당 —'
+    note = OPTION_MARGIN_NOTE
+  } else if (entry.status === 'failed') {
+    value = '계약당 —'
+    title = PRODUCT_INFO_FAILED
+  } else if (entry.status === 'ready' && entry.row) {
+    const each = entry.row.contractInitialMargin
+    if (each == null) {
+      value = '계약당 —'
+      title = entry.row.why || undefined
+    } else {
+      const per = `계약당 ${ceilWon(each).toLocaleString('ko-KR')}원`
+      if (Number.isFinite(quantity) && quantity > 0) {
+        const total = ceilWon(each * quantity).toLocaleString('ko-KR')
+        value = (
+          <>
+            <span className="order-margin-part">{per} ·</span>{' '}
+            <span className="order-margin-part">이 주문 {total}원</span>
+          </>
+        )
+        note = '품목 값 × 수량으로 셈했습니다'
+      } else {
+        value = <span className="order-margin-part">{per}</span>
+      }
+    }
+  }
+  return (
+    <div className="order-field order-margin">
+      <span className="control-label">개시증거금</span>
+      <div>
+        <p className="order-margin-value" title={title}>
+          {value}
+        </p>
+        <p className="order-margin-note">{note}</p>
+      </div>
+    </div>
+  )
+}
+
+/** 받아들여진 답의 머리 — 결과까지 확인됐을 때와 접수만 확인됐을 때. */
+const ACCEPTED_WORD: Record<OrderKind, { confirmed: string; unconfirmed: string }> = {
+  new: { confirmed: '접수됨', unconfirmed: '접수됨' },
+  modify: { confirmed: '정정됨', unconfirmed: '정정 접수됨' },
+  cancel: { confirmed: '취소됨', unconfirmed: '취소 접수됨' },
+}
+
+/** 거절된 답의 머리. 정정·취소의 거부는 「원주문에 그 요청이 적용되지 않았다」는
+ *  뜻이라 신규의 거절과 낱말을 가릅니다. */
+const REJECTED_WORD: Record<OrderKind, string> = {
+  new: '거절',
+  modify: '정정 거부',
+  cancel: '취소 거부',
+}
+
+/* 보낸 주문의 결과 한 줄.
+ *
+ * **시간으로 사라지지 않습니다.** 사용자의 다음 손(값·종목 바꿈·다시 보내기)이
+ * 걷어냅니다 — 몇 초 뒤 지워지면 자리를 비운 사이에 눈을 돌린 사람은 자기 주문이
+ * 어떻게 됐는지 영영 못 봅니다.
+ *
+ * 색이 셋입니다. 거절은 **오류색**(서버가 안 받았다), 결과를 모르는 것은
+ * **경고색**(냈는지 아닌지 모른다), 재생에서 못 내는 것은 **색 없음**(이 실행에서
+ * 못 낼 뿐 주문에 아무 일도 없었다). 접수와 보내는 중도 색이 없습니다 — 색은
+ * 「봐야 한다」는 뜻이고 잘 된 일에는 그 뜻이 없습니다.
+ *
+ * **결과를 모르는 자리에 「다시 보내기」를 세우지 않습니다.** 서버가 받았을 수도
+ * 있는 주문을 한 번 더 내면 두 배로 체결됩니다. 대신 주문체결상세로 보냅니다 —
+ * 무엇이 나갔는지는 거기서만 알 수 있습니다.
+ *
+ * **접수 번호를 받은 뒤 결과를 확인하지 못한 주문도 경고색입니다.** 접수는 됐지만
+ * 그 뒤 거절됐는지 모르는 자리라, 「접수됨」만 적으면 확인할 까닭이 안 보입니다.
+ * 신규·정정·취소가 같은 세 얼굴(됨 / 결과 미확인 / 거부)로 섭니다.
+ */
+function OrderResultLine({
+  sending,
+  result,
+  onOpenOrders,
+}: {
+  sending: boolean
+  result: OrderResult | null
+  onOpenOrders: () => void
+}) {
+  if (sending) {
+    /* 서버가 접수 뒤 결과까지 확인하고 답하므로 몇 초 걸릴 수 있습니다. 그동안
+       실행 단추는 잠겨 있어 같은 주문이 두 번 나가지 않습니다. */
+    return <p className="order-result">보내는 중…</p>
+  }
+  if (!result) return null
+
+  if (result.kind === 'accepted') {
+    const done = ACCEPTED_WORD[result.action]
+    if (result.confirmed) {
+      return (
+        <p className="order-result">
+          {done.confirmed} · 주문번호 {result.orderId}
+        </p>
+      )
+    }
+    return (
+      <div className="order-result is-unknown">
+        <p className="order-result-text">
+          {done.unconfirmed} · 주문번호 {result.orderId} · 결과 미확인 — 주문체결상세에서 확인하세요
+        </p>
+        <button type="button" className="btn btn-quiet order-result-go" onClick={onOpenOrders}>
+          주문체결상세 보기
+        </button>
+      </div>
+    )
+  }
+  if (result.kind === 'rejected') {
+    /* 코드와 문구는 서버가 준 그대로입니다. 둘 중 비어 오는 것은 빼고 적습니다. */
+    const parts = [REJECTED_WORD[result.action]]
+    if (result.code) parts.push(`코드 ${result.code}`)
+    if (result.reason) parts.push(result.reason)
+    return <p className="order-result is-rejected">{parts.join(' · ')}</p>
+  }
+  if (result.kind === 'blocked') {
+    return <p className="order-result">{result.reason}</p>
+  }
+  /* `unknown`·`failed` — 냈는지 모르는 자리. */
+  return (
+    <div className="order-result is-unknown">
+      <p className="order-result-text">{result.reason}</p>
+      {/* 문장과 **다른 줄**입니다 — 문장 끝에 붙으면 마지막 낱말처럼 읽혀서,
+          읽는 도중에 눌러야 할 것이 있다는 것이 늦게 보입니다. */}
+      <button type="button" className="btn btn-quiet order-result-go" onClick={onOpenOrders}>
+        주문체결상세 보기
+      </button>
+    </div>
+  )
+}

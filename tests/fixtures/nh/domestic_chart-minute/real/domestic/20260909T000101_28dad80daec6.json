@@ -1,0 +1,87 @@
+{
+ "api_id": "domestic_chart-minute",
+ "collected_at": "2026-09-09T00:01:01.790430+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "POST",
+ "path": "/trade/v1/domestic/chart-minute",
+ "record_id": "20260909T000101_28dad80daec6",
+ "request": {
+  "cidx_yn": "0",
+  "dcnt": "5",
+  "ed_tm": "235959",
+  "fut_cidx_exp_mod": "0",
+  "inq_ed_dt": "20260909",
+  "inq_strt_dt": "20260909",
+  "nght_tp": "1",
+  "nxt_key": "99999999",
+  "req_qty": "300",
+  "strt_tm": "000000",
+  "sym": "A7569000"
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_close_pric": "1337.50",
+    "occurs1_cum_trd_amt": "2247",
+    "occurs1_cum_trd_qty": "168",
+    "occurs1_diff_rt": "-7.20",
+    "occurs1_exch_tm": "090000",
+    "occurs1_high_pric": "1337.50",
+    "occurs1_low_pric": "1337.50",
+    "occurs1_open_pric": "1337.50",
+    "occurs1_opint": "1189231",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   },
+   {
+    "occurs1_close_pric": "1339.30",
+    "occurs1_cum_trd_amt": "12164",
+    "occurs1_cum_trd_qty": "908",
+    "occurs1_diff_rt": "-5.40",
+    "occurs1_exch_tm": "085500",
+    "occurs1_high_pric": "1339.90",
+    "occurs1_low_pric": "1339.30",
+    "occurs1_open_pric": "1339.80",
+    "occurs1_opint": "1188911",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   },
+   {
+    "occurs1_close_pric": "1339.60",
+    "occurs1_cum_trd_amt": "8829",
+    "occurs1_cum_trd_qty": "659",
+    "occurs1_diff_rt": "-5.10",
+    "occurs1_exch_tm": "085000",
+    "occurs1_high_pric": "1340.00",
+    "occurs1_low_pric": "1339.50",
+    "occurs1_open_pric": "1339.70",
+    "occurs1_opint": "1188858",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   },
+   {
+    "occurs1_close_pric": "1339.70",
+    "occurs1_cum_trd_amt": "45631",
+    "occurs1_cum_trd_qty": "3405",
+    "occurs1_diff_rt": "-5.00",
+    "occurs1_exch_tm": "084500",
+    "occurs1_high_pric": "1340.80",
+    "occurs1_low_pric": "1339.60",
+    "occurs1_open_pric": "1340.30",
+    "occurs1_opint": "1188926",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   }
+  ],
+  "nrec": "4",
+  "nxt_key": "30919151086003",
+  "sym": "A7569000"
+ },
+ "scenario_id": "domestic_chart-minute__dcnt_5",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

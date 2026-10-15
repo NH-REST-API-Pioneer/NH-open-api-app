@@ -1,0 +1,3987 @@
+/* 시세·주문 화면 — 세로 3영역.
+ *
+ * [종목 헤더]
+ * [좌측 탭 영역] ⟷ [호가 · 주문 폼]
+ *
+ * 늘어나는 것은 좌측 탭 영역 하나입니다. 호가와 주문 폼은 어느 폭에서도
+ * 접지 않습니다 — 호가를 눌러 주문 가격을 넣는 것이 이 화면의 기본 동작이라
+ * 좁아지면 좌측이 먼저 줄어듭니다.
+ */
+
+.trade {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* 카드 사이 간격. 이 화면에서 남는 세로는 전부 시세체결이 받으므로,
+   * 카드 사이는 왼쪽 열 안쪽과 같은 12 로 맞춥니다. */
+  gap: 12px;
+}
+
+/* ── 종목 헤더 ───────────────────────────────────────── */
+
+/* 왼쪽에 종목과 현재가, 오른쪽에 지표 칸들. 둘 다 세로 가운데입니다 —
+ * 위 맞춤이면 왼쪽 두 줄과 오른쪽 두 행의 기준선이 서로 어긋나 보입니다. */
+.instrument-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+/* 값이 든 안쪽. 좁아서 안 들어가면 지표를 아래로 내리는 대신 **이 안쪽만**
+ * 가로로 밀립니다 — 접으면 헤더 높이가 창마다 달라지고, 그만큼 아래 호가
+ * 사다리가 들어가는지도 창마다 갈립니다.
+ *
+ * 미는 것을 여기에 가둡니다. 화면 전체에 걸면 아래 세 열까지 헤더 폭으로
+ * 늘어나, 오른쪽 끝의 주문 폼이 창 밖으로 나갑니다 — 매수 단추가 밀려나면
+ * 주문을 낼 수 없습니다.
+ *
+ * 왼쪽 덩어리와 지표 사이는 24 입니다. 한때 여기서 12, 칸 여백에서 12, 라벨과
+ * 값 사이에서 8 을 걷어 자리를 냈는데, 줄 A 에서 선물·옵션 세그먼트가 빠지면서
+ * 그 자리가 풀려 셋을 한꺼번에 되돌렸습니다. 좁아서 모자라면 다시 걷지 않고
+ * 밀립니다 — 밀도를 창 크기에 따라 바꾸면 같은 헤더가 두 밀도를 갖게 되어,
+ * 같은 값을 창마다 다른 간격에서 찾게 됩니다. */
+.hd-scroll {
+  display: flex;
+  align-items: center;
+  /* 값은 이름 바로 뒤에 이어 섭니다. 넓은 창에서 양 끝으로 벌리면 같은 종목의
+     이름과 값 사이가 비어, 이어 읽을 것을 따로 찾게 됩니다. */
+  justify-content: flex-start;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  gap: 8px 24px;
+  overflow-x: auto;
+  /* 가로만 밀립니다. 한쪽만 `auto` 로 두면 다른 쪽도 따라 `auto` 가 됩니다. */
+  overflow-y: hidden;
+  /* 멈추는 자리는 고정 덩어리의 오른쪽 모서리입니다. */
+  scroll-padding-left: var(--hd-left-w, 0px);
+}
+
+/* **칸 단위로 멈춥니다.** 아무 데서나 서면 고정 덩어리 밑에 칸이 반쯤 들어가
+ * 라벨 앞 글자가 잘립니다 — 「미결제」가 「결제」로 읽히는데 둘 다 있는 말이라
+ * 잘린 줄도 모릅니다.
+ *
+ * **설 자리가 둘 이상일 때만** 켭니다. 자리가 하나뿐인데 반드시 서게 해 두면
+ * 밀어도 그 자리로 되돌아와 띠가 잠깁니다. 자리를 세는 것은 헤더입니다. */
+.hd-scroll[data-snaps] {
+  scroll-snap-type: x mandatory;
+}
+
+/* 줄어들지 않습니다. 줄어들면 종목명이 잘리는데, 종목명은 이 화면에서 자를
+ * 수 없는 유일한 글자입니다 — 무엇을 주문하는지가 그 글자입니다.
+ *
+ * **밀 때는 제자리에 섭니다.** 좁은 창에서 헤더가 가로로 밀리면 왼쪽부터
+ * 나가는데, 나가는 것이 하필 종목명과 현재가입니다 — 오른쪽 지표를 보려고
+ * 민 사람은 「무엇의 지표인지」를 잃습니다. 표에서 쓰는 것과 같은 장치입니다
+ * (주문체결상세의 동작 열, 미결제약정의 오른쪽 둘, 체인의 행사가 열).
+ *
+ * 고정되는 칸이라 바탕이 불투명해야 합니다 — 반투명이면 밑을 지나가는 지표가
+ * 비칩니다. 오른쪽 선은 고정된 덩어리와 미는 덩어리의 경계입니다. */
+.hd-left {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  /* 헤더 카드와 같은 바탕입니다. */
+  background-color: var(--surface);
+  /* 경계선을 지표 쪽에서 이리로 옮겼습니다. 고정되는 것은 이 덩어리라, 선이
+     저쪽에 있으면 밀 때 선까지 함께 밀려 들어와 아래로 사라집니다. 값들이
+     지나가는 자리에 경계가 늘 서 있어야 「여기까지가 고정」이 읽힙니다.
+     선 위치만 왼쪽으로 옮겨졌고 값이 서는 자리는 그대로입니다.
+
+     **선 하나로는 모자랍니다.** 잔선은 카드 바탕과 한 단 차이라(어두운 면에서
+     잰 값으로 1.06) 확대해서 봐도 안 보였습니다. 이 선은 「나뉘어 있다」가 아니라
+     「여기 밑으로 지나간다」를 말해야 하므로 그림자를 함께 답니다 — 잉크 토큰이라
+     밝은 면에서는 오른쪽으로 떨어지는 그늘, 어두운 면에서는 옅은 후광입니다
+     (모달 카드와 같은 방식). */
+  border-right: 1px solid var(--divider);
+  box-shadow: 8px 0 10px -8px rgb(var(--ink) / 0.45);
+  /* **지표와 사이의 24 는 이 덩어리 안에 둡니다.** 밖에 두면 민 화면에서 그
+   * 띠에 앞 칸의 꼬리가 비쳐 부분 칸이 생깁니다 — 「부분적으로 보이는 칸을
+   * 만들지 않는다」에 걸립니다. 안에 두면 불투명한 고정 덩어리가 그 자리를
+   * 덮어, 안 민 화면에서는 여백으로 보이고 민 화면에서는 밑을 가립니다.
+   * 폭을 재어 멈춤 자리로 넘기므로(`--hd-left-w`) 멈춘 칸도 이만큼 떨어져
+   * 섭니다. */
+  padding-right: 24px;
+}
+
+/* 줄 A — 무엇을 보고 있나. 줄바꿈하지 않습니다. 두 줄이 되면 헤더 높이가
+ * 창 폭에 따라 달라져, 아래 호가 사다리가 들어가는지가 창마다 갈립니다. */
+.hd-name {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  /* 부제가 붙는 종목에서만 이 줄이 자랍니다 — 못 박아 두면 부제가 칸 밖으로
+     비어져 나와 아래 값 줄과 겹칩니다. */
+  min-height: 28px;
+  min-width: 0;
+}
+
+/* 제목과 부제가 한 칸. 폭이 모자라면 **부제가 먼저 줄어듭니다** — 무엇을 보고
+   있는지에 답하는 것은 제목입니다. */
+.hd-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.hd-legs {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 종목명은 기본 창에서 온전히 섭니다. 이 화면에서 「무엇을 보고 있나」에
+ * 답하는 유일한 글자라, 지표를 깎아서라도 자리를 냈습니다.
+ * 최소 창에서는 여기가 줄어듭니다 — 전문은 마우스를 올려 봅니다. */
+.hd-name h1 {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hd-month {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hd-code {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 코드 자리에 서는 「행사가 선택」. 값이 아니라 할 일이라 그 자리 값보다 한 급
+ * 낮춥니다 — 자리를 채우는 글자가 채워질 값보다 커지면 없는 것이 있는 것보다
+ * 먼저 눈에 듭니다. 색은 코드 자리가 이미 흐림이라 그대로입니다. */
+.hd-code-pending {
+  font-size: 11px;
+}
+
+/* 줄 B — 얼마인가. 한 문장으로 읽히도록 가운뎃점으로 잇습니다. */
+.hd-quote {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 6px;
+  height: 30px;
+  min-width: 0;
+}
+
+/* 실시간이 현재가를 갈아 끼운 순간 이 자리를 잠깐 비춥니다. 자릿수가 같으면
+ * 숫자가 바뀌어도 글자 모양이 그대로라 눈이 변화를 못 잡습니다.
+ *
+ * **켜는 것은 곧바로, 걷는 것은 천천히.** 켜지는 쪽이 사건이라 늦으면 놓치고,
+ * 걷히는 쪽은 잔상이라 툭 꺼지면 그것이 또 한 번 깜빡이는 셈이 됩니다.
+ *
+ * 바탕을 글자 밖으로 번지게 그립니다 — 안쪽 여백으로 넓히면 값이 바뀔 때마다
+ * 옆 글자가 밀립니다. */
+.hd-price {
+  flex: 0 0 auto;
+  line-height: 30px;
+  border-radius: 3px;
+  transition:
+    background-color 180ms ease-out,
+    box-shadow 180ms ease-out;
+}
+
+.hd-price.is-up,
+.hd-price.is-down {
+  transition: none;
+}
+
+.hd-price.is-up {
+  background-color: var(--up-soft);
+  box-shadow: 0 0 0 3px var(--up-soft);
+}
+
+.hd-price.is-down {
+  background-color: var(--down-soft);
+  box-shadow: 0 0 0 3px var(--down-soft);
+}
+
+.hd-dot,
+.hd-since {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.hd-change {
+  flex: 0 0 auto;
+  font-size: 15px;
+}
+
+.hd-pct {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 거래시간은 상자에 넣지 않습니다. 이 줄의 상자는 만기와 선물·옵션 둘 다
+ * 누르는 것이라, 안 눌리는 상자를 하나 더 놓으면 눌러 보게 됩니다.
+ * 좁아지면 여기가 먼저 줄어듭니다 — 전문은 마우스를 올려 봅니다. */
+/* 이 값이 언제 것인가. **자리가 모자라 실시간이 안 붙은 동안에만** 섭니다.
+ * 배지가 아니라 맨 글자입니다 — 상태가 아니라 값에 붙은 이름표입니다.
+ * 호가 카드 머리의 같은 글자와 세기를 맞춥니다. */
+.hd-at {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.hd-hours {
+  /* 자르지 않습니다 — 시각은 잘리면 틀린 값입니다. 이 덩어리(.hd-left)는 내용
+     폭으로 서므로 문장이 길어지면 덩어리가 넓어지고 지표 띠가 그만큼 줄어 밉니다. */
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 시세를 못 받았을 때 현재가 자리에 서는 줄.
+ *
+ * **헤더 높이를 바꾸지 않습니다.** 헤더는 높이가 못 박힌 골격이라, 잠깐 있다
+ * 가는 상태 때문에 그 아래가 통째로 밀리면 안 됩니다. 그래서 값이 서던 줄
+ * 안에 그대로 들어앉고, 글자 크기도 그 줄이 이미 쓰는 값(13)을 넘지 않습니다.
+ *
+ * 색은 오류 빨강을 안 씁니다 — 이 화면의 빨강은 방향(매수·상승)이라, 같은
+ * 빨강이 숫자 옆에 서면 두 뜻이 겹칩니다. 못 받은 것은 화면이 깨진 것이
+ * 아니라 값이 아직 없는 것이므로 보조 글자색으로 적고, 알아채는 일은 값이
+ * 서던 자리가 비었다는 사실이 합니다. */
+.hd-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-label);
+}
+
+/* 값을 못 받은 동안의 지표 칸. **라벨은 남고 값만 없습니다** — 무엇이 설
+ * 자리인지는 그대로 보이고, 그 자리가 비었다는 사실이 「아직 값이 없다」를
+ * 말합니다. 자리를 지우지 않고 감추기만 하므로 헤더 높이가 안 바뀝니다.
+ * 화면 낭독기에도 빈 값이 안 읽힙니다. */
+.hd-metrics.is-blank .hd-metric dd,
+.hd-metrics.is-blank .hd-range-end,
+.hd-metrics.is-blank .hd-range-none,
+.hd-metrics.is-blank .hd-none,
+.hd-metrics.is-blank .hd-range-track,
+.hd-metrics.is-waiting .hd-metric dd,
+.hd-metrics.is-waiting .hd-range-end,
+.hd-metrics.is-waiting .hd-range-none,
+.hd-metrics.is-waiting .hd-range-track {
+  visibility: hidden;
+}
+
+/* **기다리는 중에는 「여기 값이 올 자리」를 보입니다.** 빈 자리만 남기면
+ * 「받는 중」과 「못 받음」이 한 얼굴이 되어, 기다려도 소용없는 화면을
+ * 기다리게 됩니다. 값이 안 올 것이 정해지면(`is-blank`) 이 블록을 걷습니다.
+ *
+ * 감춘 값 위에 덧그리므로 자리와 높이가 그대로입니다. */
+.hd-metrics.is-waiting .hd-metric dd,
+.hd-metrics.is-waiting .hd-range-end {
+  position: relative;
+  visibility: visible;
+  color: transparent;
+}
+
+.hd-metrics.is-waiting .hd-metric dd::after,
+.hd-metrics.is-waiting .hd-range-end::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 100%;
+  height: 12px;
+  transform: translateY(-50%);
+  border-radius: 4px;
+  background: var(--surface-muted);
+}
+
+/* 현재가 자리도 같습니다. 헤더에서 가장 큰 값이라 그 자리가 비면 가장 먼저
+ * 눈에 띄는데, 기다리는 중에는 「올 자리」로 보여야 합니다. */
+.hd-price-wait {
+  display: inline-block;
+  width: 7ch;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+/* ── 지표 칸 ─────────────────────────────────────────── */
+
+/* 왼쪽 덩어리와 이 블록 사이가 이 줄에서 제일 큰 경계입니다 — 한쪽은
+ * 「무엇을 얼마에 보고 있나」, 다른 쪽은 「그것에 대한 값들」이라 종류가
+ * 다릅니다. 칸과 칸 사이보다 약하면 덩어리가 잘못 잡히므로 선을 하나 둡니다. */
+.hd-metrics {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding-left: 0;
+  /* 트랙 끝의 꼬리. **넘칠 때만** 붙고, 마지막 멈춤 자리(칸 경계)에 닿는 데
+     모자란 만큼만입니다 — 없으면 끝까지 민 자리가 칸 경계가 아니라 앞 칸이
+     고정 덩어리 밑에 반쯤 걸립니다. 값은 헤더가 셉니다. */
+  padding-right: var(--hd-tail-w, 0px);
+}
+
+/* 칸 폭은 내용이 정합니다. 균등하게 나누면 짧은 값 옆이 비고 긴 값이 눌립니다.
+ * 칸 사이는 선 하나입니다 — 옅어서 값보다 먼저 보이지 않고, 여백만으로는
+ * 어디까지가 한 칸인지가 두 행에 걸쳐 흐려집니다.
+ *
+ * 미는 것이 여기서 멈춥니다 — 칸의 왼쪽 모서리가 고정 덩어리의 오른쪽 모서리에
+ * 섭니다. 그래서 라벨이 반만 남는 자리가 없습니다. 어느 칸에서 멈출지는 폭에
+ * 따라 달라 헤더가 정해 칸에 직접 답니다 — 여기서는 기본을 「안 멈춤」으로
+ * 두어, 아직 안 정해진 순간에 아무 데서나 서지 않게 합니다. */
+.hd-cell {
+  scroll-snap-align: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  gap: 0;
+  height: 36px;
+  margin: 0;
+  /* 칸 사이 경계(6+1+6=13)가 왼쪽 덩어리와의 경계(24+8+1=33)보다 작아야
+   * 합니다. 큰 경계가 작은 경계보다 약하면 덩어리가 잘못 잡힙니다. */
+  padding: 0 6px;
+  border-left: 1px solid var(--divider);
+}
+
+.hd-cell:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+.hd-cell:last-child {
+  padding-right: 0;
+}
+
+/* 한 행 — 라벨 왼쪽, 값 오른쪽. 라벨을 값 위에 쌓으면 한 항목이 한 줄을
+ * 통째로 쓰는데, 좌우로 놓으면 같은 세로에 두 항목이 들어갑니다. */
+.hd-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  height: 18px;
+}
+
+.hd-metric dt {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+/* 라벨보다 한 단 큽니다. 칸이 좁고 라벨이 길어서, 크기까지 같으면 어느 쪽이
+ * 값인지가 색 하나에만 걸립니다. */
+.hd-metric dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 단위는 값에 붙여 쓰되 한 급 낮춥니다. 값과 같은 무게면 자릿수처럼 읽힙니다. */
+.hd-unit {
+  margin-left: 1px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 범위 두 줄이 격자 하나를 나눠 씁니다. 두 행의 왼쪽 값끼리, 오른쪽 값끼리
+ * 같은 선에서 끝나야 위아래를 견줄 수 있습니다. */
+.hd-cell:has(.hd-range) {
+  display: grid;
+  grid-template-columns: max-content max-content 32px max-content;
+  align-items: center;
+  gap: 0 8px;
+}
+
+.hd-range {
+  display: contents;
+}
+
+.hd-range dt {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+  padding-right: 4px;
+}
+
+.hd-range-end {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 값이 없는 행. 위 행의 왼쪽 값과 같은 열에 세웁니다 — 「없다」도 값이 서는
+ * 자리에 서야 위아래를 견주는 눈이 헛돌지 않습니다. 트랙과 오른쪽 값 자리는
+ * 비워 둡니다. */
+/* 지표 칸의 「—」. 이 시장에는 없는 값이라 값 글자와 같은 무게로 섭니다. */
+.hd-none {
+  color: var(--text-dim);
+}
+
+.hd-range-none {
+  grid-column: 2;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--text-dim);
+}
+
+/* 얇은 선이고 그 위의 점 위치를 읽어야 하는 자리라, 넓은 면에 쓰는 옅은
+ * 값이 아니라 미결제 막대와 같은 세기를 씁니다. */
+.hd-range-track {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background-color: rgb(var(--ink) / var(--tbl-bar-2));
+}
+
+.hd-range-dot {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--text);
+  transform: translateY(-50%);
+}
+
+/* ── 좌우 분할 ───────────────────────────────────────── */
+
+/* 카드 여섯이 슬롯 넷에 서는 격자. 열·행의 크기는 TradeScreen 이 배치 값으로 인라인에 적고,
+ * 경계 트랙(12px)이 카드 사이 간격이자 끌 수 있는 손잡이입니다.
+ * 임계치(각 카드의 바닥 폭·높이) 아래로는 줄이지 않고 이 칸이 밀립니다 —
+ * 홈 화면과 같은 규칙입니다. 상단 띠는 제 안에서 따로 밉니다.
+ *
+ * 세로도 같습니다. 창이 카드들의 바닥 높이 합보다 낮으면 여기가 스크롤합니다 —
+ * 뭉갠 호가는 단계가 잘린 채로 값처럼 보여서, 스크롤 한 번보다 나쁩니다. */
+.trade-split {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  /* 세로 막대 자리를 늘 잡아 둡니다. 막대가 생기는 순간에만 자리를 내면 그
+   * 폭만큼 열이 좁아지면서 카드가 한꺼번에 움직이고, 좁아진 열이 다시
+   * 가로 막대를 불러 두 막대가 서로를 부릅니다. */
+  scrollbar-gutter: stable;
+}
+
+/* 카드 하나. 어느 슬롯에 서든 같은 껍데기입니다 — 자리는 grid-area 가 정합니다.
+ *
+ * 흰 면과 모서리는 카드가 그립니다. 안에 든 것(차트 패널·호가·주문 폼·주문
+ * 내역)은 여백만 갖습니다 — 각자 흰 면을 그리면 카드 머리가 그 면 밖에
+ * 서게 되어, 머리와 내용이 한 상자로 안 읽힙니다.
+ *
+ * 머리와 내용 사이는 붙입니다. 둘을 가르는 것은 틈이 아니라 1px 선입니다. */
+.trade-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.trade-card.is-hidden {
+  display: none;
+}
+
+/* 표가 든 카드는 제 안에서 자릅니다. 좁은 열에 옮겨 놓으면 표가 옆 카드 위로
+ * 흘러 남의 숫자와 섞입니다. 차트 카드는 자르지 않습니다 — 팝오버가 카드
+ * 아래로 뜹니다. */
+.card-orders,
+.card-book,
+.card-form {
+  overflow: hidden;
+}
+
+/* 호가·주문 폼은 제 카드가 곧 내용이라 안쪽을 늘려 채웁니다. */
+.card-book > .order-book,
+.card-form > .order-form {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+/* 차트 카드의 본문. 위 여백은 10 입니다 — 첫 줄이 32px 도구 줄이라 구분선에
+ * 바로 붙으면 단추가 선에 걸립니다.
+ *
+ * 아래 모서리만 깎습니다. 이 카드는 팝오버 때문에 넘침을 안 자르므로, 안에서
+ * 스크롤할 때 막대가 카드의 둥근 아래 모서리 밖으로 나가지 않게 합니다. */
+.trade-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 20px 20px;
+  border-radius: 0 0 12px 12px;
+  overflow: auto;
+}
+
+/* 선물 / 옵션. 화면 안 내용을 바꾸는 탭이라 알약입니다. */
+.trade-kind {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-bottom: 12px;
+}
+
+/* 접혀 있어도 몇 건인지는 보입니다. 탭 안에 붙는 숫자라 탭 글자보다 작고
+ * 옅습니다 — 이름을 읽고 나서 눈에 들어오는 순서입니다. */
+.tab-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background-color: rgb(var(--ink) / 0.08);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-label);
+  text-align: center;
+}
+
+.tab[aria-current='true'] .tab-count {
+  color: var(--text);
+}
+
+/* 체인의 보기 설정. 도구 줄 오른쪽 끝에 섭니다. */
+.chain-view {
+  margin-left: auto;
+}
+
+/* ── 차트 ─────────────────────────────────────────────── */
+
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+}
+
+.chart-controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+/* 지표는 켜고 끄는 것이라 각자 눌리는 단추입니다 — 세그먼트는 「여럿 중
+ * 하나」이고 이것은 「여럿 중 여럿」입니다. */
+.chart-indicators {
+  display: flex;
+  margin-left: auto;
+  gap: 4px;
+}
+
+.chart-indicator {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 지표 설정은 지표 단추 줄의 끝입니다. 팝오버가 이 자리를 기준으로 뜹니다. */
+.chart-settings {
+  position: relative;
+  display: flex;
+}
+
+.chart-indicator[aria-pressed='true'] {
+  background: var(--active);
+  color: var(--text);
+}
+
+/* 짧은 이름표. 아이콘만 있는 단추에 붙습니다. */
+[data-tip] {
+  position: relative;
+}
+
+/* 열려 있는 동안은 이름표를 안 띄웁니다. 팝오버와 겹쳐 둘 다 가립니다. */
+[data-tip]:hover:not([aria-expanded='true'])::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 6;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 차트와 그 위에 얹는 것들. 도구 줄이 왼쪽, 차트 칸이 나머지입니다.
+ * 창이 낮아 칸의 바닥 높이도 못 주면 여기서 세로로 스크롤합니다. */
+.chart-stage {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 차트 칸이 서는 자리. 한 칸이면 다 차지하고, 2분할이면 좌우 반반입니다. */
+.chart-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 10px;
+}
+
+.chart-panes.is-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* 범례·배지는 이 상자 안에서만 보입니다. 칸 위치가 어긋나는 순간이 있어도
+ * 배지가 카드 밖 주문내역 표 위에 떠서 체결 숫자로 읽히는 일은 없어야 합니다. */
+.chart-box {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  /* 범례가 자기 칸의 폭을 보고 라벨을 고릅니다. 창이 아니라 이 칸이 기준입니다 —
+   * 2분할이면 한 창 안에 넓은 칸과 좁은 칸이 함께 서고, 카드를 옮기면 같은
+   * 창에서도 칸 폭이 달라집니다. */
+  container-type: inline-size;
+  container-name: chartbox;
+}
+
+/* 2분할에서 주문 대상인 칸. 얇은 초록 테두리와 배지 왼쪽의 초록 세로 바 —
+ * 채움 없이 표시만 합니다. 채우면 차트 위에 색 덩어리가 하나 더 서고, 초록
+ * 채움은 「눌러도 되는 단추」로 읽힙니다. 같은 세로 바가 호가·주문 폼 머리에도
+ * 서서 셋이 한 종목임을 잇습니다. 대상이 아닌 칸은 테두리가 구분선 색이고
+ * 배지는 회색입니다. 시세는 둘 다 실시간입니다. */
+.chart-box.is-target {
+  box-shadow: inset 0 0 0 1.5px var(--target);
+}
+
+.chart-box.is-idle {
+  box-shadow: inset 0 0 0 1.5px var(--divider);
+  cursor: pointer;
+}
+
+.chart-box.is-idle:hover {
+  box-shadow: inset 0 0 0 1.5px var(--inactive);
+}
+
+.chart-box.is-target .chart-badge {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--divider);
+  border-left: 4px solid var(--target);
+  padding-left: 6px;
+  color: var(--text);
+}
+
+.chart-box.is-idle .chart-badge {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1.5px var(--inactive);
+  color: var(--text-dim);
+}
+
+.chart-box.is-idle .chart-badge .up,
+.chart-box.is-idle .chart-badge .down {
+  color: var(--text-dim);
+}
+
+/* 2분할 단추의 [1|2] 그림. */
+.chart-split {
+  gap: 4px;
+}
+
+.chart-split-icon {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.chart-split-icon i {
+  width: 6px;
+  height: 11px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.chart-split[aria-pressed='true'] .chart-split-icon i {
+  background: currentColor;
+}
+
+/* 차트는 남는 자리를 다 씁니다. 라이브러리가 이 칸의 크기를 재서 그리므로
+ * 높이가 0 이면 아무것도 안 그려집니다 — `min-height` 가 그 바닥입니다. */
+.chart-canvas {
+  position: absolute;
+  inset: 0;
+  min-height: 120px;
+}
+
+/* 종목 배지. 칸의 왼쪽 위, 범례 위에 한 줄입니다. */
+/* 차트 위에 **조용히 적는 한 줄**. 할 일이 생기는 말이 아니라 사정을 적어 두는
+   말이라, 단추도 색 띠도 없이 흐림색 작은 글자로 오른쪽 아래에 섭니다 — 값이 선
+   자리(왼쪽 위 배지·범례)를 안 건드리는 구석입니다. 눌리지도 않습니다. */
+.chart-quiet {
+  position: absolute;
+  /* 값이 선 자리를 안 건드리는 구석입니다 — 왼쪽 위는 배지와 범례, 아래는 시각
+     눈금, 오른쪽 끝은 가격 눈금이 씁니다. 그 사이 한 칸입니다. */
+  top: 28px;
+  right: 52px;
+  z-index: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.chart-badge {
+  position: absolute;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: calc(100% - 80px);
+  height: 22px;
+  margin-top: 2px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: rgb(var(--ink) / 0.06);
+  font-size: 12px;
+  color: var(--text);
+  /* 한 줄입니다. 접히면 아래 시가·고가 줄을 덮습니다. 좁으면 이름 쪽이 줄어듭니다. */
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.chart-badge:hover {
+  background: rgb(var(--ink) / 0.1);
+}
+
+/* 종목을 바꿀 수 없는 차트의 배지 — 누르는 것이 아니라 글자입니다. */
+.chart-badge.is-static {
+  cursor: default;
+}
+
+.chart-badge.is-static:hover {
+  background: rgb(var(--ink) / 0.06);
+}
+
+.chart-badge-chev {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.chart-badge-span {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* 아직 안 고른 축. 값이 아니라 할 일이라 헤더의 「행사가 선택」과 같은 크기로
+ * 한 급 낮추고, 이름이 줄어들 때도 이 말은 남습니다 — 남은 일이 사라지면
+ * 배지가 정해진 종목의 시세를 말하는 것으로 읽힙니다. */
+.chart-badge-pending {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+
+.chart-badge b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-badge b {
+  font-weight: 600;
+}
+
+.chart-badge-price {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-badge-change {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 범례. 칸의 왼쪽 위에 글줄로 붙고, 차트를 가리지 않게 배경이 없습니다. */
+/* 가격축(오른쪽 약 60px) 앞에서 끝납니다. 넘치면 말줄임 — 범례가 축이나 옆
+ * 카드 위로 나가면 남의 숫자와 섞입니다. */
+.legend {
+  position: absolute;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: calc(100% - 80px);
+  font-size: 11px;
+  line-height: 18px;
+  pointer-events: none;
+}
+
+/* 칸 위 끝에서 4px 아래. 칸 경계선에 글자가 붙지 않게 띄웁니다. */
+.legend-sub {
+  margin-top: 4px;
+}
+
+/* 글줄 뒤에 옅은 바탕을 깝니다. 일반 모드의 봉 칸은 낮아서 범례가 봉과
+ * 현재가 점선 위를 지나가는데, 바탕이 없으면 글자와 선이 섞여 둘 다 못
+ * 읽습니다. 완전히 가리지는 않아 뒤에 봉이 있다는 것은 보입니다.
+ *
+ * 자리가 모자라면 **항목 하나가 통째로** 물러납니다. 넘치는 항목이 다음 줄로
+ * 내려가고 이 줄은 한 줄 높이만 보여 주므로, 아래로 내려간 것은 안 보입니다.
+ * 값 중간에서 자르지 않는 것이 요점입니다 — 「419.4…」처럼 잘린 숫자는
+ * 없는 것보다 나쁩니다. 온전한 값이거나 아예 없거나 둘 중 하나입니다. */
+.legend-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  max-width: 100%;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* 줄어들지 않습니다. 줄어들면 항목이 제자리에서 눌려 글자가 잘립니다 —
+ * 물러나는 것은 항목 단위여야 합니다. */
+.legend-line > * {
+  flex: 0 0 auto;
+}
+
+.legend-line.is-hidden .legend-entry,
+.legend-line.is-hidden .legend-name {
+  color: var(--text-dim);
+}
+
+.legend-name {
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.legend-entry {
+  display: inline;
+}
+
+/* 아직 값이 안 선 지표의 한 줄. **중립입니다** — 이상이 아니라 봉이 더 모이면
+   서는 것이라, 경고색을 쓰지 않고 값보다 한 급 낮춥니다. */
+.legend-warmup {
+  color: var(--text-dim);
+}
+
+.legend-entry .legend-value {
+  margin-left: 4px;
+}
+
+.legend-key {
+  color: var(--text-label);
+}
+
+/* 시가·고가·저가·종가의 표지. 넓은 칸에서는 두 글자, 좁은 칸에서는 한 글자로
+ * 섭니다 — 값은 어느 쪽에서도 그대로입니다.
+ *
+ * 기준은 **소수 자릿수가 가장 많은 종목**입니다. 통화 선물은 소수 여섯 자리를
+ * 쓰고(0.006842), 그 값 넷이 두 글자 표지와 함께 서면 글줄이 310 입니다.
+ * 여기에 범례가 가격축 앞에서 멈추는 몫 80 을 더한 390 이 「두 글자가 온전히
+ * 서는 마지막 칸 폭」이고, 10 을 여유로 두어 399 아래에서 한 글자로 바꿉니다.
+ * 차트 카드로는 439 이라 기본 배치에서는 닿지 않습니다.
+ *
+ * 자릿수가 적은 종목(430.20)만 보고 잡으면 칸이 342 로 내려가는데, 그러면
+ * 통화 선물을 좁은 칸에서 볼 때 두 글자 표지가 선 채로 종가가 자리를 못 잡아
+ * 통째로 물러납니다 — 표지를 아끼려다 값을 잃는 교환이라 기준을 뒤집었습니다. */
+.legend-key-short {
+  display: none;
+}
+
+@container chartbox (max-width: 399px) {
+  .legend-key-long {
+    display: none;
+  }
+
+  .legend-key-short {
+    display: inline;
+  }
+}
+
+/* 표지를 한 글자로 줄이고도 모자라면 **항목을 접습니다.** 순서는 시가 → 고가·
+ * 저가(한 짝) → 종가이고, 종가는 마지막까지 남습니다.
+ *
+ * 값은 소수 자릿수가 가장 많은 종목(여섯 자리) 기준으로 잽니다. 한 글자 표지로
+ * 네 항목이 서는 데 글줄 266 이 들고, 여기에 범례가 가격축 앞에서 멈추는 몫
+ * 80 을 더한 346 이 첫 경계입니다. 시가를 접으면 221, 고가·저가까지 접으면 88 —
+ * 각각 칸 301, 168 입니다. 경계마다 3 을 여유로 둡니다.
+ *
+ * 접힌 개수는 줄 끝에 섭니다. 표시가 없으면 「원래 없는 값」으로 읽혀, 칸을
+ * 넓히면 나온다는 것을 알 길이 없습니다. 값이 아니라 신호라 한 급 작고 옅습니다.
+ *
+ * **자릿수마다 다른 경계를 두지 않습니다.** 가장 긴 자릿수 하나로 정해 두면
+ * 폭이 같은 칸은 어느 종목을 올려도 같게 보입니다. 종목마다 경계를 따로 두면
+ * 같은 폭에서 종목을 바꿨을 뿐인데 줄 구성이 달라지고, 왜 달라졌는지가 화면에
+ * 없습니다. 그 대가로 자릿수가 짧은 종목은 자리가 남아도 같은 폭에서 접힙니다 —
+ * 접힌 값은 「+n」을 보고 칸을 넓히면 그대로 돌아옵니다. */
+.legend-ohlc::after {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+@container chartbox (max-width: 349px) {
+  .legend-ohlc-open {
+    display: none;
+  }
+
+  .legend-ohlc::after {
+    content: '+1';
+  }
+}
+
+@container chartbox (max-width: 303px) {
+  .legend-ohlc-high,
+  .legend-ohlc-low {
+    display: none;
+  }
+
+  .legend-ohlc::after {
+    content: '+3';
+  }
+}
+
+.legend-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* 지표 줄의 숨기기·끄기. 글줄 안에 있어 작고, 글자색으로만 섭니다. */
+.legend-tool {
+  display: inline-block;
+  vertical-align: middle;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--text-dim);
+  pointer-events: auto;
+}
+
+.legend-tool:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* 겹친 지표가 넷 이상일 때 접힌 한 줄(전략 검증 차트). 줄 전체가 단추이고, 이름 앞에
+ * 그 지표 첫 선의 색 점이 섭니다. 펼치면 끝에 「▴ 접기」가 같은 꼴로 섭니다. */
+.legend-fold {
+  align-items: center;
+  gap: 0;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-label);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.legend-fold:hover {
+  color: var(--text);
+}
+
+.legend-fold-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.legend-fold-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 999px;
+}
+
+.legend-fold-sep {
+  white-space: pre;
+}
+
+/* 아래 칸의 마지막 값 배지. 오른쪽 축 위에 선 색으로 섭니다. */
+.chart-mark {
+  position: absolute;
+  right: 0;
+  z-index: 2;
+  transform: translateY(-50%);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+/* 그리기 도구. 세로 한 줄, 확대에서만 있습니다. */
+.draw-tools {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.draw-tool {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text-label);
+}
+
+.draw-tool:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.draw-tool[aria-pressed='true'] {
+  background: var(--brand-soft);
+  color: var(--brand-text);
+}
+
+.draw-tool[data-tip]:hover::after {
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
+.draw-tools-gap {
+  height: 1px;
+  margin: 2px 4px;
+  background: var(--border);
+}
+
+/* 차트 안의 종목 고르기는 **차트를 넘지 않습니다** — 판은 공용이고
+   (`lib/instrumentPicker.css`) 높이만 이 칸에 맞춰 다시 잡습니다. */
+.chart-box .pick-popover {
+  max-height: calc(100% - 40px);
+}
+
+/* 도형 색·굵기. 지표의 색 고르기와 같은 판에 삭제가 하나 더 있습니다. */
+.draw-picker {
+  position: absolute;
+  z-index: 6;
+}
+
+.draw-picker-remove {
+  width: 100%;
+  height: 28px;
+  margin-top: 8px;
+  justify-content: center;
+  font-size: 12px;
+}
+
+/* ── 주문 대상 머리 ───────────────────────────────────── */
+
+/* 차트가 둘일 때 호가·주문 폼 머리에 붙는 종목 줄. 차트의 주문 대상 배지와
+ * 같은 초록 세로 바입니다 — 바를 따라가면 같은 종목입니다. 채움·알약은 없습니다. */
+.subject-head {
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+  padding-left: 8px;
+  border-left: 4px solid var(--target);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.order-subject {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+  padding-left: 10px;
+  border-left: 4px solid var(--target);
+}
+
+.order-subject-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.order-subject-name {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.order-subject-quote {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-label);
+}
+
+/* 아직 종목이 아닐 때 값 자리에 서는 말. 값이 아니라 남은 할 일이라 흐림색
+ * 입니다 — 차트 배지가 값을 빼고 남은 축을 말하는 것과 같은 자리·같은 급. */
+.order-subject-pending {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 실행 단추의 종목 이름. 동작 이름 아래에 작게 섭니다. */
+.order-submit {
+  flex-direction: column;
+  gap: 0;
+  line-height: 1.15;
+}
+
+.order-submit-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.9;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 지표 설정 팝오버 ─────────────────────────────────── */
+
+/* 왼쪽 목록, 오른쪽 설정. 목록은 스크롤하고 설정은 고른 것만 보입니다. */
+.ind-popover {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: 160px 300px;
+  height: 340px;
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(var(--ink) / 0.14);
+}
+
+/* 목록만 스크롤합니다. 설정 쪽은 색 고르기가 아래로 삐져나와야 해서 자르지
+ * 않습니다 — 떠 있는 것은 아래를 덮어야지 잘리면 안 됩니다. */
+.ind-list {
+  padding: 8px;
+  border-right: 1px solid var(--divider);
+  border-radius: 12px 0 0 12px;
+  overflow-y: auto;
+}
+
+.ind-group {
+  margin: 8px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.ind-item {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.ind-item[aria-current='true'] {
+  background: var(--active);
+}
+
+.ind-item-name {
+  flex: 1;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.ind-item-name:hover {
+  background: var(--hover);
+}
+
+/* 켜고 끄는 동그라미. 켜지면 초록 — 이 앱에서 초록은 「사용자가 한 것」입니다. */
+.ind-item-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--border);
+  font-size: 11px;
+  line-height: 18px;
+  color: #ffffff;
+}
+
+.ind-item-check[aria-checked='true'] {
+  background: var(--brand);
+  box-shadow: none;
+}
+
+.ind-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+}
+
+.ind-editor-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ind-editor-desc {
+  margin-top: -4px;
+  font-size: 11px;
+  color: var(--text-label);
+}
+
+.ind-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ind-row-label {
+  flex: 0 0 56px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 색·굵기 칩. 누르면 고르기가 뜹니다. */
+.ind-chip-wrap {
+  position: relative;
+}
+
+.ind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ind-chip:hover {
+  background: var(--hover);
+}
+
+.ind-chip-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.ind-param {
+  width: 72px;
+  height: 28px;
+  padding: 0 8px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ind-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 11px;
+}
+
+.ind-add {
+  align-self: flex-start;
+  height: 28px;
+  font-size: 12px;
+}
+
+/* 색·굵기 고르기. 칩 아래에 뜹니다. */
+.ind-picker {
+  position: absolute;
+  top: 32px;
+  left: 0;
+  z-index: 7;
+  width: 232px;
+  padding: 10px;
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(var(--ink) / 0.16);
+}
+
+.ind-picker-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.ind-picker-title + .ind-picker-title,
+.ind-sizes {
+  margin-top: 8px;
+}
+
+.ind-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 20px);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ind-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+.ind-swatch[aria-pressed='true'] {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--text);
+}
+
+.ind-sizes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 0;
+}
+
+.ind-size {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: 11px;
+  color: var(--text-label);
+}
+
+.ind-size[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1.5px var(--text);
+  color: var(--text);
+}
+
+.ind-size-line {
+  display: block;
+  width: 28px;
+  border-radius: 2px;
+}
+
+.chart-note {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── 품목정보 · 시장자료 ─────────────────────────────── */
+
+.info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 한 화면 스펙 시트라 2열 격자면 끝납니다. */
+.spec-sheet {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 32px;
+  margin: 0;
+}
+
+/* 시트 꼬리 한 마디 — 이 표의 품목 값이 언제 것인지. **값이 아니라 표에 붙는
+ * 말**이라 행 밖에 서고 한 급 낮습니다. 값이 없으면 줄 자체가 없습니다. */
+.spec-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.spec-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  /* 값이 여러 줄인 행(거래시간처럼 창이 둘 이상인 값)은 줄 수만큼 자랍니다.
+     한 줄짜리 행의 높이는 그대로입니다. */
+  min-height: 36px;
+}
+
+/* **여러 줄짜리 값 아래에 한 칸 띄웁니다.** 줄 간격이 행 간격과 같으면 마지막
+ * 줄과 다음 행의 라벨이 같은 묶음으로 읽혀, 창이 셋인 거래시간 아래에서 다음
+ * 항목이 네 번째 창처럼 보입니다. 한 줄짜리 행은 그대로입니다. */
+.spec-row:has(dd > div + div) {
+  padding-bottom: 8px;
+}
+
+/* 값이 줄로 여럿인 행(거래시간)은 두 칸을 덮습니다. 한 칸 폭에서는 시각 하나가
+ * 가운데서 꺾여 두 줄에 나뉩니다. */
+.spec-row-wide {
+  grid-column: span 2;
+}
+
+.spec-row dt {
+  font-size: 13px;
+  color: var(--text-label);
+  /* **라벨은 낱말 안에서 안 꺾입니다.** 「거래시 / 간」으로 갈라지면 무엇의
+     값인지 한눈에 안 읽힙니다 — 칸이 좁으면 값 쪽이 접힙니다. */
+  white-space: nowrap;
+}
+
+.spec-row dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  /* 값은 오른쪽에 섭니다. 여러 줄일 때도 줄마다 오른쪽 끝이 맞아야 위아래
+     행의 값과 같은 자리에서 읽힙니다. */
+  text-align: right;
+}
+
+.info-note {
+  margin-top: 4px;
+}
+
+/* 날마다 바뀌는 값(시가·정산가·정산일)을 안 바뀌는 규격에서 가르는 여백. 선이나
+ * 머리글은 두세 줄짜리 묶음에 소음이라 여백 하나로 가릅니다 — 항목 사이 여백의
+ * 두 배쯤(행 36 안의 위아래 여백 합이 그만큼)입니다. */
+.info-panel-daily {
+  margin-top: 24px;
+}
+
+/* ── 호가 ─────────────────────────────────────────────── */
+
+/* 사다리는 어떤 상태에서도 안 줄입니다. 카드가 제 바닥보다 낮아지면 이 열이
+ * 스크롤합니다 — 뭉갠 사다리는 단계가 잘린 채로 값처럼 보입니다. */
+/* 위 여백은 6 입니다 — 첫 줄인 「잔량 · 호가」가 이미 제 아래에 4 를 두고
+ * 있어, 더 얹으면 사다리가 이유 없이 한 행을 잃습니다. */
+.order-book {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: 200px;
+  overflow-y: auto;
+  padding: 6px 10px 12px;
+}
+
+/* 열 이름과 값 사이는 붙여 둡니다. 이 열에서 남는 세로는 전부 아래
+ * 시세체결이 받으므로, 머리글이 가져가는 여백이 곧 보이는 체결 행 수입니다. */
+.book-head {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding: 0 6px 4px;
+}
+
+/* 호가를 못 받았을 때 사다리 자리에 서는 줄. 사다리가 잡던 세로를 그대로
+ * 채웁니다 — 카드가 갑자기 낮아지면 아래 카드가 따라 올라와, 못 받은 것이
+ * 배치가 바뀐 것으로 보입니다. */
+.book-failed {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 8px;
+  font-size: 13px;
+  color: var(--text-label);
+  text-align: center;
+}
+
+/* 사다리는 11행이 다 보여야 합니다 — 다섯 단계를 보려고 스크롤하면 다섯인
+ * 뜻이 없습니다. 카드 바닥이 이 11행을 담도록 잡혀 있고, 창이 그보다 낮으면
+ * 사다리를 줄이는 대신 그 열이 통째로 스크롤합니다. */
+.book-scroll {
+  flex: 0 0 auto;
+}
+
+.book-side {
+  display: flex;
+  flex-direction: column;
+}
+
+.book-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  /* 20단계와 현재가 줄을 합쳐 435 를 씁니다. 이 값을 1 만 키우면 20 이
+   * 늘어, 기본 창에서 시세체결 두 행이 한 행이 됩니다.
+   * 행 사이에 틈을 두지 않습니다. 2px 만 벌려도 과녁이 18 이 되고,
+   * 틈에 눌리면 아무 일도 안 일어납니다. */
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 120ms ease-out;
+}
+
+.book-row:hover {
+  background: var(--hover);
+}
+
+/* 축을 안 고른 옵션 자리의 빈 단계. 자리만 지키고 손이 와도 반응하지 않습니다 —
+ * 누를 값이 없는 줄이 밝아지면 「눌러 보라」로 읽힙니다. */
+.book-row.is-blank:hover {
+  background: none;
+}
+
+/* 지금 주문 폼에 들어가 있는 가격.
+ * 현재가 띠와 같은 회색 채움을 쓰면, 둘이 붙는 흔한 경우에 회색 덩어리
+ * 하나로 보여 어느 줄이 현재가인지 알 수 없게 됩니다. */
+.book-row[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--text-label);
+}
+
+/* 사다리가 밀려 이 자리의 값이 달라지면 가격 칸을 잠깐 비춥니다. 헤더 현재가와
+ * 같은 규칙입니다 — 오르면 옅은 빨강, 내리면 옅은 파랑.
+ * 바탕을 글자 밖으로 번지게 그립니다. 안쪽 여백으로 넓히면 사다리의 값 열이
+ * 갱신마다 흔들립니다. */
+.book-price {
+  border-radius: 3px;
+  transition:
+    background-color 180ms ease-out,
+    box-shadow 180ms ease-out;
+}
+
+.book-price.is-up,
+.book-price.is-down,
+.book-expected.is-up,
+.book-expected.is-down {
+  transition: none;
+}
+
+.book-price.is-up,
+.book-expected.is-up {
+  background-color: var(--up-soft);
+  box-shadow: 0 0 0 2px var(--up-soft);
+}
+
+.book-price.is-down,
+.book-expected.is-down {
+  background-color: var(--down-soft);
+  box-shadow: 0 0 0 2px var(--down-soft);
+}
+
+/* 가운데 띠의 예상체결가. 사다리 값 칸과 같은 규칙으로 비춥니다 — 값이 바뀌었을
+ * 때 그 자리만 잠깐 밝습니다. */
+.book-expected {
+  border-radius: 3px;
+  transition:
+    background-color 180ms ease-out,
+    box-shadow 180ms ease-out;
+}
+
+.book-qty {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: 100%;
+}
+
+/* 잔량 바는 가격 쪽에서 바깥으로 자라고, 길이는 잔량에 그대로 비례합니다.
+ * 바닥값을 두면 잔량이 적은 호가가 실제보다 두툼해 보여 벽이 없는 곳을
+ * 벽으로 읽게 됩니다. */
+.book-bar {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  right: 0;
+  border-radius: 2px;
+}
+
+/* 막대 색과 그 세기를 정한 근거는 `index.css` 의 `--up-bar`·`--down-bar` 옆에
+ * 있습니다 — 표면 대비 1.5 는 낮은 것이 아니라 「길이로만 읽는 바탕 칠」로
+ * 정한 값이고, 올린다면 두 면·두 쪽을 함께 움직여야 합니다. */
+.book-side-ask .book-bar {
+  background: var(--down-bar);
+}
+
+.book-side-bid .book-bar {
+  background: var(--up-bar);
+}
+
+.book-qty-value {
+  position: relative;
+  margin-left: auto;
+  padding-right: 6px;
+  color: var(--text-label);
+}
+
+/* 매도는 위, 매수는 아래. 색과 함께 위아래 위치가 두 번째 단서입니다. */
+.book-ask .book-price {
+  color: var(--down-text);
+  font-weight: 600;
+}
+
+.book-bid .book-price {
+  color: var(--up-text);
+  font-weight: 600;
+}
+
+.book-last {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  /* 이름표는 줄바꿈하지 않습니다 — 좁은 칸에서 「현재가」가 세로로 쪼개지면
+     읽는 데 시간이 걸리고, 사다리의 위아래 구간을 가르는 띠가 두꺼워집니다. */
+  white-space: nowrap;
+  margin: 3px 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 축을 안 고른 옵션 자리에서 「현재가」 띠의 값 칸에 서는 표지. 값이 아니라
+ * 「아직 안 골랐음」이라 값의 굵기·색을 쓰지 않습니다. */
+.book-pending {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.book-hint {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* ── 주문 폼 ─────────────────────────────────────────── */
+
+/* 주문 폼은 이 폭 아래로 줄어들면 못 쓰는 화면이 됩니다.
+ * 최소 창 크기를 정한 계산(호가 200 + 사이 16 + 주문 280)의 한 축입니다.
+ *
+ * 위 여백은 12 입니다 — 첫 줄인 32px 매수·매도 세그먼트가 구분선에 닿으면
+ * 선이 세그먼트의 위 테두리처럼 보입니다. */
+.order-form {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 280px;
+  min-height: 0;
+  padding: 12px 20px 16px 24px;
+}
+
+/* 입력 칸만 스크롤합니다. 실행 버튼은 스크롤 밖에 있어 낮은 창에서도
+ * 밀려나지 않습니다.
+ *
+ * 남는 높이를 받지 않습니다 — 받으면 실행 버튼이 카드 바닥으로 내려가
+ * 가능수량 조회와 떨어집니다. 줄어들기만 합니다. */
+.order-fields {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+/* 고른 쪽 색으로 물드는 세로 띠. 옅어서 혼자로는 단서가 못 되므로
+ * 세그먼트의 선택 상태가 주 단서이고 이 띠는 보강입니다.
+ *
+ * 폼은 카드 머리 아래에서 시작하므로 이 띠도 구분선 밑에서 시작합니다.
+ * 머리까지 올라가서는 안 됩니다 — 이 화면은 매수와 매도가 대등해서, 카드
+ * 머리가 한쪽 방향색을 띠면 넷 중 하나만 편이 있는 것처럼 보입니다.
+ *
+ * 모서리를 여기서 깎지 않습니다. 위는 각져야 맞고(선 바로 아래), 아래는
+ * 카드가 대신 깎아 줍니다 — `.card-form` 이 넘침을 자르므로 카드의 12px
+ * 곡선에 정확히 잘립니다. 여기에 12 를 적으면 띠 폭이 6(청산은 4)이라
+ * 브라우저가 곡률을 그만큼 줄여, 카드보다 완만한 곡선이 아래 왼쪽 모서리에서
+ * 카드 안쪽으로 물러납니다. */
+.order-form::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+}
+
+.order-form-buy::before {
+  background: var(--up-soft);
+}
+
+.order-form-sell::before {
+  background: var(--down-soft);
+}
+
+.order-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+}
+
+.order-side .seg-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  font-size: 13px;
+}
+
+/* 고른 쪽이 그 방향색으로 채워집니다. 아래 실행 버튼도 같은 색이라
+ * 한 묶음으로 읽힙니다. 반대쪽에 색이 남아 있으면 자기가 무엇을 골랐는지
+ * 헷갈립니다. */
+.order-side .seg-buy[aria-pressed='true'] {
+  background: var(--up);
+  color: #ffffff;
+}
+
+.order-side .seg-sell[aria-pressed='true'] {
+  background: var(--down);
+  color: #ffffff;
+}
+
+/* 그 방향의 최우선 호가.
+ * 고른 쪽만이 아니라 양쪽 다 읽혀야 합니다 — 방향을 정하려면 두 값을 나란히
+ * 놓고 봐야 하는데, 안 고른 쪽이 안 읽히면 판단 근거가 고른 다음에 나타납니다.
+ * 낮추는 것은 버튼의 무게이지 그 안의 값이 아닙니다. */
+.seg-price {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-label);
+}
+
+.order-side .seg-item[aria-pressed='true'] .seg-price {
+  color: #ffffff;
+}
+
+/* 정정 중에는 방향을 못 바꿉니다. 고른 쪽은 색을 유지해 무엇을 고치는지 보이게
+ * 두고, 반대쪽만 눌리지 않는 것으로 낮춥니다. 이유는 아래 줄이 말합니다. */
+.order-side .seg-item:disabled {
+  cursor: not-allowed;
+}
+
+.order-side .seg-item:disabled:not([aria-pressed='true']),
+.order-side .seg-item:disabled:not([aria-pressed='true']) .seg-price {
+  color: var(--text-dim);
+}
+
+.order-locked {
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 라벨은 입력 위가 아니라 왼쪽 열입니다. 「주문유형」 네 글자가 들어가면 됩니다. */
+.order-field {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+/* **좁은 폼.** 주문 열을 `FORM_ROOMY`(280) 아래로 끌면 줄 이름과 입력칸을 나란히
+ * 둘 폭이 없습니다. 줄 이름을 입력칸 위로 올리고 입력칸이 칸 폭을 다 씁니다 —
+ * 입력칸을 줄여 나란히 두면 가격·수량 값이 잘립니다. 넘치는 것은 세로로 굴러가고
+ * 가로로는 안 넘칩니다.
+ *
+ * 실행 단추는 원래부터 입력 칸의 굴림 밖(폼 아래)에 서므로, 좁은 폼에서 입력
+ * 칸이 길어져도 카드 아래에 남습니다. 굴러가는 입력 칸과 단추 사이에 선 하나를
+ * 그어, 단추가 칸의 일부가 아니라 폼 아래에 붙은 것임을 보입니다. */
+.card-form[data-tight] > .order-form {
+  min-width: 0;
+  padding-right: 14px;
+  padding-left: 18px;
+}
+
+.card-form[data-tight] .order-field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.card-form[data-tight] .order-field > .control-label {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 선은 입력 칸의 테두리로 긋습니다. 선 아래 틈은 실행 단추의 위 여백(10)이
+ * 맡습니다 — 입력 칸 안에 여백을 두면 그만큼 굴림이 먼저 섭니다. */
+.card-form[data-tight] .order-fields {
+  border-bottom: 1px solid var(--divider);
+}
+
+/* 좁은 폼의 안내 줄은 두세 줄로 감깁니다. 낱말 가운데서 끊지 않습니다
+ * (「보 / 유」·「바뀝니 / 다」) — 줄이 하나 느는 쪽이 낫습니다. */
+.card-form[data-tight] .order-editing .t-label,
+.card-form[data-tight] .order-locked,
+.card-form[data-tight] .order-close-price-note {
+  word-break: keep-all;
+}
+
+/* **좁은 폼에서는 빈 증거금 자리를 안 잡습니다.** 나란한 폼은 신규·청산을 오갈
+ * 때 조회 단추가 오르내리지 않게 증거금 두 줄 높이를 비워 두는데, 좁은 폼에서는
+ * 그 빈자리가 입력 칸을 넘치게 해 쓸데없는 굴림을 세우고 가능수량 줄을 그 밑으로
+ * 밉니다. 조회 단추도 줄 이름 열이 없으니 들여 세우지 않습니다. */
+.card-form[data-tight] .order-margin[aria-hidden='true'] {
+  display: none;
+}
+
+.card-form[data-tight] .order-check {
+  padding-left: 0;
+}
+
+/* 숫자와 −/+ 를 테두리 하나로 묶습니다. 선물 수량은 대개 한 자리 수라
+ * 타이핑보다 스테퍼가 빠르고, 오타로 자릿수가 튀는 사고를 막습니다. */
+.qty-stepper {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.qty-stepper button {
+  height: 100%;
+  border-radius: 8px;
+  color: var(--text-label);
+  font-size: 15px;
+}
+
+.qty-stepper button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* 안쪽 칸이 잠기면 상자도 함께 잠겨 보여야 합니다. 테두리와 흰 채움이
+ * 그대로면 아직 고칠 수 있는 칸으로 읽힙니다 — 취소는 낸 주문 그대로
+ * 나가는 자리라, 수량을 손볼 수 있어 보이면 안 됩니다. */
+.qty-stepper:has(input:disabled) {
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+.qty-stepper input:disabled,
+.qty-stepper button:disabled,
+.qty-stepper button:disabled:hover {
+  background: none;
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.qty-stepper input {
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* 브라우저 기본 증감 화살표는 스테퍼와 하는 일이 같아 겹칩니다. */
+.qty-stepper input::-webkit-outer-spin-button,
+.qty-stepper input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* 조회해 온 가능수량. 수량 칸 아래에 값으로만 섭니다 — 버튼이 아니라
+ * 읽는 값입니다. 라벨 열에 맞춰 들여쓰지 않습니다. 폼 폭이 280 이라
+ * 들여쓰면 한 줄에 못 들어갑니다. */
+/* **글자 사이를 벌리지 않습니다.** 이 줄을 flex 로 두고 `gap` 을 주면 수와
+ * 단위 사이가 벌어져 「47 계약」이 됩니다 — 우리말에서 단위는 수에 붙습니다.
+ * 자리 높이만 잡아 두고 안은 보통 글줄로 흐르게 합니다. */
+.order-orderable {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  min-height: 18px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-label);
+}
+
+.order-orderable b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* 못 받았을 때 서는 「다시」. 값 줄 안에서 같은 높이로 서서 줄을 안 늘립니다. */
+.order-orderable-retry {
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+/* 조회 버튼은 입력 칸 열에 맞춰 섭니다. 라벨 열이 비므로 왼쪽을 그만큼 띄웁니다. */
+.order-check {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  padding-left: 72px;
+}
+
+.order-check .btn {
+  width: 100%;
+  height: 30px;
+  justify-content: center;
+  font-size: 12px;
+}
+
+/* 개시증거금 어림. 라벨은 첫 줄에 맞춥니다 — 값이 두 줄로 넘어가도 라벨이 두 줄
+ * 가운데로 내려가지 않게 합니다. */
+.order-margin {
+  align-items: start;
+}
+
+.order-margin > .control-label {
+  line-height: 18px;
+}
+
+/* **높이를 두 줄로 잡아 둡니다.** 값이 오기 전·뒷마디가 빠진 때도 같은 높이라
+ * 아래 조회 단추가 오르내리지 않습니다. */
+.order-margin-value {
+  margin: 0;
+  min-height: 36px;
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* 마디 안에서는 안 꺾입니다 — 「649,925」와 「원」이 갈라지면 수를 잘못 읽습니다. */
+.order-margin-part {
+  white-space: nowrap;
+}
+
+/* 셈을 밝히는 한 줄. 값이 아니라 값에 붙는 말이라 한 급 낮습니다. 빈 때도 자리를
+ * 잡습니다(위와 같은 까닭). */
+.order-margin-note {
+  margin: 0;
+  min-height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+/* 상한을 넘겨 쳤을 때 값 아래에 서는 한 줄. 값이 왜 되돌아갔는지 말합니다.
+ * 라벨 열이 아니라 값 열에 섭니다 — 라벨 칸은 64px 이라 거기 두면 네 줄로
+ * 접힙니다. */
+.order-limit {
+  grid-column: 2;
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--error);
+}
+
+/* 고칠 것이 없는 한 줄 — 값이 잘못된 것이 아니라 우리가 못 받은 것입니다.
+ * 오류색으로 두면 사용자가 자기가 친 값을 고치려 듭니다.
+ *
+ * **낱말 가운데서 끊지 않습니다.** 칸이 좁아 한 줄을 넘기면 한글은 아무 데서나
+ * 잘려 「움직/입니다」처럼 섭니다 — 넘칠 때도 낱말 단위로 넘어가게 둡니다. */
+.order-limit.order-note {
+  color: var(--text-label);
+  word-break: keep-all;
+}
+
+/* 청산가능 0 안내. 막는 줄이 아니라 알리는 줄이라 오류색이 아니라 주의색입니다 —
+ * 사용자가 고칠 값이 없고, 내는 것은 그대로 됩니다. */
+.order-limit.order-close-zero {
+  font-size: 12px;
+  color: var(--warn);
+  word-break: keep-all;
+}
+
+/* 되돌릴 수 없는 동작이라 채운 버튼입니다. 한 화면에 이것 하나뿐입니다. */
+.order-submit {
+  flex: 0 0 auto;
+  margin-top: 10px;
+  height: 44px;
+  justify-content: center;
+  font-size: 15px;
+  color: #ffffff;
+}
+
+.order-submit-buy {
+  background: var(--up);
+}
+
+.order-submit-sell {
+  background: var(--down);
+}
+
+.order-submit:hover {
+  filter: brightness(1.06);
+}
+
+/* 행사가를 고르기 전에는 낼 종목이 없습니다. 방향색 채움을 벗겨야 「지금
+ * 누르는 것」으로 안 읽힙니다 — 이 앱에서 가장 무거운 채움이라 그대로 두면
+ * 못 누르는 단추가 화면에서 제일 먼저 보입니다. */
+.order-submit[aria-disabled='true'] {
+  background: var(--surface-muted);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.order-submit[aria-disabled='true']:hover {
+  filter: none;
+}
+
+/* 청산 가격이 잔고 조회 때 값이라는 한 줄. 가격 칸 바로 아래, 한 급 낮춰 답니다. */
+.order-close-price-note {
+  margin: -4px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 못 내는 이유. 단추 바로 아래 한 줄입니다. */
+.order-submit-why {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  /* 좁은 주문 칸에서 감길 때 낱말 가운데서 끊지 않습니다(「않았습 / 니다」). */
+  word-break: keep-all;
+}
+
+/* 사유 문장은 글줄 안에 흐르게 둡니다 — 「다시」가 문장 밖의 형제여도 문장
+ * 마지막 낱말 바로 뒤에 붙습니다. 감긴 문장에서도 같습니다. */
+.order-submit-why > p {
+  display: inline;
+  margin: 0;
+}
+
+/* 사유 줄 곁의 「다시」. 줄 글자와 같은 높이로 붙입니다. */
+.order-submit-retry {
+  height: 22px;
+  margin-left: 6px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 보낸 주문의 결과 한 줄. 못 누르는 이유와 **같은 자리**입니다 — 실행 단추
+ * 바로 아래가 방금 누른 일의 답이 설 자리입니다.
+ *
+ * 색은 「봐야 한다」는 뜻이라 잘 된 일(접수·보내는 중)과 이 실행에서 못 낼
+ * 뿐인 일(재생 기록 없음)에는 안 씁니다. */
+/* **다섯 얼굴이 같은 글자 급입니다.** 경고색 줄이 옅은 바탕 위 색 글자라 12px
+ * 에서는 대비가 모자라 한 단 올렸는데, 그 줄만 크면 같은 자리에 서는 답들이
+ * 서로 다른 무게로 읽힙니다 — 잘 된 일과 잘못된 일의 무게는 같아야 합니다.
+ * 바로 위 「못 내는 이유」 줄(`.order-submit-why`)과는 둘 중 하나만 서므로
+ * 나란히 견줄 일이 없습니다. */
+.order-result {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  /* 좁은 주문 칸이라 줄이 자주 꺾입니다 — 낱말 가운데서 끊지 않습니다. */
+  word-break: keep-all;
+}
+
+/* 서버가 안 받았습니다. */
+.order-result.is-rejected {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+/* **냈는지 모릅니다.** 오류색으로 두면 「안 나갔다」로 읽혀 한 번 더 내게
+ * 됩니다 — 이 자리에서 가장 나쁜 일입니다. */
+.order-result.is-unknown {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+/* 문장 자리. 급은 `.order-result` 와 같습니다 — 이 줄만 `div` 안에 들어 있어
+ * 바깥에서 물려받지 못하므로 여기서 한 번 더 적습니다. */
+.order-result-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* 결과를 모를 때 갈 곳. 「다시 보내기」가 아니라 **확인하러 가는** 길입니다.
+ * 문장과 다른 줄에 섭니다 — 문장 끝에 붙으면 마지막 낱말처럼 읽힙니다. */
+.order-result-go {
+  margin: 0;
+}
+
+/* 방금 얹힌 접수 줄. **한 번만 한 겹 깜빡입니다** — 「방금 이 줄이 생겼다」를
+ * 말하는 표시라, 계속 깔아 두면 그 줄이 다른 줄과 **다른 종류**로 읽힙니다.
+ * 방향색이 아닙니다: 이 줄은 체결된 것이 아니라 접수된 것입니다. */
+@keyframes order-accepted-flash {
+  from {
+    background-image: linear-gradient(rgb(var(--ink) / var(--tbl-picked)) 0 0);
+  }
+  to {
+    background-image: linear-gradient(rgb(var(--ink) / 0) 0 0);
+  }
+}
+
+.data-table tbody tr.is-accepted td {
+  animation: order-accepted-flash 1.2s ease-out 1;
+}
+
+/* 움직임을 줄여 달라고 한 사람에게는 깜빡이지 않습니다. 그 표시가 나르는 것은
+ * 「방금」 하나뿐이고, 상태 열의 「접수」가 같은 것을 글자로 말합니다. */
+@media (prefers-reduced-motion: reduce) {
+  .data-table tbody tr.is-accepted td {
+    animation: none;
+  }
+}
+
+/* 되묻는 창.
+ *
+ * 값은 라벨–값 넷이고, 틀렸을 때 피해가 큰 순서로 섭니다. 숫자는 본문색으로
+ * 두고 방향만 색 배지입니다 — 창 전체가 색이면 무엇을 봐야 하는지가 흐려집니다. */
+.order-confirm {
+  display: grid;
+  gap: 12px;
+  min-width: 320px;
+}
+
+.confirm-sheet {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.confirm-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.confirm-row dt {
+  font-size: 13px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+.confirm-row dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 되묻는 창의 방향 배지. **창에서 색을 쓰는 자리는 여기 하나**입니다 — 숫자까지
+ * 색으로 두면 무엇을 봐야 하는지가 흐려집니다. 채움 위 글자는 흰색이고, 두 방향의
+ * 대비를 같게 맞춘 것은 매수와 매도가 대등해야 하기 때문입니다. 색만으로 가르지
+ * 않도록 낱말이 함께 섭니다. */
+.confirm-row .badge-buy {
+  background: var(--up);
+  color: #fff;
+}
+
+.confirm-row .badge-sell {
+  background: var(--down);
+  color: #fff;
+}
+
+/* 취소는 고칠 값이 없어 한 문장입니다. */
+.confirm-sentence {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 문장 속 가격은 소수점 열을 맞출 일이 없습니다. 소수부 칸 폭을 잡아 두면 남는
+   폭이 뒤 낱말 앞에 빈칸으로 붙어, 글자처럼 이어 씁니다. */
+.confirm-sentence .num-dec {
+  display: inline;
+}
+
+.confirm-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 그만두기가 왼쪽, 실행이 오른쪽. 첫 초점은 왼쪽입니다 — 창이 뜬 순간
+ * Enter 를 눌러도 아무 일이 안 일어나야 합니다. */
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 정정·취소는 이미 낸 주문을 건드리는 일이라 카드 전체가 초록으로 물듭니다.
+ * 배지 하나로 알리면 새 주문을 내는 줄 알고 값을 고치는 일이 납니다.
+ * 방향 세그먼트의 빨강·파랑은 그대로 둡니다 — 무엇을 정정·취소하는지가
+ * 그 색이라, 여기서 지우면 어느 쪽 주문인지가 사라집니다. */
+.order-form-amend,
+.order-form-cancel {
+  background: var(--brand-soft);
+}
+
+.order-form-amend::before,
+.order-form-cancel::before {
+  background: var(--brand);
+}
+
+/* 청산은 바탕을 안 물들입니다. 물들이면 「특별해서 못 만지는 것」으로 보이는데,
+ * 수량을 줄이면 일부 청산이라 값은 바꿔도 됩니다. 정정(방향 못 바꿈)·취소
+ * (아무것도 못 바꿈)와 근본이 다릅니다.
+ *
+ * 대신 왼쪽 막대가 나가는 방향의 색으로 찹니다 — 같은 자리·같은 두께라 「모드가
+ * 걸려 있다」는 정정·취소와 같은 문법으로 읽히고, 색이 곧 어느 방향으로
+ * 나가는지를 말합니다. 청산에서 제일 중요한 사실입니다. */
+.order-form-close::before {
+  width: 4px;
+}
+
+.order-form-close.order-form-buy::before {
+  background: var(--up);
+}
+
+.order-form-close.order-form-sell::before {
+  background: var(--down);
+}
+
+.order-editing {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  height: 32px;
+  margin-bottom: 8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.order-editing-cancel {
+  flex: 0 0 auto;
+  margin-left: auto;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  /* 좁은 폼에서도 낱말 가운데서 끊지 않습니다(「그만두 / 기」). 줄어드는 것은
+   * 왼쪽 보유 글자입니다. */
+  white-space: nowrap;
+}
+
+/* 좁은 폼에서는 보유 글자가 두 줄로 감길 수 있어 줄 높이를 못 박지 않습니다. */
+.card-form[data-tight] .order-editing {
+  height: auto;
+  min-height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* ── 미체결 · 체결 ───────────────────────────────────── */
+
+/* 주문 내역 카드의 본문. 위 여백은 8 입니다 — 첫 줄인 36px 표 머리가 제 안에서
+ * 가운데 맞춤이라 글자 위아래로 이미 여유가 있습니다.
+ *
+ * 높이는 여기서 정하지 않습니다. 이 칸은 사용자가 경계를 끌어 키우는 자리라
+ * 실제 높이는 배치값(`tradeLayout.ts` 의 `lbHeight`)이 내고, 카드가 준 높이를
+ * 그대로 채웁니다 — 아래 `.trade-bottom-wrap > .orders-band` 가 그 규칙입니다. */
+.orders-band {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 8px 16px 12px;
+}
+
+/* 이 아래로는 표가 안 줄어듭니다. 사이드바를 열거나 창을 좁히면 종목 열이
+ * 한 글자까지 눌리는데, 이름이 「코」가 되면 읽을 것이 없습니다.
+ *
+ * **이 하한이 좁은 배치로 넘어가는 자리를 정합니다.** 여기에 카드 좌우 여백과
+ * 표의 세로 막대를 더한 값이 `tradeLayout.ts` 의 `ORDERS_WIDE` 이고, 그보다
+ * 좁은 칸에 서면 표를 미는 대신 열 묶음을 다시 짭니다(아래 `[data-narrow]`).
+ * **하한과 임계값은 한 쌍이라 따로 못 고칩니다** — 한쪽만 바꾸면 그 사이 폭에서
+ * 표가 밀립니다.
+ *
+ * 위로도 안 늘립니다. 넓은 창에서 열 여섯이 1100 에 퍼지면 종목과 동작이
+ * 800 넘게 벌어져 한 행을 눈으로 잇기 어렵습니다. */
+.orders-detail {
+  min-width: 543px;
+  max-width: 900px;
+}
+
+/* 열 폭을 못 박습니다. 표가 균등 분배라 좁은 창에서는 모든 열이 같이 좁아지고,
+ * 그러면 단추 둘이 든 동작 열이 가장 먼저 잘립니다 — 이름이 짧아지는 것은
+ * 읽으면 되지만 단추가 잘리면 누를 수가 없습니다.
+ *
+ * 남는 폭은 동작 열이 받습니다. 종목이 받으면 종목명과 구분 사이가 벌어지는데,
+ * 그 둘은 「무엇을, 사는 건가 파는 건가」로 붙여서 읽는 짝입니다.
+ * 동작은 순서대로 읽는 값이 아니라 작정하고 찾아가는 단추라, 오른쪽 끝에
+ * 고정되는 편이 낫습니다 — 되돌릴 수 없는 단추는 늘 같은 자리에 있어야 합니다. */
+/* 이름 165 + 여유 10. 더 긴 이름은 잘리고 전체는 마우스를 올려 봅니다 —
+ * 표 안의 이름은 헤더와 달리 이미 아는 것의 되풀이입니다. */
+.orders-detail th:nth-child(1) {
+  width: 175px;
+}
+
+.orders-detail th:nth-child(2),
+.orders-detail th:nth-child(5) {
+  width: 48px;
+}
+
+.orders-detail th:nth-child(3) {
+  width: 88px;
+}
+
+.orders-detail th:nth-child(4) {
+  width: 76px;
+}
+
+/* 줄의 종류(정정·취소)는 **그 배치에서 첫 열이 되는 칸**에 섭니다 — 넓은
+ * 배치에서는 종목 이름 옆, 좁은 배치에서는 구분 낱말 옆입니다.
+ *
+ * 상태 열에 두지 않은 까닭: 「종료」 옆에 「취소」가 서면 「취소되어 종료」로
+ * 읽히는데, 정작 취소당한 줄은 표지가 없는 원주문 줄입니다 — 세 줄의 뜻이
+ * 뒤집힙니다. 표지는 **그 줄이 무엇으로 낸 주문인가**이지 무엇이 그 줄을
+ * 끝냈는가가 아닙니다.
+ *
+ * 종목 열 하나로 끝내지 않은 까닭: 좁은 배치는 그 열을 통째로 접으므로(아래
+ * `[data-narrow]`) 그 자리에 둔 표지가 함께 사라집니다. 그래서 두 칸에 두고
+ * **보이는 쪽만** 세웁니다.
+ *
+ * **한 겹 아래에 둡니다.** 이 카드는 행 40 세 줄 + 표머리 36 = 156 에 꼭
+ * 맞고 `overflow: hidden` 이라 행이 자라면 한 줄이 칸 밖으로 밀려나는데,
+ * 이름 16 + 사이 2 + 표지 20 은 행 40 안에 들어가 행이 자라지 않습니다.
+ * 옆에 붙이면 같은 폭에서 이름이 그만큼 잘립니다 — 아래에 두면 이름이
+ * 온전합니다. */
+.orders-detail .orders-subject {
+  display: block;
+}
+
+.orders-detail .orders-kind {
+  margin-top: 2px;
+}
+
+/* 좁은 배치의 표지는 넓은 배치에서 접힙니다 — 두 칸에 같은 말이 겹쳐 서면
+ * 한 줄이 같은 것을 두 번 말합니다. */
+.orders-detail .orders-kind-narrow {
+  display: none;
+}
+
+/* 구분 열은 「매수」 두 글자에 맞춘 폭이라 안쪽이 32 뿐입니다. 표지의 좌우
+ * 여백을 2 씩 줄여 그 안에 들어갑니다 — 넘치면 칸이 말줄임 점을 달아, 잘린
+ * 것이 없는데도 뒤에 무엇이 더 있는 것처럼 읽힙니다. */
+.card-orders[data-narrow] .orders-detail .orders-kind-narrow {
+  display: inline-flex;
+  padding: 0 4px;
+}
+
+/* 동작 열은 폭을 안 박습니다. 남는 폭을 여기가 받고 단추는 오른쪽 끝에 섭니다. */
+.orders-detail .orders-actions {
+  justify-content: flex-end;
+}
+
+/* 표가 가로로 스크롤할 때 동작 열만 오른쪽에 고정합니다 — 되돌릴 수 없는
+ * 단추가 스크롤 밖으로 나가면, 볼 수는 있지만 누를 수 없는 자리가 됩니다.
+ * 체인에서 행사가 열을 왼쪽에 붙인 것과 같은 장치입니다.
+ *
+ * **지금 열 구성에서는 이 고정이 걸릴 자리가 없습니다.** 아래 경계선도
+ * 같습니다. 이 표는 두 배치 모두 제 하한을 늘 받습니다 — 넓은 배치는 543 을
+ * 받고, 그보다 좁은 칸에서는 밀기 전에 좁은 배치가 먼저 걸려 종목 열을 빼고
+ * 하한이 370 으로 내려갑니다. 카드가 더 작아질 수 없는 바닥(`tradeLayout.ts`
+ * 의 `orders.width`)이 그 370 에 맞춰 잡혀 있어, 어느 창에서도 넘칠 폭이
+ * 남지 않습니다.
+ *
+ * **넉넉해서가 아니라 딱 맞아서입니다 — 두 자리 모두 여유가 0 입니다.**
+ * 카드 바닥도 전환 임계값도 각각 제 하한에 카드 여백과 세로 막대를 더해
+ * 잡은 값이라, 넷 중 하나만 움직이면 그날로 밀립니다.
+ *
+ * **그래도 지우지 않습니다.** 켜고 끄는 장치(`data-scrolls`)는
+ * 미결제약정과 같은 것을 쓰고, 그 표는 같은 칸에서 하한이 620 이라 늘
+ * 밀립니다. 그리고 이 표가 다시 넘치는 데는 열 하나를 더하거나 카드 바닥을
+ * 내리는 것으로 충분합니다 — 그때 되돌릴 수 없는 단추가 먼저 스크롤 밖으로
+ * 나갑니다.
+ *
+ * **열을 더하거나 하한·바닥을 손볼 때는 고정과 경계선이 다시 서는지 함께 봅니다.** */
+.orders-detail th:last-child,
+.orders-detail td:last-child {
+  position: sticky;
+  right: 0;
+  /* 가로로 고정되는 칸이라 불투명이어야 합니다. 반투명이면 밑을 지나가는
+   * 열이 비칩니다. */
+  background-color: var(--surface);
+}
+
+/* 머리글은 위로도 고정돼 있어 다른 머리 칸보다 위에 있어야 합니다.
+ * 아래로 두면 옆 열 머리가 「동작」 위로 지나갑니다. 아래 경계 그림자를 이미
+ * 지고 있어 함께 적습니다 — 하나만 적으면 다른 하나가 지워집니다. */
+.orders-detail th:last-child {
+  z-index: 3;
+}
+
+/* **경계선은 넘칠 때만 긋습니다.** 표 안에 세로선을 안 긋는 것이 이 화면의
+ * 규칙이고, 유일한 예외가 「여기까지가 고정」입니다. 다 들어가는 창에서는
+ * 고정될 것이 없어 그 예외가 성립하지 않습니다 — 아무것도 안 가르는 세로
+ * 막대만 남습니다. 넘칠 때는 남는 폭이 0 이라 동작 열이 최소 폭이 되어,
+ * 그 모서리가 단추 바로 옆에 섭니다.
+ *
+ * 안쪽 그림자로 긋습니다 — 셀을 붙여 그리는 표에서 칸의 테두리는 칸이 아니라
+ * 표가 그리고, 그렇게 그린 것은 고정된 칸을 따라오지 않아 밀면 제자리에
+ * 남습니다. 안쪽 그림자는 칸이 직접 그립니다.
+ *
+ * 지금 이 표에서는 그 「넘칠 때」가 오지 않습니다 — 위 고정 주석에 이유와
+ * 그래도 두는 까닭이 있습니다. */
+.table-frame[data-scrolls] .orders-detail th:last-child,
+.table-frame[data-scrolls] .orders-detail td:last-child {
+  box-shadow: inset 1px 0 0 0 var(--divider);
+}
+
+/* 머리 칸은 아래 경계 그림자를 이미 지고 있어 함께 적습니다 — 하나만 적으면
+ * 다른 하나가 지워집니다. */
+.table-frame[data-scrolls] .data-table.orders-detail thead th:last-child {
+  box-shadow:
+    inset 0 -1px 0 var(--row-line),
+    inset 1px 0 0 0 var(--divider);
+}
+
+
+
+/* 행 높이를 못 박습니다. 한 칸에서 배지와 버튼이 줄바꿈하면 그 행만 키가
+ * 커지는데, 표에서 행 높이가 들쭉날쭉하면 훑을 수가 없습니다.
+ * 출처와 동작을 다른 열에 두는 것도 같은 이유입니다. */
+/* 열이 일곱이라 좁은 창에서는 다 안 들어갑니다. 그때 표가 가로로 스크롤하고
+ * 종목명은 그대로 둡니다 — 무엇을 청산하는지가 그 글자라, 「코스피200 …」로
+ * 잘리면 어느 만기인지가 사라집니다. 오른쪽 둘은 고정이라 늘 눌립니다.
+ *
+ * 열 폭을 못 박습니다. 안 박으면 균등 분배라 좁을 때 종목 열이 먼저 줄어들고,
+ * 넘치는 것을 숨기지 않으면 옆 칸 위에 겹쳐 그려집니다. */
+.orders-positions {
+  /* 끝까지 밀었을 때 마지막 열이 고정 열 오른쪽 모서리에 서게 하는 여백입니다.
+   * 얼마가 필요한지는 창마다 달라 `OrdersAndFills` 가 재서 넣습니다.
+   *
+   * **테두리가 아니라 바깥 여백입니다.** 셀을 붙여 그리는 표는 제 안쪽 여백을
+   * 무시하고, 미는 칸에 안쪽 여백을 주면 오른쪽에 붙어 있는 열이 그만큼 안으로
+   * 들어와 값 칸이 설 자리를 먹습니다. 바깥 여백은 밀 수 있는 거리에만 더해
+   * 집니다. */
+  margin-right: var(--pos-tail-w, 0px);
+  /* **표는 열 폭을 합한 만큼입니다.** 최소 폭을 따로 두면 그 폭에 못 미칠 때
+   * 남는 만큼이 평가손익 열로 흘러가, 종목 열이 받을 몫을 재는 자가 창마다
+   * 달라집니다. 폭은 아래에서 열마다 못 박으므로 최소 폭은 필요 없습니다. */
+  width: max-content;
+}
+
+/* **미는 단위는 칸입니다.** 이 표는 어느 창에서도 일곱 열이 다 안 들어가 늘
+ * 밀어서 보는데, 아무 데서나 서면 고정된 종목 열 옆에 라벨을 잃은 값이 남습니다
+ * (`4`·`1,3` 처럼). 헤더가 쓰는 것과 같은 규칙입니다 — 칸마다 멈추고, 멈추는
+ * 자리는 고정 열의 오른쪽 모서리입니다. */
+.orders-positions-frame {
+  /* 종목 열 폭. **가장 긴 이름은 이보다 넓습니다**(마스터 최장 「미국 울트라
+   * 30년 국채 둘째주 옵션 26년 9월물」이 284 필요) — 그런 이름은 잘린 채로
+   * 섭니다. 여기를 넓히면 값 칸이 설 자리가 그만큼 줄어, 평균가와 현재가를
+   * 한 화면에 못 세웁니다. 이름을 다 보이는 것은 #117 에서 두 줄로 봅니다. */
+  --pos-name-min: 210px;
+  /* 동작(청산) 열 폭. 고정 칸의 자리(`right`)와 `OrdersAndFills` 의 전환 셈이
+   * 모두 이 값을 읽습니다. */
+  --pos-action-w: 72px;
+  /* 고정 칸 사이에 밀리는 값이 설 가장 좁은 창. 이보다 좁으면 동작 열만
+   * 붙입니다(`data-pin-action`). */
+  --pos-middle-min: 96px;
+}
+
+.orders-positions-scroll {
+  /* 멈추는 자리는 **왼쪽에 붙은 열들의 끝**입니다. 그 폭은 배치마다 달라
+   * (넓은 칸은 종목 하나, 좁은 칸은 종목과 구분 둘) 재서 넣습니다. */
+  scroll-padding-left: var(--fixed-left, var(--pos-name-min));
+}
+
+/* 칸 단위 밀기는 **설 자리가 둘 이상일 때만** 켭니다. 자리가 하나뿐인데
+ * 반드시 서게 해 두면 밀어도 그 자리로 되돌아와 표가 잠깁니다. 자리를
+ * 세는 것은 `OrdersAndFills` 입니다. */
+.table-frame[data-snaps] .orders-positions-scroll {
+  scroll-snap-type: x mandatory;
+}
+
+/* 멈출 자리는 **판의 첫 칸**입니다. 어느 칸에서 멈출지는 폭에 따라 달라
+ * `OrdersAndFills` 가 정해 칸에 직접 답니다 — 여기서는 기본을 「안 멈춤」으로
+ * 두어, 아직 안 정해진 순간에 아무 데서나 서지 않게 합니다. */
+.orders-positions thead th {
+  scroll-snap-align: none;
+}
+
+/* 종목 열은 고정입니다 — 무엇을 청산하는지가 그 글자라, 밀어서 값을 보는
+ * 동안 이름이 나가면 어느 줄인지 알 수 없습니다. 장치는 불투명 바탕과
+ * 경계선 하나입니다.
+ *
+ * **바탕은 카드 바탕과 같은 색입니다.** 고정 칸이 아닌 칸은 바탕이 비어 카드
+ * 바탕이 비치므로, 둘이 같은 색이라야 고정 칸이 줄과 다른 띠로 안 섭니다.
+ * 줄에 손을 올리거나 고른 줄의 옅은 겹칠 색은 칸마다 얹히므로(`index.css`)
+ * 고정 칸에도 같이 얹힙니다. 그림자 띠는 두지 않습니다 — 띠가 머리 줄과 첫
+ * 값 칸의 글자를 덮었습니다.
+ *
+ * **경계선은 안쪽 그림자로 긋습니다.** 이 표는 셀을 붙여 그리므로
+ * (`border-collapse: collapse`) 칸의 테두리와 바깥 그림자를 칸이 아니라 표가
+ * 그립니다. 그렇게 그린 것은 고정된 칸을 따라오지 않아, 밀면 제자리에 남아
+ * 아무 데도 안 보입니다. 안쪽 그림자는 칸이 직접 그리므로 함께 움직입니다 —
+ * 머리글 아래 선이 같은 이유로 안쪽 그림자인 것과 같습니다. */
+.orders-positions th:first-child,
+.orders-positions td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background-color: var(--surface);
+}
+
+/* 폭은 **머리 칸에만** 겁니다. 열 폭은 그 열 칸들이 적어 낸 폭 중 가장 넓은
+ * 것으로 정해져, 값 칸에도 적으면 좁은 배치에서 이 열을 줄이려는 규칙이
+ * 값 칸이 적어 낸 폭에 막힙니다. */
+.orders-positions th:first-child {
+  /* 종목 열은 최소 폭에, **판이 트랙에 꼭 맞도록 남는 폭**을 더해 섭니다.
+   * 남는 폭을 값 칸 쪽에 두면 마지막 칸이 반쯤 걸려 라벨을 잃습니다. */
+  width: calc(var(--pos-name-min) + var(--pos-name-extra, 0px));
+}
+
+/* 경계선은 넘칠 때만입니다 — 다 들어가면 고정될 것이 없어, 표 안에 세로선을
+ * 안 긋는다는 규칙의 예외가 성립하지 않습니다. 이 표는 어느 창에서도 넘치므로
+ * 늘 서 있게 되지만, 규칙은 두 표가 같습니다. */
+.table-frame[data-scrolls] .orders-positions th:first-child,
+.table-frame[data-scrolls] .orders-positions td:first-child {
+  box-shadow: inset -1px 0 0 0 var(--divider);
+}
+
+/* 머리 칸은 세로로도 고정이라 한 단 위입니다. 그림자를 둘 함께 적습니다 —
+ * 머리는 아래 경계 그림자를 이미 지고 있고, 하나만 적으면 다른 하나가
+ * 지워집니다. */
+.data-table.orders-positions thead th:first-child {
+  z-index: 3;
+}
+
+.table-frame[data-scrolls] .data-table.orders-positions thead th:first-child {
+  box-shadow:
+    inset 0 -1px 0 var(--row-line),
+    inset -1px 0 0 0 var(--divider);
+}
+
+/* **가격 칸만 폭을 못 박습니다.** 구분과 수량은 제 내용만큼만 씁니다 —
+ * 넷을 같은 폭으로 두면 짧은 둘에 가격 칸 폭이 가서, 1200 에서 68px 이 그냥
+ * 버려지고 그만큼 표가 넘칩니다.
+ *
+ * 가격 칸 폭은 `OrdersAndFills` 가 **이 종목이 속한 무리의 가장 긴 행을 그려
+ * 재서** 넣습니다. 자릿수로 계산하면 실제로는 없는 행의 폭이 나옵니다. 후보
+ * 행을 못 받은 색인에서는 아래 기본값이 섭니다. */
+.orders-positions th:nth-child(4),
+.orders-positions th:nth-child(5) {
+  width: var(--pos-value-w, 100px);
+}
+
+/* 오른쪽 둘을 함께 붙입니다. 청산 단추는 되돌릴 수 없는 자리라 늘 눌릴 수
+ * 있어야 하고, 평가손익은 이 표를 보는 이유라 나가면 표를 볼 이유가 사라집니다.
+ * 주문체결상세의 동작 열과 같은 장치입니다.
+ *
+ * 청산 칸은 굴림 칸 밖으로 1px 내어 붙입니다. 표 폭이 소수점 자리로 끝나면 칸의
+ * 오른쪽 모서리가 굴림 칸 끝에 한 줄 못 미쳐, 그 틈으로 밑의 값 글자가 비칩니다.
+ * 늘어난 1px 은 안쪽 여백으로 돌려 단추 자리를 지키고, 평가손익도 그만큼 붙여
+ * 두 칸 사이에 틈이 안 생기게 합니다. */
+.orders-positions th:last-child,
+.orders-positions td:last-child {
+  position: sticky;
+  right: -1px;
+  width: var(--pos-action-w);
+  padding-right: calc(var(--cell-pad-x) + 1px);
+  /* 가로로 고정되는 칸이라 불투명이어야 합니다. */
+  background-color: var(--surface);
+}
+
+.orders-positions th:nth-last-child(2),
+.orders-positions td:nth-last-child(2) {
+  position: sticky;
+  right: calc(var(--pos-action-w) - 1px);
+  background-color: var(--surface);
+}
+
+/* 붙어 있는 둘의 바깥 경계입니다. 사이에는 안 긋습니다 — 한 덩어리입니다.
+ * 종목 열과 같은 장치를 거울로 답니다 — 이쪽 경계 밑으로도 값이 지나갑니다. */
+.table-frame[data-scrolls] .orders-positions th:nth-last-child(2),
+.table-frame[data-scrolls] .orders-positions td:nth-last-child(2) {
+  box-shadow: inset 1px 0 0 0 var(--divider);
+}
+
+.orders-positions th:last-child,
+.orders-positions th:nth-last-child(2) {
+  z-index: 3;
+}
+
+/* 머리 칸은 아래 경계 그림자를 이미 지고 있어 함께 적습니다 — 하나만 적으면
+ * 다른 하나가 지워집니다. */
+.table-frame[data-scrolls] .data-table.orders-positions thead th:nth-last-child(2) {
+  box-shadow:
+    inset 0 -1px 0 var(--row-line),
+    inset 1px 0 0 0 var(--divider);
+}
+
+/* **동작 열만 붙이는 폭.** 틀 안쪽이 고정 칸들(왼쪽 종목 — 좁은 배치는 구분까지
+ * —, 오른쪽 평가손익·동작)에 가운데 창 `--pos-middle-min` 을 더한 폭보다 좁으면
+ * 고정 칸끼리 겹쳐 청산 단추가 잘리고 머리 글자가 가려집니다. 그때는 청산 열
+ * 하나만 오른쪽에 붙이고 나머지는 보통으로 밉니다 — 되돌릴 수 없는 단추는 늘
+ * 눌리고, 이름·구분·평가손익은 밀어서 봅니다. 폭 판정은 `OrdersAndFills` 가
+ * 잰 열 폭으로 합니다(`data-pin-action`).
+ *
+ * 머리 칸은 세로 고정(`top`)을 지키고 가로 자리만 풉니다 — `position` 을 지우면
+ * 굴릴 때 머리가 함께 올라갑니다. */
+.table-frame.orders-positions-frame[data-pin-action] .orders-positions th:first-child,
+.table-frame.orders-positions-frame[data-pin-action] .orders-positions td:first-child,
+.table-frame.orders-positions-frame[data-pin-action] .orders-positions th:nth-last-child(2),
+.table-frame.orders-positions-frame[data-pin-action] .orders-positions td:nth-last-child(2),
+.card-orders[data-narrow] .table-frame.orders-positions-frame[data-pin-action] .orders-positions th:nth-child(2),
+.card-orders[data-narrow] .table-frame.orders-positions-frame[data-pin-action] .orders-positions td:nth-child(2) {
+  left: auto;
+  right: auto;
+  z-index: auto;
+}
+
+.table-frame.orders-positions-frame[data-pin-action] .orders-positions td:first-child,
+.table-frame.orders-positions-frame[data-pin-action] .orders-positions td:nth-last-child(2),
+.card-orders[data-narrow] .table-frame.orders-positions-frame[data-pin-action] .orders-positions td:nth-child(2) {
+  position: static;
+  box-shadow: none;
+}
+
+.table-frame.orders-positions-frame[data-pin-action] .data-table.orders-positions thead th:first-child,
+.table-frame.orders-positions-frame[data-pin-action] .data-table.orders-positions thead th:nth-last-child(2),
+.card-orders[data-narrow] .table-frame.orders-positions-frame[data-pin-action] .data-table.orders-positions thead th:nth-child(2) {
+  z-index: 2;
+  box-shadow: inset 0 -1px 0 var(--row-line);
+}
+
+/* 붙은 청산 칸은 밑으로 지나가는 값 칸보다 위에 섭니다. */
+.table-frame.orders-positions-frame[data-pin-action] .orders-positions td:last-child {
+  z-index: 2;
+}
+
+/* 붙어 있는 것은 청산 열 하나라 경계선도 그 앞에 섭니다. */
+.table-frame.orders-positions-frame[data-pin-action][data-scrolls] .orders-positions td:last-child {
+  box-shadow: inset 1px 0 0 0 var(--divider);
+}
+
+.table-frame.orders-positions-frame[data-pin-action][data-scrolls] .data-table.orders-positions thead th:last-child {
+  box-shadow:
+    inset 0 -1px 0 var(--row-line),
+    inset 1px 0 0 0 var(--divider);
+}
+
+/* 고정 열이 있는 표를 감싼 자리. 넘치는지(`data-scrolls`)와 멈출 자리를
+ * `OrdersAndFills` 가 재서 여기에 답니다. */
+.table-frame {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  /* 굴림 끝 흐림의 폭. 계좌 요약 띠와 같은 값입니다. */
+  --fade-w: 24px;
+}
+
+/* **굴림 끝 흐림.** 밀리는 표는 굴림 칸 끝에서 값이 잘리는데, 잘린 조각은
+ * 온전한 값처럼 읽힙니다(「+4,575,000」의 끝이 「+4」로). 가려진 쪽 끝을 흐려
+ * 「여기서 이어진다」를 말합니다.
+ *
+ * 가림막은 굴림 칸에 겁니다 — 칸 자리에 고정되어 안 밀리므로, 붙어 있는 칸이
+ * 서는 폭(`--fade-left-at`·`--fade-right-at`, `OrdersAndFills` 가 잽니다)은
+ * 가리지 않고 그 바로 안쪽만 흐립니다. 가로 막대(`--fade-bar` 높이) 자리는
+ * 둘째 겹으로 늘 보이게 둡니다. */
+.table-frame[data-fade-left] .table-scroll,
+.table-frame[data-fade-right] .table-scroll {
+  mask-repeat: no-repeat;
+  mask-size:
+    100% 100%,
+    100% var(--fade-bar, 0px);
+  mask-position:
+    0 0,
+    0 100%;
+  mask-composite: add;
+}
+
+.table-frame[data-fade-right]:not([data-fade-left]) .table-scroll {
+  mask-image:
+    linear-gradient(
+      to right,
+      #000 calc(100% - var(--fade-right-at) - var(--fade-w)),
+      transparent calc(100% - var(--fade-right-at)),
+      #000 calc(100% - var(--fade-right-at))
+    ),
+    linear-gradient(#000, #000);
+}
+
+.table-frame[data-fade-left]:not([data-fade-right]) .table-scroll {
+  mask-image:
+    linear-gradient(
+      to right,
+      #000 var(--fade-left-at),
+      transparent var(--fade-left-at),
+      #000 calc(var(--fade-left-at) + var(--fade-w))
+    ),
+    linear-gradient(#000, #000);
+}
+
+.table-frame[data-fade-left][data-fade-right] .table-scroll {
+  mask-image:
+    linear-gradient(
+      to right,
+      #000 var(--fade-left-at),
+      transparent var(--fade-left-at),
+      #000 calc(var(--fade-left-at) + var(--fade-w)),
+      #000 calc(100% - var(--fade-right-at) - var(--fade-w)),
+      transparent calc(100% - var(--fade-right-at)),
+      #000 calc(100% - var(--fade-right-at))
+    ),
+    linear-gradient(#000, #000);
+}
+
+.orders-band .data-table tbody tr {
+  height: 40px;
+}
+
+.orders-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.orders-actions .btn {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 체결은 열을 맞춰 비교하는 자료가 아니라 「방금 무엇이 얼마에 나갔나」를
+ * 위에서부터 읽는 자료라 표가 아니라 목록입니다. */
+.fill-head,
+.fill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 68px) minmax(0, 1fr) minmax(0, 84px) minmax(0, 52px);
+  align-items: center;
+  gap: 16px;
+  padding: 0 8px;
+}
+
+.fill-head {
+  height: 36px;
+}
+
+.fill-head span:nth-child(3),
+.fill-head span:nth-child(4),
+.fill-price,
+.fill-qty {
+  text-align: right;
+}
+
+.fill-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fill-row {
+  height: 40px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fill-row:hover {
+  background: var(--hover);
+}
+
+.fill-time {
+  color: var(--text-label);
+}
+
+.fill-price {
+  font-weight: 600;
+}
+
+
+/* ── 시세체결 ────────────────────────────────────────── */
+
+/* 호가 아래 절반. 체결 틱은 웹소켓으로만 오므로 들어온 직후에는 비어 있고,
+ * 제목의 시각이 「그때부터 아직 없음」을 말합니다. */
+.ticks {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--divider);
+}
+
+.ticks-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  padding: 0 6px 4px;
+}
+
+/* 이 화면에서 자리를 내주는 쪽입니다. 호가 21행은 어느 상태에서도 안 줄이므로,
+ * 헤더가 두 줄이 되거나 창이 낮아지면 그 높이를 여기서 받습니다.
+ * 바닥을 두지 않습니다 — 여기에 하한을 두면 대신 호가 열이 통째로 스크롤해서
+ * 사다리 아래쪽이 잘립니다. */
+.ticks-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tick-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tick-time {
+  color: var(--text-dim);
+}
+
+.tick-qty {
+  color: var(--text-label);
+}
+
+/* 자리가 한 행뿐일 때. 머리글 없이 최신 체결만 섭니다 — 적어도 이 한 줄은
+ * 진짜 값이고, 「없음」과 「자리 없음」이 같은 모양이 되지 않습니다. */
+.tick-row-only {
+  flex: 0 0 auto;
+}
+
+/* 한 줄도 못 놓을 때. 여백과 구분선까지 걷어야 호가가 그만큼을 돌려받습니다 —
+ * 내용만 비우면 13px 이 그대로 남습니다. */
+.ticks-gone {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* 이 카드는 좁아서(사다리와 같은 열) 한 마디가 두 줄로 접힙니다. **낱말
+ * 안에서 접지 않습니다** — 한글은 글자마다 접을 수 있어 그냥 두면
+ * 「쌓입니 / 다」로 잘리고, 그렇게 잘린 글자는 읽는 데 한 박자가 더 듭니다. */
+.ticks-empty {
+  padding: 8px 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+
+/* ── 옵션 체인 ────────────────────────────────────────── */
+
+/* 체인이 든 탭은 카드 안쪽 여백을 좁힙니다. 이 탭에서 여백은 곧 행 수라,
+ * 다른 탭과 같은 20 을 두면 보이는 행사가가 두 개 줄어듭니다. */
+.trade-panel:has(.chain-panel) {
+  padding: 10px 12px 12px;
+}
+
+/* 차트 탭에서는 넘침 처리를 끕니다. 지표 설정 팝오버가 카드보다 길어서,
+ * 켜 두면 팝오버가 카드를 스크롤시켜 자기가 뜬 자리를 흔듭니다 — 떠 있는
+ * 것은 아래를 덮어야지 아래를 밀면 안 됩니다. 차트 자체는 카드 크기에 맞춰
+ * 그려지므로 넘칠 것이 없습니다. */
+.trade-panel:has(.chart-panel) {
+  overflow: visible;
+}
+
+/* 체인은 왼쪽 열의 첫 탭입니다. 행이 수십 개라 패널을 채우고 안에서 스크롤합니다. */
+.chain-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+}
+
+.chain-controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 12px;
+}
+
+/* 열 묶음 고르기. 열을 하나씩 켜고 끄면 망가진 조합이 남을 수 있어
+ * 어느 것을 골라도 온전한 묶음으로 갈아 끼웁니다. */
+.chain-select {
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 열마다 최소폭이 있고, 그 합보다 좁아지면 가로로 스크롤합니다.
+ * 기본 묶음(시세)은 최소 창에서도 스크롤이 나지 않는 폭입니다. */
+.chain-scroll {
+  overflow-x: auto;
+}
+
+/* 폭을 열이 정합니다. colgroup 의 고정 열은 실측 최소폭을 지키고,
+ * 폭을 비워 둔 막대 열이 남는 자리를 나눠 갖습니다. */
+.chain-table {
+  table-layout: fixed;
+}
+
+/* 체인은 조밀한 화면입니다. 행이 몇 개 보이느냐가 이 표의 쓸모라,
+ * 남는 세로는 여백이 아니라 행으로 돌립니다. */
+.chain-table tbody tr {
+  height: 26px;
+}
+
+/* 머리글이 두 줄이라 아래 줄은 위 줄 높이만큼 내려서 고정합니다.
+ * 선택자를 표까지 붙인 것은 위쪽 공통 규칙의 top:0 을 넘기기 위해서입니다.
+ *
+ * 머리글은 가로로도 고정되는 행사가 열보다 위에 있어야 합니다. 아래여서
+ * 행사가 열이 머리글 위로 지나가면, 스크롤한 행이 머리글 자리에 겹쳐 보입니다. */
+.chain-table thead th {
+  z-index: 5;
+}
+
+/* **줄에도 바탕을 깝니다.** 칸(`th`)에는 이미 표면색이 있는데, 테두리를 붙여
+   그리는 표에서는 고정된 칸의 바탕과 몸통 줄이 서로 다른 층에 그려져, 머리 밑을
+   지나가는 글자가 비쳐 나옵니다 — 몸통을 숨기고 재 보면 그 자리가 깨끗합니다.
+   줄에 한 겹 더 깔면 층이 메워집니다. 색 띠를 두는 것이 아니라 카드와 같은
+   표면색이라, 새로 보이는 것은 없고 겹침만 사라집니다. */
+.chain-table .chain-group-row,
+.chain-table .chain-field-row {
+  background-color: var(--surface);
+}
+
+.chain-table .chain-group-row th {
+  top: 0;
+  height: 22px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.chain-table .chain-field-row th {
+  top: 22px;
+}
+
+/* 행사가 열은 표의 축입니다. 가로로 스크롤해도 남고, 좌우 대칭 구조가
+ * 보이려면 가운데가 서야 하므로 다른 열보다 진하게 둡니다. */
+.chain-strike {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  /* 가로로 고정되는 열이라 불투명이어야 합니다. 반투명이면 스크롤할 때
+   * 밑을 지나가는 열이 비칩니다. */
+  background-color: var(--strike-bg);
+  text-align: center;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 64px;
+}
+
+/* 체인은 열 사이가 넓어야 좌우 비교가 됩니다. */
+.chain-table th,
+.chain-table td {
+  padding: 0 10px;
+}
+
+/* 사용자가 실제로 보는 구간입니다. 기초 선물 배지 주변에만 한 단 진한 바탕을
+ * 깔아 구간을 만듭니다 — 행이 수십 개라 행마다 표시할 수는 없습니다. */
+.chain-near .chain-strike {
+  background-color: var(--strike-near);
+}
+
+/* 머리글의 행사가 칸은 몸통과 같은 색입니다. 다르면 기둥이 꼭대기에서 끊깁니다. */
+.chain-table thead .chain-strike {
+  z-index: 6;
+  background-color: var(--strike-bg);
+}
+
+/* 콜이 유리한 구간과 풋이 유리한 구간을 배경 명암으로 가릅니다.
+ * 기초 선물 배지 위쪽은 풋이, 아래쪽은 콜이 칠해집니다. */
+.chain-itm {
+  background-color: rgb(var(--ink) / var(--tbl-wash));
+}
+
+.chain-atm .chain-strike {
+  font-weight: 700;
+}
+
+/* 기초 선물의 현재가를 행 사이에 끼워 넣어 두 구간을 가릅니다.
+ * 값이 아니라 위치로 알려주는 방식이라 열을 하나도 쓰지 않습니다. */
+.rows-dense tbody tr.chain-mark {
+  height: 24px;
+}
+
+.chain-mark td {
+  padding: 0 8px;
+}
+
+/* 배지 줄은 값이 있는 행이 아니라 구간을 가르는 자리라 강조하지 않습니다. */
+.data-table tbody tr.chain-mark:hover td {
+  background-color: transparent;
+  background-image: none;
+}
+
+.chain-mark-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chain-mark-line::before,
+.chain-mark-line::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--divider);
+}
+
+.chain-mark-badge {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 미결제는 맥락이고 자주 보는 건 거래량입니다. 둘이 같은 무게면 둘 다 안 읽힙니다. */
+.chain-table .col-oi {
+  color: var(--text-label);
+  font-weight: 400;
+}
+
+/* 거래량은 숫자 뒤에 비례 배경 바를 깔면 훑기가 빨라집니다.
+ * 방향이 없는 값이라 중립 회색을 씁니다. */
+.vol-cell {
+  position: relative;
+}
+
+/* 바는 숫자와 같은 쪽 끝에서 자라고, 숫자 아래에 따로 놓입니다.
+ * 숫자 뒤에 깔면 둘이 같은 자리를 다투고 열이 넓어질수록 면적이 큰 쪽이
+ * 이깁니다 — 값(숫자)보다 그 값의 모양(막대)이 먼저 보이면 순서가 뒤집힙니다.
+ * 떼어놓으면 그 다툼이 없어지고, 얇아서 폭이 늘어도 무게가 덜 변합니다. */
+.vol-bar {
+  position: absolute;
+  right: 0;
+  bottom: 3px;
+  height: 4px;
+  border-radius: 2px;
+  background-color: rgb(var(--ink) / var(--tbl-bar));
+}
+
+/* 미결제는 맥락이고 자주 보는 것은 거래량입니다. 글자만이 아니라 막대도
+ * 한 단 옅어야 둘의 무게가 갈립니다. */
+.col-oi .vol-bar {
+  background-color: rgb(var(--ink) / var(--tbl-bar-2));
+}
+
+.vol-value {
+  position: relative;
+}
+
+/* ── 패널 배치 — 자리 바꾸기·크기 조절 ───────────────────── */
+
+/* 카드 머리 띠: [손잡이][이 카드가 무엇인가] …… [카드에 대한 동작].
+ *
+ * 카드마다 똑같은 껍데기입니다 — 같은 높이, 같은 안쪽 여백, 같은 자리의 손잡이.
+ * 카드마다 머리가 1~2px 씩 다르면 「같은 머리」로 안 읽히므로 높이를 min-height
+ * 가 아니라 height 로 못 박습니다. 36 은 띠에 서는 것 중 제일 높은 탭 알약
+ * (28 + 안쪽 여백 2 x 2 = 32) 위아래로 2 씩 둔 값입니다.
+ *
+ * 규칙 하나: 띠는 「이게 무슨 카드인가」만 답합니다. 보이는 값을 바꾸는 것은
+ * 전부 선 아래입니다 — 봉 종류·지표 단추가 차트 카드의 본문 첫 줄인 이유입니다.
+ *
+ * 구분선은 카드 폭 전체를 지납니다. 안쪽으로 들이면 「위는 껍데기, 아래는
+ * 내용」이 아니라 「내용 안의 한 칸」으로 보입니다. 두께는 이 화면의 다른
+ * 잔선과 같은 1px 이고, 대신 색을 한 단 진하게 씁니다(`--card-divider`) —
+ * 굵기를 올리면 머리가 값보다 먼저 보이지만, 흰 면 위에서 안 보이는 선은
+ * 아예 없는 것과 같습니다.
+ *
+ * 위 모서리는 띠가 직접 깎습니다. 차트 카드는 지표 팝오버가 카드 밖으로 떠야
+ * 해서 넘침을 안 자르므로, 카드에 맡기면 선 양 끝이 모서리 밖으로 삐져나옵니다.
+ *
+ * 바탕은 어떤 상태에서도 안 변합니다. 방향색(매수·매도)도 모드색(정정·취소)도
+ * 선 아래에만 듭니다. */
+/* 높이 36 은 `tradeLayout.ts` 의 `HEAD_HEIGHT` 와 같은 값입니다. 접힌 카드는
+ * 이 띠 하나가 카드의 전부라 격자가 그 높이를 알아야 하고, 한쪽만 고치면
+ * 접힌 카드의 아래쪽이 잘립니다 — 두 곳을 함께 고치세요. */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 12px 0 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--card-divider);
+  border-radius: 12px 12px 0 0;
+  /* 빈 자리에 글자 커서가 뜨지 않게 합니다 — 띠에는 고를 글자가 없습니다. */
+  cursor: default;
+}
+
+/* 접혀서 띠 하나가 카드의 전부일 때. 나눌 아래가 없으므로 선을 지우고 네
+ * 모서리를 모두 깎습니다 — 안 그러면 카드 바닥에 이유 없는 잔선이 남습니다. */
+.trade-card[data-collapsed='true'] .card-head {
+  border-bottom: none;
+  border-radius: 12px;
+}
+
+/* 한 자리에 여럿이 서면 탭 알약이 곧 그 자리의 이름입니다. 띠 안에서 제 폭만
+ * 쓰고 늘어나지 않습니다 — 늘어나면 오른쪽 동작 자리를 밀어냅니다. 세로는 띠가
+ * 가운데로 세웁니다: 36 안에서 32 가 위로 붙으면 카드마다 다른 자리가 됩니다. */
+.trade-tabs,
+.trade-bottom-tabs {
+  flex: 0 0 auto;
+}
+
+/* 카드 이름. 탭이 없는 카드(호가·주문)의 식별 물체입니다.
+ *
+ * 칩이 아니라 맨 글자입니다 — 칩은 「빼낼 수 있는 것」을 뜻하는데 이 화면의
+ * 카드는 자리를 옮길 뿐 빼낼 수는 없습니다. 13px/600 도 안 씁니다. 이 화면에서 그 무게는
+ * 「누르는 것」이라, 이름에 쓰면 눌러 보게 됩니다. */
+.card-name {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+/* 이 카드의 값이 언제 것인가. **자리가 모자라 실시간이 안 붙은 칸에만** 섭니다.
+ * 시세체결 머리의 「HH:MM 부터」와 같은 꼴이라 앱 안에서 말이 하나입니다 —
+ * 없는 것에 이름을 붙이는 대신 있는 것(값의 시각)을 적습니다.
+ * 배지가 아니라 맨 글자입니다. 상태가 아니라 값에 붙은 이름표입니다. */
+.card-since {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+/* 띠 오른쪽 끝. 카드 자체에 대한 동작만 섭니다 — 크기·자리·펼침입니다.
+ * 순서는 「기본 배치로」 다음에 그 카드만의 동작(접기·확대)입니다. */
+.card-head-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.card-head-btn {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 손잡이. 평소엔 옅게 서 있다가 카드에 손이 오면 진해지고, 손잡이 자체에 손이
+ * 오면 바탕이 생깁니다. 항상 조금은 보입니다 — 숨겨 두면 옮길 수 있다는 것을
+ * 알 길이 없습니다. 손잡이에서만 끌기가 시작되어 카드 안 클릭(호가 누르기·
+ * 차트 드래그)과 겹치지 않습니다. */
+.card-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  opacity: 0.35;
+  cursor: grab;
+  user-select: none;
+  /* 끌기를 포인터로 직접 따라가므로 이 손잡이 위에서는 화면 스크롤 제스처를
+   * 넘기지 않습니다. */
+  touch-action: none;
+  transition:
+    opacity 0.12s,
+    background-color 0.12s;
+}
+
+/* 카드를 끄는 동안에는 격자 전체가 쥔 손입니다. 손잡이를 떠나 다른 카드 위로
+ * 가면 그쪽 커서(단추·호가 줄)가 나오는데, 그러면 놓을 수 있는 곳인지 아닌지가
+ * 커서로는 안 읽힙니다 — 답은 카드에 뜨는 점선이 합니다. */
+.trade-split[data-dragging='true'],
+.trade-split[data-dragging='true'] * {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* 손잡이가 없는 상태(확대)에서 그 자리를 지키는 빈칸. 손잡이와 같은 폭입니다. */
+.card-grip-space {
+  flex: 0 0 auto;
+  width: 20px;
+}
+
+.card-grip svg {
+  display: block;
+  width: 10px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.trade-card:hover .card-grip,
+.card-grip:focus-visible {
+  opacity: 1;
+}
+
+.card-grip:hover,
+.card-grip:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  opacity: 1;
+  outline: none;
+}
+
+.card-grip:focus-visible {
+  box-shadow: inset 0 0 0 1.5px var(--brand);
+}
+
+.card-grip:active {
+  cursor: grabbing;
+}
+
+/* 끌고 있는 카드. 자리는 그대로 두고 흐려집니다 — 「지금 들려 있어 비어 있는
+ * 자리」입니다. 손을 따라다니는 것은 아래의 쪽지입니다.
+ *
+ * 카드를 포인터 쪽으로 옮기지 않습니다. 격자는 남는 자리 없이 창을 꽉 채우고
+ * 있어서, 오른쪽 끝이나 맨 아래 카드를 몇 픽셀만 밀어도 격자에 스크롤 막대가
+ * 생기고, 막대가 먹은 만큼 열이 좁아지면서 끌기 시작하자마자 카드가 다 같이
+ * 움직입니다.
+ *
+ * 테두리는 초록 실선입니다. 어두운 화면에서는 그림자가 바탕에 묻혀 들린 것이
+ * 안 보이는데, 지금 손에 든 카드가 무엇인지는 두 화면에서 똑같이 보여야
+ * 합니다. 놓을 자리는 같은 초록의 점선이라 둘이 한 벌로 읽힙니다.
+ *
+ * 그동안 포인터를 안 받습니다 — 이 카드 위를 지날 때 아래에 있는 이웃이
+ * 대상으로 잡혀야 합니다. 자기 자신은 어차피 놓을 대상이 아닙니다. */
+.trade-card[data-lifting='true'] {
+  z-index: 20;
+  opacity: 0.45;
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.trade-card[data-lifting='true'] .card-grip {
+  opacity: 1;
+  background: var(--hover);
+  cursor: grabbing;
+}
+
+/* 끄는 동안 손끝을 따라다니는 쪽지 — 지금 들고 있는 카드의 이름입니다.
+ * 카드가 제자리에 서 있으므로, 카드 사이 빈 곳이나 경계 위에서는 이것만이
+ * 끌고 있다는 것을 말합니다. 놓으면 무슨 일이 일어나는지는 대상 카드가 제
+ * 자리에서 말하므로 여기서는 되풀이하지 않습니다.
+ *
+ * 포인터 오른쪽 아래로 비켜 섭니다 — 손끝을 덮으면 무엇을 가리키고 있는지가
+ * 안 보입니다. 포인터는 이 쪽지를 통과합니다. */
+.drag-chip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  margin: 16px 0 0 16px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.24);
+  pointer-events: none;
+}
+
+/* 놓으면 자리를 바꿀 카드. 점선과 연초록 바탕, 안의 내용은 흐려지고 가운데에
+ * 무슨 일이 일어날지 한마디. 키보드로 고른 대상도 같은 표시입니다. */
+.trade-card[data-drop='true'] {
+  outline: 2px dashed var(--brand);
+  outline-offset: -2px;
+  border-radius: 12px;
+  background: var(--brand-soft);
+}
+
+.trade-card[data-drop='true'] > * {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* 이때만 머리 띠가 제 바탕을 내려놓습니다. 흰 면을 든 채로 흐려지면 띠만
+ * 옅게 남아, 놓을 자리로 물든 카드가 두 조각으로 보입니다. */
+.trade-card[data-drop='true'] .card-head {
+  background: transparent;
+}
+
+/* 카드 높이는 자리마다 다릅니다. 아래 칸을 접어 두면 머리 띠 하나(36)가
+ * 카드의 전부라, 이 표시가 그보다 크면 카드가 잘라 냅니다 — 반쯤 잘린 글자는
+ * 「여기 놓으면 된다」를 말하지 못합니다. 가장 낮은 카드에 맞춘 크기입니다. */
+.trade-card[data-drop='true']::after {
+  content: '여기로 바꾸기';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--brand-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgb(15 27 46 / 0.12);
+  pointer-events: none;
+}
+
+/* 카드 사이 경계. 평소엔 빈 틈이고, 가까이 가면 가운데 2px 초록 선이 서고
+ * 커서가 바뀝니다. 틈(12px) 전체가 잡히는 자리입니다. */
+.col-resizer,
+.row-resizer {
+  position: relative;
+  z-index: 2;
+  touch-action: none;
+}
+
+.col-resizer {
+  cursor: col-resize;
+}
+
+.row-resizer {
+  cursor: row-resize;
+}
+
+/* 잠긴 경계. 확대에서 차트 쪽 폭은 차트가 남는 자리를 다 쓰는 것이라 손으로
+ * 정할 값이 아닙니다. **자리는 지키되 잡히지 않는다는 것이 보여야** 합니다 —
+ * 끌 수 있는 모양인데 안 움직이면 고장으로 읽힙니다. */
+.col-resizer.is-locked,
+.row-resizer.is-locked {
+  cursor: default;
+}
+
+/* 한쪽 끝에 닿으면 커서가 아직 갈 수 있는 쪽만 가리킵니다. 양쪽 화살표인 채로
+ * 안 움직이면 화면이 멈춘 것으로 보이는데, 실제로는 이웃 카드가 제 바닥에
+ * 닿아 더 나눌 자리가 없는 것입니다. 말풍선이 함께 회색이 됩니다. */
+.col-resizer[data-limit='left'] {
+  cursor: w-resize;
+}
+
+.col-resizer[data-limit='right'] {
+  cursor: e-resize;
+}
+
+.row-resizer[data-limit='up'] {
+  cursor: n-resize;
+}
+
+.row-resizer[data-limit='down'] {
+  cursor: s-resize;
+}
+
+.col-resizer::after,
+.row-resizer::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: var(--brand);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.col-resizer::after {
+  top: 12px;
+  bottom: 12px;
+  left: 5px;
+  width: 2px;
+}
+
+.row-resizer::after {
+  left: 12px;
+  right: 12px;
+  top: 5px;
+  height: 2px;
+}
+
+.col-resizer:hover::after,
+.row-resizer:hover::after,
+.col-resizer[data-active='true']::after,
+.row-resizer[data-active='true']::after {
+  opacity: 1;
+}
+
+/* 끄는 동안 포인터 옆의 값. 바닥에 닿아 더 못 줄면 회색으로 바뀝니다. */
+.resize-pill {
+  position: fixed;
+  z-index: 30;
+  transform: translate(12px, -50%);
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.resize-pill[data-floor='true'] {
+  background: var(--text-dim);
+}
+
+/* 표·폼 카드가 넓은 칸(왼쪽 열)에 서면 내용은 제 폭을 지킵니다. 호가 막대가
+ * 600px 로 늘어나거나 매수·매도 세그먼트가 카드를 다 채우면 좁은 열에 있을 때와
+ * 다른 화면이 됩니다. 폭을 묶는 것은 본문뿐이고, 카드 머리 띠는 어느 칸에서든
+ * 카드 폭 전체입니다 — 껍데기는 카드의 크기를 말하고 본문은 제 크기를 지킵니다.
+ *
+ * 둘 다 왼쪽에서 시작합니다. 띠의 손잡이가 카드 왼쪽에 시작점을 세우므로,
+ * 본문이 가운데로 물러나면 손잡이 아래가 비고 내용이 옆에서 시작합니다. */
+.card-book[data-slot^='l'] > .order-book {
+  width: 100%;
+  max-width: 320px;
+  align-self: flex-start;
+}
+
+.card-form[data-slot^='l'] > .order-form {
+  width: 100%;
+  max-width: 360px;
+  align-self: flex-start;
+}
+
+/* 주문 내역이 좁은 칸에 서면 열 묶음을 다시 짭니다. **어느 자리냐가 아니라
+ * 그 칸이 표를 다 펴기에 좁으냐를 봅니다** — 오른쪽 두 열이든 좁아진 왼쪽
+ * 열이든 표가 겪는 일은 같습니다.
+ *
+ * 열을 그대로 두고 가로로 밀면 무엇을 사고파는 주문인지가 어느 스크롤
+ * 자리에서도 안 보여, 똑같이 생긴 행에 취소 단추만 남습니다 — 되돌릴 수 없는
+ * 단추일수록 무엇에 대한 단추인지가 함께 서 있어야 합니다. */
+.card-orders[data-narrow] .table-scroll {
+  overflow-x: auto;
+}
+
+/* 주문체결상세는 종목 열을 뺍니다. 이 표는 화면이 보고 있는 종목 하나만
+ * 담고 그 이름은 바로 위 헤더에 큰 글씨로 서 있어, 행마다 같은 이름을
+ * 되풀이하는 열입니다. 그 폭을 덜어내면 남은 다섯이 밀리지 않고 다 섭니다.
+ * 미결제약정은 계좌 전체를 담아 행마다 종목이 다르므로 그대로 둡니다. */
+.card-orders[data-narrow] .orders-detail th:nth-child(1),
+.card-orders[data-narrow] .orders-detail td:nth-child(1) {
+  display: none;
+}
+
+/* 남은 다섯의 합입니다 — 구분 46 + 상태 88 + 주문가격 76 + 수량 48 + 동작 112. */
+.card-orders[data-narrow] .orders-detail {
+  min-width: 370px;
+  max-width: none;
+}
+
+/* 동작 열만 폭을 박습니다. 넓은 열에서는 남는 폭을 받는 열이라 안 박는데,
+ * 여기서는 남는 폭이 없어 단추 둘이 들어갈 만큼을 먼저 떼어 둡니다. */
+.card-orders[data-narrow] .orders-detail th:nth-child(6) {
+  width: 112px;
+}
+
+/* 「매수」·「매도」 두 글자가 안 잘리는 폭입니다. */
+.card-orders[data-narrow] .orders-detail th:nth-child(2) {
+  width: 46px;
+}
+
+/* 구분 열을 왼쪽에 붙입니다. 매수인지 매도인지는 정정·취소를 누르기 전에
+ * 반드시 보여야 하는 한 가지라, 미는 화면에서도 남아 있어야 합니다.
+ *
+ * **여기에도 밀 자리는 없습니다.** 「행이 많아 세로 막대가 서면 폭이 그만큼
+ * 줄어든다」를 이유로 적어 두었지만, 카드 바닥은 그 막대 몫까지 세어 잡은
+ * 값이라 막대가 선 채로도 스크롤 칸 안쪽이 이 표의 하한 370 그대로입니다.
+ * 그래도 남기는 까닭은 위 동작 열 주석과 같습니다 — 열이 늘거나 카드 바닥이
+ * 내려가면 이 고정이 가장 먼저 필요해집니다. **잠재워 두는 것은 고정과
+ * 바탕뿐이고, 화면에 보이는 경계는 아래에서 조건이 걸립니다.** */
+.card-orders[data-narrow] .orders-detail th:nth-child(2),
+.card-orders[data-narrow] .orders-detail td:nth-child(2) {
+  position: sticky;
+  left: 0;
+  /* 가로로 고정되는 칸이라 불투명이어야 합니다. 반투명이면 밑을 지나가는
+   * 열이 비칩니다. */
+  background-color: var(--surface);
+}
+
+/* 머리글은 위로도 고정돼 있어, 왼쪽으로 지나가는 다른 머리 칸보다 위여야 합니다. */
+.card-orders[data-narrow] .orders-detail th:nth-child(2) {
+  z-index: 3;
+}
+
+/* **경계는 밀 것이 있을 때만 긋습니다.** 고정과 달리 이것은 화면에 보이는
+ * 표시라, 안 밀리는 표에 그으면 없는 스크롤을 있다고 말하게 됩니다. 잠재워
+ * 두는 것은 위의 고정과 바탕이고, 여기서 조건이 걸립니다.
+ *
+ * 안쪽 그림자로 긋습니다 — 셀을 붙여 그리는 표에서 칸의 테두리는 칸이 아니라
+ * 표가 그리고, 그렇게 그린 것은 고정된 칸을 따라오지 않아 밀면 제자리에
+ * 남습니다. */
+.card-orders[data-narrow] .table-frame[data-scrolls] .orders-detail th:nth-child(2),
+.card-orders[data-narrow] .table-frame[data-scrolls] .orders-detail td:nth-child(2) {
+  box-shadow: inset -1px 0 0 0 var(--divider);
+}
+
+/* 머리 칸은 아래 경계 그림자를 이미 지고 있어 함께 적습니다 — 하나만 적으면
+ * 다른 하나가 지워집니다. */
+.card-orders[data-narrow] .table-frame[data-scrolls] .data-table.orders-detail thead th:nth-child(2) {
+  box-shadow:
+    inset 0 -1px 0 var(--row-line),
+    inset -1px 0 0 0 var(--divider);
+}
+
+/* 미결제약정도 같습니다. 여기서는 오른쪽에 붙어 있던 평가손익을 떼어 놓습니다 —
+ * 좁은 열에서 양쪽에 셋을 붙이면 가운데에 한 열도 안 남습니다. 청산 단추와
+ * 무엇을 청산하는지가 먼저이고, 평가손익은 밀어서 봅니다. */
+.card-orders[data-narrow] .orders-positions {
+  min-width: 620px;
+}
+
+.card-orders[data-narrow] .orders-positions th:first-child {
+  width: 120px;
+}
+
+.card-orders[data-narrow] .orders-positions th:nth-child(2) {
+  width: 46px;
+}
+
+.card-orders[data-narrow] .orders-positions th:first-child,
+.card-orders[data-narrow] .orders-positions td:first-child,
+.card-orders[data-narrow] .orders-positions th:nth-child(2),
+.card-orders[data-narrow] .orders-positions td:nth-child(2) {
+  position: sticky;
+  background-color: var(--surface);
+}
+
+.card-orders[data-narrow] .orders-positions th:first-child,
+.card-orders[data-narrow] .orders-positions td:first-child {
+  left: 0;
+}
+
+/* 구분 열이 서는 자리는 **종목 열의 잰 오른쪽 모서리**입니다. 바로 위에서 종목
+ * 열에 준 120 은 그대로 서지 않습니다 — 이 표는 폭을 열 폭의 합으로 잡으므로
+ * (`width: max-content`) 각 열이 **준 폭과 내용 폭 중 넓은 쪽**으로 섭니다.
+ * 120 은 가장 긴 이름(143)보다 좁아 내용 쪽이 이깁니다.
+ *
+ * 못 박은 값을 자리로 쓰면 구분 열이 그 차이만큼 종목 열 밑으로 들어가고,
+ * **방향을 나르는 글자가 한 자만 남습니다**(「매수」가 「수」로). 그러면 매수와
+ * 매도를 색으로만 가려야 하는데, 두 색은 어느 쪽도 앞세우지 않으려고 밝기를
+ * 같게 맞춘 값이라 색이 잘 안 갈리는 눈에는 같아 보입니다. 청산을 누르는
+ * 표에서 방향을 잘못 읽는 자리입니다. 재는 것은 `OrdersAndFills` 입니다. */
+.card-orders[data-narrow] .orders-positions th:nth-child(2),
+.card-orders[data-narrow] .orders-positions td:nth-child(2) {
+  left: var(--fixed-left-2, 120px);
+}
+
+/* 이 표는 좁은 열에서 늘 밀립니다. 붙은 열 밑으로 값이 지나가므로 경계가
+ * 「여기서 잘렸다」를 말해야 합니다 — 표시가 없으면 반쯤 가려진 현재가가
+ * 그 자체로 온전한 값처럼 읽힙니다(426.35 가 6.35 로 보입니다).
+ *
+ * 경계는 넓은 배치의 고정 칸과 같은 1px 선 하나입니다. 왼쪽에 붙은 덩어리
+ * (종목·구분)는 구분의 오른쪽에, 오른쪽에 붙은 청산은 그 왼쪽에 긋습니다.
+ * 덩어리 안(종목과 구분 사이)과 떼어 낸 평가손익에는 긋지 않습니다. 넓은
+ * 배치의 규칙처럼 밀 것이 있을 때(`data-scrolls`)만입니다. */
+.card-orders[data-narrow] .table-frame[data-scrolls] .orders-positions td:first-child,
+.card-orders[data-narrow] .table-frame[data-scrolls] .orders-positions td:nth-last-child(2) {
+  box-shadow: none;
+}
+
+.card-orders[data-narrow] .table-frame[data-scrolls] .data-table.orders-positions thead th:first-child,
+.card-orders[data-narrow] .table-frame[data-scrolls] .data-table.orders-positions thead th:nth-last-child(2) {
+  box-shadow: inset 0 -1px 0 var(--row-line);
+}
+
+.card-orders[data-narrow] .table-frame[data-scrolls] .orders-positions td:nth-child(2) {
+  box-shadow: inset -1px 0 0 0 var(--divider);
+}
+
+.card-orders[data-narrow] .table-frame[data-scrolls] .orders-positions td:last-child {
+  box-shadow: inset 1px 0 0 0 var(--divider);
+}
+
+/* 머리 칸은 아래 경계 그림자를 이미 지고 있어 함께 적습니다. */
+.card-orders[data-narrow] .table-frame[data-scrolls] .data-table.orders-positions thead th:nth-child(2) {
+  box-shadow:
+    inset 0 -1px 0 var(--row-line),
+    inset -1px 0 0 0 var(--divider);
+}
+
+.card-orders[data-narrow] .table-frame[data-scrolls] .data-table.orders-positions thead th:last-child {
+  box-shadow:
+    inset 0 -1px 0 var(--row-line),
+    inset 1px 0 0 0 var(--divider);
+}
+
+.card-orders[data-narrow] .orders-positions th:first-child,
+.card-orders[data-narrow] .orders-positions th:nth-child(2) {
+  z-index: 3;
+}
+
+/* 머리글은 세로 고정을 그대로 두고 가로 고정만 풉니다 — position 을 지우면
+ * 표를 내릴 때 열 이름이 함께 올라가 버립니다. */
+.card-orders[data-narrow] .orders-positions th:nth-last-child(2) {
+  right: auto;
+  border-left: 0;
+}
+
+.card-orders[data-narrow] .orders-positions td:nth-last-child(2) {
+  position: static;
+  background-color: transparent;
+  border-left: 0;
+}
+
+/* 주문 내역 카드의 표는 카드 높이를 채웁니다. */
+.trade-bottom-wrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.trade-bottom-wrap > .orders-band {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+
+
+/* ── 시세체결 카드 ───────────────────────────────────── */
+
+/* 호가에서 갈라져 나온 카드. 이름과 「언제부터」는 머리 띠가 답하므로 본문은
+ * 행뿐입니다 — 호가 아래에 붙어 있던 시절의 제목 줄은 띠로 올라갔습니다. */
+.tick-tape {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 6px 10px 12px;
+}
+
+/* 이름 옆에 붙는 짧은 단서. 이름의 일부가 아니라 이름을 한정하는 값이라
+ * 흐린 색으로 한 급 낮춥니다. */
+.card-note {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+
+/* ── 카드 안의 내용 탭 ───────────────────────────────── */
+
+/* 카드가 다른 카드와 한 자리에 서면 머리 띠는 **자리 탭**이 가져갑니다.
+ * 그 카드가 무엇을 보여줄지 고르는 줄은 본문 첫 줄로 내려옵니다 — 한 띠에
+ * 탭 줄이 둘이면 어느 것이 자리를 바꾸는지 알 수 없습니다.
+ * 아래에 선을 긋지 않습니다. 띠의 구분선이 바로 위에 있어, 둘을 겹치면
+ * 이 줄이 제 영역을 가진 것처럼 보입니다. */
+.panel-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  padding-bottom: 8px;
+}
+
+
+/* ── 패널 편집 ───────────────────────────────────────── */
+
+/* 무엇을 보일지와 어느 자리에 둘지. 자리 교환은 여기가 아니라 카드 머리의
+ * 손잡이가 합니다 — 같은 일을 두 곳에서 할 수 있으면 어느 쪽이 최신인지
+ * 매번 확인하게 됩니다. */
+.panel-editor {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 이름과 자리가 한 줄에 섭니다. 이유 줄이 있으면 그 아래에 이름과 같은
+ * 들여쓰기로 붙습니다. */
+.panel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  align-items: center;
+  gap: 6px 12px;
+  min-height: 40px;
+}
+
+.panel-row + .panel-row {
+  border-top: 1px solid var(--row-line);
+}
+
+.panel-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* 끌 수 없는 카드. 흐리게 두되 초점은 받습니다 — `disabled` 로 두면 왜 못
+ * 끄는지 적어 둔 줄에 닿는 길이 마우스뿐입니다. */
+.panel-check input[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.panel-name {
+  font-size: 13px;
+}
+
+.panel-slot {
+  width: 100%;
+}
+
+/* 체크를 끄면 어느 자리도 아니라 고를 것이 없습니다. */
+.panel-slot:disabled {
+  opacity: 0.5;
+}
+
+/* 껐을 때 없어지는 것. 값이 아니라 판단을 돕는 줄이라 한 급 낮춥니다.
+ * 이름 칸 아래에만 서고 셀렉트 아래로는 안 넘어갑니다. */
+.panel-note {
+  grid-column: 1 / 2;
+  margin: -4px 0 6px;
+  padding-left: 26px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.panel-editor-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 10px;
+  background: var(--surface);
+  box-shadow: 0 -1px 0 var(--card-divider);
+}
+
+
+/* ── 화면 전체에 걸리는 동작 ─────────────────────────── */
+
+/* 종목 띠의 오른쪽 끝. 카드 하나가 아니라 화면 구성에 대한 동작이 섭니다 —
+ * 카드 머리 띠는 「무슨 카드인가」만 답하기로 정해 두었습니다.
+ *
+ * **미는 안쪽(`hd-scroll`) 밖에 있습니다.** 안에 두면 좁은 창에서 지표와 함께
+ * 밀려나 옆으로 굴려야 나오는데, 되돌리는 길이 가장 필요한 것이 그 창입니다. */
+.hd-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+
+/* 넓어져도 더 보여줄 것이 없는 카드는 내용이 제 상한에서 멈춥니다.
+ * 호가는 막대만, 시세체결은 가격 칸만, 주문 폼은 셀렉트만 늘어나므로 넓힌
+ * 만큼이 값을 하나도 더 보여주지 않습니다.
+ *
+ * **머리 띠는 안 자릅니다.** 띠는 「무슨 카드인가」를 답하는 카드의 테두리라
+ * 카드 폭 전체를 지나야 하고, 여기서 자르면 띠와 본문이 다른 카드처럼 갈립니다.
+ * 남는 자리는 카드 안에 빈 채로 둡니다 — 상자까지 줄이면 격자에 구멍이 생겨
+ * 그 자리가 고장 난 것으로 보입니다. */
+.trade-card > :not(.card-head) {
+  max-width: var(--card-max, none);
+}
+
+
+/* 끄는 동안 **받을 수 있는 자리**를 밝힙니다. 카드에는 칸 수가 있고 같은 칸
+ * 수의 자리에만 서므로, 어디에 놓을 수 있는지가 손을 떼기 전에 보여야 합니다 —
+ * 안 보이면 못 놓는 자리에 가져갔다가 되돌아오는 일이 생깁니다.
+ *
+ * 손끝이 얹힌 자리(`data-drop`)와 같은 초록 점선이되 **한 단 약합니다** —
+ * 「여기 놓을 수 있다」와 「여기 놓으면 이렇게 된다」는 다른 말이라, 둘이 같은
+ * 세기면 어느 자리에 놓이는지 헷갈립니다. 바탕도 함께 옅게 깔아 둡니다:
+ * 점선만으로는 카드 테두리와 겹쳐 안 보입니다.
+ *
+ * 못 받는 자리는 아무것도 안 합니다. 흐리게 덮으면 「지금 고장 났다」로
+ * 읽히는데, 그 자리는 멀쩡하고 이 카드가 못 갈 뿐입니다. */
+.trade-card[data-droppable='true']:not([data-drop='true']) {
+  outline: 2px dashed var(--brand);
+  outline-offset: -2px;
+  border-radius: 12px;
+  background: var(--brand-soft);
+}
+
+/* 받을 수 있는 자리 안의 내용은 한 단 물러섭니다 — 지금 읽을 것이 아니라
+ * 「여기 놓을 수 있다」가 이 카드가 하는 말입니다. 손끝이 얹힌 자리(0.35)만큼
+ * 걷지는 않습니다: 그건 「놓으면 이렇게 된다」라 한 단 더 앞에 섭니다. */
+.trade-card[data-droppable='true']:not([data-drop='true']) > * {
+  opacity: 0.55;
+}
+
+/* 못 받는 자리는 흐려집니다. 아무 표시도 안 하면 「밝은 자리 말고 나머지」를
+ * 세어야 하는데, 흐려 두면 갈 수 있는 곳이 한눈에 남습니다.
+ * 고장이 아니라 이 카드가 못 가는 것이므로 테두리는 안 건드립니다. */
+.trade-split[data-dragging='true'] .trade-card:not([data-droppable='true']):not([data-lifting='true']) {
+  opacity: 0.45;
+}
+
+/* 패널 편집 목록 위 안내. 왜 어떤 자리가 회색인지를 한 번에 답합니다 —
+ * 줄마다 되풀이하면 여섯 번 읽게 됩니다. */
+.panel-guide {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-label);
+}
+
+
+/* 모달 안의 절 제목. 「무엇을 어디에」와 「열이 어느 차례로」는 다른 질문이라
+ * 한 목록에 이어 붙이지 않고 절로 가릅니다. */
+.panel-section {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.panel-section + .panel-guide {
+  margin-top: 0;
+}
+
+.panel-editor + .panel-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--card-divider);
+}
+
+.panel-order-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 열 하나. 이름 양옆에 화살표가 붙어 「이것을 옮긴다」가 한 덩어리로 읽힙니다. */
+.panel-order-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+/* 열 이름과 그 안의 카드 이름. 이름만으로는 카드를 옮겨 둔 뒤에 어느 열인지
+ * 알 수 없어, 무엇이 서 있는지를 한 줄 아래 답니다. */
+.panel-order-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 4px;
+}
+
+.panel-order-label {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.panel-order-cards {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.panel-order-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* 체인 표 위 한 줄 — 야간 표지와 다시 받지 못한 사실. 표 안에 두면 그 행에 대한
+ * 말로 읽히므로 표 위에 섭니다. 둘이 함께 서면 사이를 띄웁니다. */
+.chain-note {
+  display: flex;
+  gap: 12px;
+  margin: 0 0 6px;
+}

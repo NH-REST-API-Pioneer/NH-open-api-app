@@ -1,0 +1,87 @@
+# 데스크톱 앱 실행 파일(`NH FUTURES API.exe`)을 태그 릴리스에 붙입니다.
+#
+# 설치 도우미 검사(`setup-check.yml`)와 따로 두는 까닭: 앱 실행 파일은 Python 과
+# Node 도구 체인에 PyInstaller 까지 필요해, C# 컴파일러 하나로 끝나는 설치 도우미와
+# 준비물이 다릅니다. 순서는 개발 가이드의 `just build` → `just package` 그대로입니다.
+#
+# **`run:` 안은 ASCII 만 씁니다.** 러너는 이 블록을 BOM 없는 임시 `.ps1` 로 적어
+# 두는데, Windows PowerShell 5.1 은 BOM 이 없으면 그것을 시스템 ANSI 로 읽습니다.
+# 한글이 섞이면 구문 오류가 납니다. 사람이 읽을 한글은 YAML 주석과 스텝 이름에 둡니다.
+#
+# 빌드는 NH선물 서버에 닿지 않고 설정 파일도 읽지 않습니다 — 인증 정보는 사용자
+# 홈(`~/NHFutures`)에 있고 빌드에 필요하지 않습니다.
+#
+# 개발 가이드의 `UV_SYSTEM_CERTS`·`NODE_OPTIONS=--use-system-ca` 는 `justfile` 이
+# 내보내므로 러너에서도 그대로 걸립니다. HTTPS 를 다시 서명하는 망이 아니어서 효과는
+# 없지만 검증을 끄는 것이 아니라 해롭지 않습니다.
+name: 실행 파일 릴리스
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# 릴리스에 파일을 붙이려면 저장소 내용 쓰기 권한이 필요합니다. 그 밖에는 읽기만 합니다.
+permissions:
+  contents: write
+
+jobs:
+  package:
+    # 실행 파일은 Windows 용입니다 — PyInstaller 는 돌리는 운영체제의 실행 파일만 만듭니다.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 는 22.15 이상이어야 합니다 — `--use-system-ca` 가 그 판부터 있습니다.
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Python 은 따로 설치하지 않습니다 — uv 가 필요한 판을 직접 받습니다(개발 가이드).
+      - name: uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: just
+        uses: extractions/setup-just@v2
+
+      - name: 의존성 설치
+        shell: cmd
+        run: just setup
+
+      - name: 프론트엔드 빌드와 실행 파일 패키징
+        shell: cmd
+        run: just build && just package
+
+      # 이름은 고정이고 해시 파일을 같이 올립니다. 내려받은 사람이 파일이 온전한지
+      # 견줄 수 있게 SHA-256 을 같은 이름에 `.sha256` 을 붙여 둡니다.
+      - name: SHA-256 해시 파일
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'desktop\dist\NH FUTURES API.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw 'The packaged executable is missing.' }
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower()
+          $line = "$hash *NH FUTURES API.exe"
+          [System.IO.File]::WriteAllText('desktop\dist\NH FUTURES API.exe.sha256', $line + "`n")
+          Write-Output $line
+
+      # 태그로 시작했을 때만 릴리스에 붙입니다. 손으로 돌린 실행은 아래 산출물로만 남깁니다.
+      - name: 릴리스에 붙이기
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/NH FUTURES API.exe
+            desktop/dist/NH FUTURES API.exe.sha256
+
+      # 태그가 아닌 실행에서도 받아 볼 수 있게 남깁니다. 확인용이라 오래 둘 이유가 없습니다.
+      - name: 만든 것 남기기
+        uses: actions/upload-artifact@v4
+        with:
+          name: NHFutures-App
+          path: |
+            desktop/dist/NH FUTURES API.exe
+            desktop/dist/NH FUTURES API.exe.sha256
+          if-no-files-found: error
+          retention-days: 7

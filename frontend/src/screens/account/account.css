@@ -1,0 +1,1940 @@
+/* 계좌 화면 — 카드가 위에서 아래로 쌓입니다.
+ *
+ * 예수금 · 보유 포지션 · 미체결 · 주문 오류. 넷 다 계좌 단위 값이고
+ * 서로 성격이 달라 한 표에 합치지 않습니다.
+ *
+ * 밀도는 넉넉한 쪽입니다. 계좌 숫자는 오래 들여다보는 값이 아니라
+ * 확인하는 값이라, 행 간격을 벌리고 색은 손익에만 씁니다.
+ */
+
+/* 국내·해외로 갈고 그 안을 탭으로 나눕니다. 항목이 성격도 조회도 서로 달라
+ * 한 화면에 쌓으면 무엇이 무엇인지 흐려집니다. */
+.account {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 12px;
+}
+
+.acct-bar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.acct-tabs {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+/* 탭 하나가 카드 하나입니다.
+ *
+ * **남는 세로를 카드가 채웁니다.** 탭은 같은 자리의 내용을 갈아 끼우는 것인데,
+ * 카드가 내용 높이면 탭을 옮길 때마다 흰 면의 아래 모서리가 튑니다.
+ *
+ * 빈 면이 남는 것은 마찬가지지만 **어디에 남느냐가 뜻을 바꿉니다** — 카드 안이면
+ * 「아직 안 채운 곳」이고, 카드 밖이면 「화면이 짧다」입니다. 앞의 것이 맞습니다.
+ *
+ * 넘치면 안쪽 표가 스크롤합니다. */
+.acct-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+/* 만기 — 날짜는 본문 무게, 남은 일수는 한 단 낮춥니다. 둘 다 강조하지
+ * 않습니다. 「가깝다」는 우리가 내리는 판정입니다. */
+.acct-expiry {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.acct-dday {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 만기 칸의 둘째 줄 — 최초통보일. 매수 보유가 사흘 안이면 경고색입니다. */
+.acct-notice {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.acct-notice.is-near {
+  color: var(--warn);
+}
+
+.acct-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+/* 국내·해외는 둘 중 하나라 반반입니다. */
+.acct-market {
+  min-width: 128px;
+}
+
+/* 해외 통화 보기 — 시장 전환 곁. 같은 꼴·같은 높이라 「바깥 선택 둘」로 나란히
+ * 읽힙니다. 통화별이면 오른쪽에 통화를 고르는 칸이 섭니다. */
+.acct-view {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.acct-view-mode {
+  min-width: 168px;
+}
+
+.acct-view-currency {
+  width: 96px;
+}
+
+/* 고를 통화가 하나뿐일 때의 글자. 칸과 같은 자리에 섭니다. */
+.acct-view-code {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 보기와 다르게 보이는 자리의 한 줄(추이는 원화, 누적손익은 USD·원화). */
+.acct-view-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 합계가 어디서 왔는지를 값 옆에 답니다 — 서버가 준 합계와 우리가 더한
+ * 합계가 화면에서 같아 보이면 안 됩니다. */
+.acct-sum {
+  font-size: 13px;
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.acct-sum .up,
+.acct-sum .down {
+  font-size: 13px;
+}
+
+.acct-note {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.acct-footnote {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 두 줄짜리 종목 칸 — 위가 이름, 아래가 시장과 코드입니다. */
+.acct-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.acct-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.acct-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.acct-actions .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* ── 예수금 격자 ─────────────────────────────────────── */
+
+/* 항목 일곱 × 구분 넷. 두 축을 가진 값이라 스물여덟 칸이 한 표에 들어갑니다. */
+.acct-deposit {
+  table-layout: auto;
+  min-width: 720px;
+}
+
+.acct-deposit th,
+.acct-deposit td {
+  padding: 0 12px;
+}
+
+/* 행 이름은 표의 축입니다. 값보다 진하게 두어 세로로 읽힙니다. */
+.acct-kind {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── 해외 예수금 ─────────────────────────────────────── */
+
+.acct-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px 24px;
+  margin: 0;
+}
+
+.acct-grid > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.acct-grid dt {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+.acct-grid dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── 보유 포지션 ─────────────────────────────────────── */
+
+.acct-orders {
+  min-width: 852px;
+}
+
+/* 붙박이 두 열의 폭. 열 폭(colgroup)과 붙박이 자리(`right`)가 **같은 값**을
+ * 읽습니다 — 둘이 따로 가면 평가손익 칸이 수익률 폭과 자리의 차이만큼 밀려
+ * 앞의 현재가 열을 덮습니다.
+ *
+ * - 수익률 108: 두 자리 수익률(+16.18%)까지 들어갑니다.
+ * - 평가손익 164: 엔화 아홉 자리 「−123,456,789 JPY」(글자 145) + 좌우 여백 16.
+ *   달러 「−1,234,567.89 USD」와 원화 「−12,345,678,901원」은 그 안에 듭니다.
+ *   **한계:** 엔화 열 자리(「−1,234,567,890 JPY」, 글자 157)는 9px 모자라
+ *   말줄임되고, 칸에 마우스를 올리면 전체 값이 보입니다.
+ *
+ * 표의 최소 폭 904: 가격 열(16%)이 긴 가격 「112.515625」(글자 84 + 여백 16 =
+ * 100)를 반올림 여유까지 담아야 합니다. 앞 여섯 열은 붙박이 둘을 뺀 폭을
+ * 나누므로 (904 − 164 − 108) × 16% ≈ 101 입니다. 옆 패널을 연 1280 창(표 틀
+ * 912)이 이 폭 안에 들어 가로 굴림이 생기지 않습니다. 이보다 좁으면 표 틀이
+ * 가로로 굴러가고, 줄어드는 것은 종목 이름입니다(말줄임). */
+.acct-positions {
+  --acct-pl-w: 164px;
+  --acct-rate-w: 108px;
+  min-width: 904px;
+}
+
+/* 평가손익은 이 표를 보는 이유입니다. 가로로 밀릴 때 종목명이나 평균가는
+ * 잠깐 안 보여도 되지만 이 열이 나가면 표를 볼 이유가 사라집니다.
+ *
+ * 수익률까지 함께 붙입니다. 같은 손익을 금액과 비율로 말하는 짝이라, 하나만
+ * 남으면 「얼마」나 「몇 퍼센트」 한쪽만 보이는 자리가 됩니다. */
+.acct-positions th:last-child,
+.acct-positions td:last-child {
+  position: sticky;
+  right: 0;
+  /* 가로로 고정되는 칸이라 불투명이어야 합니다. 반투명이면 밑을 지나가는
+   * 열이 비칩니다. 폭은 colgroup 이 정합니다(위 변수). */
+  background-color: var(--surface);
+}
+
+.acct-positions th:nth-last-child(2),
+.acct-positions td:nth-last-child(2) {
+  position: sticky;
+  /* 바로 뒤 수익률 열의 폭만큼 떨어져 섭니다. 그 폭과 같은 변수를 읽습니다. */
+  right: var(--acct-rate-w);
+  background-color: var(--surface);
+  /* 붙어 있는 두 열의 왼쪽 경계입니다. 둘 사이에는 긋지 않습니다 —
+   * 한 덩어리로 남는 것이라 안에서 갈리면 둘로 읽힙니다. */
+  border-left: 1px solid var(--divider);
+}
+
+/* 머리글은 위로도 고정돼 있어 다른 머리 칸보다 위에 있어야 합니다. */
+.acct-positions th:last-child,
+.acct-positions th:nth-last-child(2) {
+  z-index: 3;
+}
+
+/* ── 주문 오류 ───────────────────────────────────────── */
+
+/* 표가 아니라 목록입니다. 열을 맞춰 비교할 값이 아니라
+ * 「무엇을 하려다 왜 막혔나」를 한 줄로 읽는 자료입니다. */
+.acct-errors {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* 줄이 많으면 목록만 굴립니다. 위의 머리 줄은 제자리에 남습니다. */
+  overflow-y: auto;
+}
+
+.acct-errors li {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: 16px;
+  min-height: 40px;
+}
+
+/* 표는 아니지만 같은 목록이라 행 선도 같습니다 — 한 화면 안에서 잔고는
+ * 갈리고 주문오류는 안 갈리면, 같은 자료가 자리마다 다르게 읽힙니다. */
+.acct-errors li + li {
+  border-top: 1px solid var(--row-line);
+}
+
+.acct-error-time {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 기간이면 시각 앞에 날짜(「MM-DD」)가 붙어 칸이 넓어집니다. */
+.acct-errors.is-dated li {
+  grid-template-columns: 112px minmax(0, 1fr) minmax(0, auto);
+}
+
+/* 직접 고른 기간이 너무 길 때의 까닭. 날짜 칸 바로 아래에 섭니다. */
+.acct-errors-why {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* 기간 답이 못 받은 날·잘린 앞 날을 말하는 줄. 머리 줄 바로 아래입니다. */
+.acct-errors-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 오류 문구는 상태 색이 아니라 본문색입니다 — 붉게 칠하면 방향색과
+ * 섞이고, 이 줄은 방향이 아니라 사실을 말합니다. */
+.acct-error-message {
+  font-size: 13px;
+  color: var(--text-label);
+  text-align: right;
+}
+
+
+/* ── 요약 띠 ──────────────────────────────────────────── */
+
+/* 탭 위에 늘 남는 여섯 칸. 항목 성격이 같아 폭은 균등입니다 —
+ * 일반주문 헤더는 값의 자릿수가 달라 내용 폭이었지만 여기는 다 금액입니다. */
+.acct-band {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 80px;
+  margin: 0;
+  padding: 0 20px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+/* 금액 칸 여섯의 가로 굴림 영역. 창이 좁아 칸이 다 들어가지 않을 때만
+ * 굴러가고, 다 들어가면 막대도 흐림도 없습니다. 막대는 이 영역 아래를 먹고,
+ * 칸은 남은 높이의 가운데에 섭니다 — 띠 높이 80 은 그대로입니다. */
+.acct-band-scroll {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 막대 끝의 ◀ ▶ 단추를 없애려고 막대를 직접 그립니다. 전역의
+     `scrollbar-width`·`scrollbar-color` 가 남아 있으면 아래 규칙이 무시되므로
+     이 영역에서는 되돌립니다. */
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+.acct-band-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.acct-band-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.acct-band-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.acct-band-scroll::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* 굴림 맞춤(scroll-snap)은 두지 않습니다 — 끝 맞춤이 칸을 반쯤 가린 채 멈출
+ * 수 있습니다. 가려진 쪽 가장자리만 흐려, 잘린 칸이 값이 없는 칸으로 보이지
+ * 않게 합니다. */
+.acct-band-scroll.is-fade-start {
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+
+.acct-band-scroll.is-fade-end {
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+
+.acct-band-scroll.is-fade-start.is-fade-end {
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+/* 흐림이 영역 가장자리를 지우므로 초점 테는 띠 전체에 그립니다. 모양은 전역
+ * 초점 규칙과 같습니다. */
+.acct-band-scroll:focus-visible {
+  outline: none;
+}
+
+.acct-band:has(> .acct-band-scroll:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* 칸들은 영역 폭을 다 채우고(`min-width: 100%`), 모자라면 제 폭대로 넘칩니다. */
+.acct-band-list {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  min-width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+/* 라벨을 값 위에 쌓습니다. 좌우로 놓으면 사이드바를 열었을 때 한 칸이 142 가
+ * 되는데, 라벨 + 값이 그보다 넓어 옆 칸 라벨과 붙어 버립니다. 띠가 80 이라
+ * 두 줄을 놓을 세로는 넉넉합니다 — 일반주문 헤더는 36 이라 좌우여야 했습니다. */
+.acct-band-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  /* 넓을 때는 남는 폭을 똑같이 나눠 갖고, 좁을 때는 **제 글자 폭 아래로 줄지
+     않습니다** — 줄면 글자가 옆 칸 위로 넘쳐 겹칩니다. 모자란 폭은 굴림
+     영역이 맡습니다. */
+  flex: 1 0 0;
+  min-width: max-content;
+  gap: 4px;
+  padding: 0 16px;
+  border-left: 1px solid var(--divider);
+}
+
+.acct-band-list > .acct-band-cell:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+/* 띠의 오른쪽 끝 칸. 받은 뒤에는 「마지막 갱신」, 받기 전에는 여섯째 칸입니다. */
+.acct-band-at > .acct-band-cell,
+.acct-band-scroll:last-child .acct-band-cell:last-child {
+  padding-right: 0;
+}
+
+.acct-band-cell dt {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+/* 계좌는 넉넉한 화면입니다. 일반주문 지표(14)보다 한 단 큽니다 —
+ * 오래 훑는 값이 아니라 한 번 확인하는 값이라 크게 둡니다. */
+.acct-band-cell dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 「마지막 갱신」 칸. **돈 칸과 같은 폭을 먹지 않습니다** — 다섯 글자짜리
+ * 시각이라 제 폭만 쓰고, 남는 폭은 자릿수가 긴 금액이 가져갑니다. 값이 언제
+ * 것인지를 말하는 곁말이라 금액보다 한 단 작고 흐리게 둡니다. 굴림 밖에 서서
+ * 금액을 밀어도 제자리입니다. */
+.acct-band-at {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.acct-band-at dd {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+/* 원화로 합친 값이라는 표지. 시각 곁에 한 급 낮춰 답니다. */
+.acct-band-conv {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* 잔고 요약 넷 — 포지션 단위 내역입니다. 나란히 놓아야 위 띠의 계좌 전체
+ * 요약과 급이 다르다는 것이 모양으로 드러납니다. */
+.acct-sum-item {
+  margin-right: 20px;
+}
+
+
+/* ── 예탁자산 ─────────────────────────────────────────── */
+
+/* 두 시장이 같은 짜임입니다 — 위에 한눈에 읽는 덩어리, 아래에 값을 확인하는 표.
+ * 탭 안쪽 폭에 따라 짜임이 바뀌므로 이 상자가 컨테이너입니다. */
+.dep {
+  container: dep / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── 위: 도넛 · 흐름 · 카드 ───────────────────────────── */
+
+.dep-top {
+  display: grid;
+  grid-template-columns: 168px minmax(320px, 1fr) minmax(412px, 1.2fr);
+  align-items: center;
+  gap: 24px;
+}
+
+/* 그릴 기준(예탁자산)이 없을 때 흐름 자리에 서는 문장. 흐름과 같은 높이를 잡아
+ * 값이 오갈 때 위 덩어리 높이가 그대로입니다. */
+.dep-flow-empty {
+  display: flex;
+  align-items: center;
+  min-height: 168px;
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-label);
+}
+
+.dep-donut {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.dep-donut-box {
+  position: relative;
+  width: 168px;
+  height: 168px;
+}
+
+.dep-donut-svg {
+  display: block;
+}
+
+.dep-ring-base,
+.dep-ring-free,
+.dep-ring-held {
+  fill: none;
+}
+
+/* 바탕 고리는 몫을 모를 때와 두 몫 사이 틈에서만 보입니다. */
+.dep-ring-base {
+  stroke: var(--surface-muted);
+}
+
+/* 그릴 값이 없을 때의 빈 고리. 이때는 고리 자체가 「도넛 자리」를 말해야 해서, 판
+ * 위에서 보이는 테두리 색을 씁니다. */
+.dep-ring-base.is-empty {
+  stroke: var(--border);
+}
+
+.dep-ring-free {
+  stroke: var(--chart-free);
+}
+
+.dep-ring-held {
+  stroke: var(--chart-held);
+}
+
+.dep-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.dep-donut-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.dep-donut-name {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 칠한 색마다 낱말을 붙이는 범례. 이 앱의 빨강은 상승도 뜻하므로 색만으로는
+ * 「묶임」으로 안 읽힙니다. */
+.dep-legend {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-label);
+}
+
+.dep-legend .dep-dot.is-free {
+  margin-left: 8px;
+}
+
+.dep-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dep-dot.is-held {
+  background: var(--chart-held);
+}
+
+.dep-dot.is-free {
+  background: var(--chart-free);
+}
+
+.dep-donut-short {
+  margin: 0;
+  font-size: 12px;
+  color: var(--chart-short);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 흐름 — 예탁자산 − 위탁증거금 = 주문가능. 줄마다 이름·금액 한 줄에 막대 하나. */
+.dep-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dep-flow-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.dep-flow-name {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.dep-flow-amount {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dep-flow-amount.is-short {
+  color: var(--chart-short);
+}
+
+.dep-flow-track {
+  position: relative;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-muted);
+}
+
+.dep-flow-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+}
+
+.dep-flow-track.is-total .dep-flow-fill {
+  left: 0;
+  background: var(--text-label);
+}
+
+/* 빠져나간 몫은 오른쪽 끝에 붙습니다 — 예탁자산 막대에서 떼어 낸 자리입니다. */
+.dep-flow-track.is-held .dep-flow-fill {
+  right: 0;
+  background: var(--chart-held);
+}
+
+.dep-flow-track.is-free .dep-flow-fill {
+  left: 0;
+  background: var(--chart-free);
+}
+
+/* 주문가능이 음수 — 남는 돈이 없어 막대를 안 칠하고 테두리로 모자람을 말합니다. */
+.dep-flow-track.is-short {
+  box-shadow: inset 0 0 0 1px var(--chart-short);
+}
+
+/* 유지선까지 거리. 흐름 아래 가는 한 줄입니다. */
+.dep-keep {
+  margin-top: 4px;
+}
+
+.dep-keep-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-muted);
+}
+
+.dep-keep-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--chart-line);
+}
+
+.dep-keep-line {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.dep-keep-line.is-short {
+  color: var(--chart-short);
+}
+
+/* 서버 주문가능이 예탁 − 위탁증거금과 다를 때의 한 줄. 까닭 없이 사실만 적습니다. */
+.dep-flow-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 카드 넷 — 값을 확인하는 자리. */
+.dep-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dep-card {
+  min-width: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.dep-card p {
+  margin: 0;
+}
+
+.dep-card-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 서버 값을 그대로 적고 뜻은 아직 확인 중이라는 표지. 색 없이 글자로만 말합니다. */
+.dep-card-tag {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.dep-card-value {
+  margin-top: 4px !important;
+  overflow: hidden;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dep-card-sub {
+  min-height: 16px;
+  margin-top: 4px !important;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dep-card-value.is-short,
+.dep-card-sub.is-short {
+  color: var(--chart-short);
+}
+
+/* 안쪽 폭이 모자라면 위 덩어리를 두 줄로 — 도넛·흐름 / 카드 넷 한 줄. */
+@container dep (max-width: 979px) {
+  .dep-top {
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+
+  .dep-cards {
+    grid-column: 1 / -1;
+  }
+
+  .dep-cards {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* 더 좁으면 카드 넷이 한 줄에 안 들어가 금액이 잘립니다 — 두 칸 두 줄로 돌립니다. */
+@container dep (max-width: 759px) {
+  .dep-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── 아래: 국내 항목 일곱 × 구분 넷 + 그 밖 ──────────────── */
+
+.dep-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.dep-detail .dep-grid {
+  width: 100%;
+}
+
+/* 「그 밖」이 모두 0 이라 접으면 보일 줄이 없을 때 — 표가 전체 폭이고, 접힘 줄과
+ * 펼친 줄은 표 아래에 섭니다. 펼친 줄은 넓은 폭을 두 단으로 나눠 씁니다. */
+.dep-detail.is-full {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.dep-detail.is-full .dep-singles {
+  column-count: 2;
+  column-gap: 24px;
+}
+
+.dep-detail.is-full .dep-singles .dep-fold {
+  column-span: all;
+  /* 줄 상자가 아니라 블록으로 세워, 표와의 간격이 줄 높이만큼 벌어지지 않게 합니다. */
+  display: flex;
+  width: fit-content;
+  margin-top: 0;
+  /* 표 첫 열 글자(칸 안쪽 여백 12)와 맞춥니다. */
+  padding-left: 12px;
+}
+
+.dep-detail.is-full .dep-row {
+  break-inside: avoid;
+}
+
+/* 표 아래에 설 때는 줄 이름을 표 첫 열 글자(칸 안쪽 여백 12)와 같은 x 에 둡니다 —
+ * 표·접힘 줄·줄 이름이 한 줄로 맞아야 표에 딸린 목록으로 읽힙니다. */
+.dep-detail.is-full .dep-row dt {
+  padding-left: 12px;
+}
+
+.dep-grid {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.dep-grid th,
+.dep-grid td {
+  padding: 7px 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dep-grid thead th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-label);
+  border-bottom: 1px solid var(--divider);
+}
+
+.dep-grid tbody th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-label);
+}
+
+.dep-grid tbody tr + tr th,
+.dep-grid tbody tr + tr td {
+  border-top: 1px solid var(--row-line);
+}
+
+.dep-grid td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 총액 열. 나머지 셋이 어디서 왔는지를 말하는 자리라 총액이 먼저 읽혀야
+ * 합니다. */
+.dep-grid td:first-of-type {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── 띠와 목록 ─────────────────────────────────────────── */
+
+.dep-singles {
+  min-width: 0;
+}
+
+/* 묶음 이름. 값이 아니라 「무엇을 묻는 묶음인가」라 옅게 둡니다. */
+.dep-band {
+  margin: 14px 0 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.dep-singles .dep-band {
+  margin-top: 0;
+}
+
+/* ── 경고와 빈 값 ──────────────────────────────────────── */
+
+/* **값에만 칠합니다.** 경보를 내는 것은 값이고, 이유는 그것이 어느 종류인지를
+ * 설명할 뿐입니다. 둘 다 칠하면 색이 두 가지를 말하게 됩니다. */
+.dep-warn,
+.dep-grid td.dep-warn {
+  color: var(--chart-short);
+}
+
+/* 이유 한 줄. 항목 이름 아래에 붙고 색을 안 씁니다. */
+.dep-why {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 「이 자리에 값이 없다」. 0 과 다른 말이라 숫자로 적지 않습니다. */
+.dep-none {
+  color: var(--text-dim);
+}
+
+/* 값을 못 세울 때 그 자리를 대신하는 한 줄. */
+.dep-word {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.dep-col {
+  margin: 0;
+}
+
+.dep-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: baseline;
+  height: 36px;
+}
+
+/* 줄 이름은 카드 왼쪽 모서리에서 조금 들어와 섭니다. 띠 이름이 그 바깥에
+ * 서므로, 들여쓴 만큼이 「이 띠에 딸린 줄」이라는 표시가 됩니다. */
+.dep-row dt {
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+
+.dep-row dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 펼친 하위 줄. 들여쓰고 한 단 낮춥니다 — 총액에서 나온 조각이라
+ * 총액과 같은 무게면 넷이 다 같은 급으로 읽힙니다. */
+.dep-part dt {
+  padding-left: 36px;
+  color: var(--text-dim);
+}
+
+.dep-part dd {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 손익 줄의 하위는 부모와 같은 등락색입니다. 굵기는 한 단 낮춘 그대로 둡니다. */
+.dep-part dd.up {
+  color: var(--up-text);
+}
+
+.dep-part dd.down {
+  color: var(--down-text);
+}
+
+/* 여닫는 라벨. 글자 그대로 두고 앞에 삼각형만 답니다. */
+.dep-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-label);
+}
+
+.dep-toggle:hover {
+  color: var(--text);
+}
+
+ /* 펴짐 표시. 9px 에서는 삼각형이 점으로 뭉개져 「눌러서 펴는 줄」로 안 읽힙니다. */
+.dep-caret {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 0 인 줄을 접는 끝 줄. 접힌 수를 글자로 말합니다. */
+.dep-fold {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.dep-fold:hover {
+  color: var(--text-label);
+}
+
+.dep-singles .dep-fold {
+  padding-left: 20px;
+}
+
+/* ── 아래: 해외 다섯 칸 ────────────────────────────────── */
+
+/* 긴 목록을 한 줄로 늘어세우지 않고 넓이를 다섯 칸이 나눠 씁니다. */
+.dep-five {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+/* 다섯 칸은 안쪽 폭 980 이상에서만입니다. 가장 긴 이름(담보포함총계정자산가치금액)이
+ * 12px 에서 156px 이라, 그보다 좁은 칸에서는 이름표가 한 줄에 안 들어갑니다. */
+@container dep (max-width: 979px) {
+  .dep-five {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* 세 칸·두 칸이면 다섯째 칸(「그 밖」, 늘 마지막)이 두 칸 폭으로 줄의 남은 자리를
+     채웁니다 — 비워 두면 줄 끝에 빈 칸이 섭니다. */
+  .dep-five > .dep-cell:last-child {
+    grid-column: span 2;
+  }
+
+  /* 두 칸 폭이 된 칸의 줄은 두 단입니다. 단마다 위에서 아래로 채웁니다. */
+  .dep-cell-rows.is-split {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(var(--dep-rows), auto);
+    grid-auto-flow: column;
+    align-content: start;
+    column-gap: 24px;
+  }
+
+  .dep-cell-rows.is-split > .is-col-top {
+    border-top: none;
+  }
+}
+
+@container dep (max-width: 639px) {
+  .dep-five {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.dep-cell {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+/* 칸 머리. 금액 단위는 여기 한 번 적고 줄의 값에는 안 붙입니다. */
+.dep-cell-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.dep-cell-unit {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.dep-cell-rows {
+  margin: 0;
+}
+
+.dep-cell-rows > div + div {
+  border-top: 1px solid var(--divider);
+}
+
+.dep-cell-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.dep-cell-row dt {
+  color: var(--text-label);
+  /* 이름은 **꺾지 않습니다** — 낱말 가운데서 꺾이면 이름이 두 낱말로 읽힙니다. 이름과
+     값이 한 줄에 안 들어가면 값이 아랫줄 오른쪽으로 내려갑니다. */
+  white-space: nowrap;
+}
+
+.dep-cell-row dd {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dep-cell .dep-toggle {
+  font-size: 12px;
+}
+
+.dep-cell-row.dep-part dt {
+  padding-left: 16px;
+}
+
+.dep-cell-row.dep-part dd {
+  font-size: 12px;
+}
+
+
+
+/* 요약 띠가 값을 못 셀 때 그 자리를 대신하는 한 줄. 칸마다 같은 말을 세우지
+ * 않고 띠 전체에 한 번 섭니다 — 여섯이 같은 사정입니다. */
+.acct-band-word {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* ── 조회 조건 줄 ─────────────────────────────────────── */
+
+/* 기간 같은 조회 조건이 앉는 가로 줄. 표 위에 한 줄로 섭니다. */
+.dep-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.dep-convert {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 날짜 입력. 값이 왼쪽에서 시작해야 두 칸의 자릿수가 나란합니다 —
+ * 공통 `.control` 은 숫자를 오른쪽에 붙입니다. */
+.acct-date {
+  width: 150px;
+  height: 30px;
+  font-size: 13px;
+  text-align: left;
+}
+
+/* 누적손익의 합계 줄.
+ *
+ * **품목 줄과 같은 급이 아닙니다.** 항목이 아니라 항목들에 대한 값이라, 붙여
+ * 두면 품목 하나가 더 있는 것으로 읽힙니다.
+ *
+ * **여백으로 가릅니다.** 선을 진하게 하면 같은 선이 두 뜻을 갖습니다 — 행
+ * 가름과 덩어리 가름. 이 저장소는 덩어리를 여백으로 가르고 있고, 합계 줄 위를
+ * 항목 사이보다 넓히면 다른 층으로 읽힙니다. */
+.acct-realized tfoot td {
+  padding-top: 20px;
+  border-top: 1px solid var(--row-line);
+  font-weight: 600;
+}
+
+/* ── 추이 ──────────────────────────────────────────────
+ *
+ * 카드 셋이 세로로 섭니다. **위 둘만 같은 가로축**(날짜)을 쓰므로 그 둘 아래에
+ * 축과 「며칠치인가」를 한 번만 적습니다. 셋째(품목별 누적손익)는 가로 막대라
+ * 축이 다르고, 서버가 셈해 준 값이라 그 사실을 제 카드 안에서 말합니다. */
+.trend {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+}
+
+/* 기간 머리는 고정입니다. 아래 카드 묶음만 굴러갑니다. */
+.trend > .dep-head {
+  flex: 0 0 auto;
+}
+
+/* 추이의 카드 묶음. 창이 낮으면 **이 상자 하나만** 세로로 굴립니다 — 소탭 칸이나
+ * 화면 칸을 굴리면 막대가 두 겹이 되거나 요약 띠까지 밀려 올라갑니다. */
+.trend-body {
+  container: trend / inline-size;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── 요약 카드 ── 국내 넷, 해외 셋. 패널이 좁으면 두 칸씩. */
+.trend-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.trend-stats.is-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trend-stat {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.trend-stat-name {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.trend-stat-value {
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.trend-stat-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「가장 큰 날」 — 이익·손실 한 줄씩, 금액 곁에 날짜. */
+.trend-stat-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trend-stat-day {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 방향색 글자의 굵기는 카드 값의 굵기를 따릅니다. */
+.trend-stat .up,
+.trend-stat .down {
+  font-weight: inherit;
+}
+
+/* ── 누적 곡선 | 손익 달력 한 줄 ── */
+.trend-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.trend-curve {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.trend-period .seg-item {
+  padding: 0 12px;
+}
+
+/* 받는 중에만 서는 자리. **수로 말합니다** — 막대는 얼마나 남았는지를 눈대중
+ * 으로만 알려 주는데, 여기서 알아야 할 것은 「몇 날이 남았나」입니다. */
+.trend-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-stop {
+  height: 26px;
+  padding: 0 10px;
+}
+
+.trend-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trend-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.trend-chart {
+  display: block;
+  width: 100%;
+}
+
+/* 세 칸과 가로 날짜. 날짜는 그림 바로 밑에 붙습니다. */
+.trend-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 세 칸 묶음 — 빈 날 띠와 읽기 세로선이 이 안을 관통합니다. 자기 쌓임 맥락을
+ * 만들어 띠(뒤)·세로선과 상자(앞)의 겹 차례가 이 안에서만 정해집니다. 키보드
+ * 초점도 이 묶음이 받습니다. */
+.trend-plots {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-radius: 6px;
+  outline-offset: 4px;
+}
+
+.trend-under,
+.trend-over {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  pointer-events: none;
+}
+
+.trend-under {
+  z-index: -1;
+}
+
+.trend-over {
+  z-index: 1;
+}
+
+/* 값이 안 선 영업일의 띠. 옅게 깔아 「비었다」만 말하고 값을 가리지 않습니다. */
+.trend-gap {
+  fill: var(--surface-muted);
+  opacity: 0.4;
+}
+
+/* 고른 날의 세로선. */
+.trend-cross {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+}
+
+/* 고른 날의 값 상자. 세로선 오른쪽(넘치면 왼쪽)에 붙습니다. 누름을 가로채지
+ * 않아 그 밑의 그림 위에서 마우스가 계속 날을 고릅니다. */
+.trend-read {
+  position: absolute;
+  top: 0;
+  z-index: 2;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* 칸의 가로 격자 — 최고·최저(와 예탁자산의 가운데). 행 선 색이라 값을 가리지
+ * 않고 높이만 가늠하게 합니다. */
+.trend-grid {
+  stroke: var(--row-line);
+  stroke-width: 1;
+}
+
+/* 예탁자산은 **방향이 아니라 크기**라 중립색입니다. 손익만 색으로 방향을
+ * 말합니다 — 그림에서 색이 두 뜻을 가지면 어느 쪽인지 외워야 합니다. */
+.trend-line {
+  stroke: var(--text-label);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+/* 긴 기간은 선이 촘촘해 조금 가늘게 긋습니다. */
+.trend-line.is-dense {
+  stroke-width: 1.25;
+}
+
+.trend-dot {
+  fill: var(--text);
+}
+
+/* 0 기준선. 누적은 0 에서 출발해 이 선이 이익·손실을 가르므로 격자보다 짙습니다. */
+.trend-zero {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+/* 누적 손익 선 — 0 위 이익색, 0 아래 손실색. 한 선을 0선에서 잘라 칠합니다. */
+.trend-cum {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.trend-cum.is-up {
+  stroke: var(--up);
+}
+
+.trend-cum.is-down {
+  stroke: var(--down);
+}
+
+/* 0 에 붙어 가는 구간(두 끝이 모두 0) — 이익도 손실도 아니라 흐린 색입니다. */
+.trend-cum.is-flat {
+  stroke: var(--text-dim);
+}
+
+.trend-stop-up {
+  stop-color: var(--up);
+}
+
+.trend-stop-down {
+  stop-color: var(--down);
+}
+
+.trend-cum-dot.is-up {
+  fill: var(--up);
+}
+
+.trend-cum-dot.is-down {
+  fill: var(--down);
+}
+
+.trend-cum-dot.is-flat {
+  fill: var(--text-dim);
+}
+
+/* 품목 막대의 기본 채움. 0 인 품목은 **흐린 가는 눈금**입니다 — 방향색을 쓰면
+ * 「조금 벌었다」가 됩니다. */
+.trend-bar {
+  background: var(--text);
+}
+
+.trend-bar.is-flat {
+  background: var(--text-dim);
+}
+
+.trend-bar.is-up {
+  background: var(--up);
+}
+
+.trend-bar.is-down {
+  background: var(--down);
+}
+
+/* ── 손익 달력 ── 평일 다섯 열, 한 번에 한 달. */
+.trend-cal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trend-cal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+
+.trend-cal-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trend-cal-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trend-cal-step {
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+}
+
+/* 기간이 두 달 이상이면 달 넘김 곁에 서는 기간 전체. */
+.trend-cal-span {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trend-cal-month {
+  font-size: 12px;
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 칠한 색마다 붙는 낱말. 모자라면 **항목 사이에서** 다음 줄로 내려갑니다 — 표지와
+ * 낱말이 다른 줄로 갈리면 어느 표지의 낱말인지 알 수 없습니다. */
+.trend-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin: 0 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.trend-cal-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.trend-cal-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* 값 없는 날의 표지 — 칸에 적힌 「—」 그대로, 네모 표지와 같은 너비. */
+.trend-cal-dash {
+  display: inline-block;
+  width: 10px;
+  text-align: center;
+}
+
+.trend-cal-swatch.is-up {
+  background: var(--up);
+}
+
+.trend-cal-swatch.is-down {
+  background: var(--down);
+}
+
+.trend-cal-week,
+.trend-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.trend-cal-week {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.trend-cal-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: 46px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+/* 받지 않은 날 — 빗금. 값이 0 인 날·칸이 빈 날(바탕만)과 모양으로 갈립니다. */
+.trend-cal-cell.is-missing,
+.trend-cal-swatch.is-missing {
+  background: repeating-linear-gradient(135deg, var(--hatch) 0 1.5px, transparent 1.5px 6px);
+  color: var(--text-dim);
+}
+
+.trend-cal-cell.is-zero,
+.trend-cal-cell.is-empty {
+  background: var(--surface-muted);
+}
+
+.trend-cal-cell.is-empty {
+  color: var(--text-dim);
+}
+
+/* 받았고 손익이 0 인 날 — 칠하지 않습니다. 날짜는 라벨색, 「0」은 흐리게, 칸 아래
+ * 가운데 작은 막대가 「받았음」을 말합니다. */
+.trend-cal-cell.is-zero {
+  position: relative;
+}
+
+.trend-cal-cell.is-zero .trend-cal-date {
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.trend-cal-cell.is-zero .trend-cal-value {
+  color: var(--text-dim);
+}
+
+.trend-cal-zero-mark {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.trend-cal-cell .trend-cal-zero-mark {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* 짙기 세 단. 몫은 화면이 한 자리에서 내려보냅니다(`SHADE_MIX`). 마지막 단은
+ * 손익 색 그대로라 글자를 흰색으로 둡니다. */
+.trend-cal-cell.is-up.is-s1 {
+  background: color-mix(in srgb, var(--up) var(--trend-shade-1), var(--surface));
+}
+
+.trend-cal-cell.is-up.is-s2 {
+  background: color-mix(in srgb, var(--up) var(--trend-shade-2), var(--surface));
+}
+
+.trend-cal-cell.is-up.is-s3 {
+  background: color-mix(in srgb, var(--up) var(--trend-shade-3), var(--surface));
+  color: #fff;
+}
+
+.trend-cal-cell.is-down.is-s1 {
+  background: color-mix(in srgb, var(--down) var(--trend-shade-1), var(--surface));
+}
+
+.trend-cal-cell.is-down.is-s2 {
+  background: color-mix(in srgb, var(--down) var(--trend-shade-2), var(--surface));
+}
+
+.trend-cal-cell.is-down.is-s3 {
+  background: color-mix(in srgb, var(--down) var(--trend-shade-3), var(--surface));
+  color: #fff;
+}
+
+/* 오늘 받은 날 — 정산 전 잠정 값. 칸 안쪽 점선이라 고른 날의 테두리와 겹쳐도
+ * 둘 다 보입니다. 색은 칸 글자색입니다 — 글자색은 칸 짙기마다 바탕과 대비되게
+ * 정해져 있어, 어느 짙기·테마에서도 점선이 섭니다. */
+.trend-cal-cell.is-provisional {
+  outline: 1px dashed currentColor;
+  outline-offset: -3px;
+}
+
+.trend-cal-provisional {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 1px dashed currentColor;
+  border-radius: 2px;
+}
+
+.trend-provisional {
+  font-size: 12px;
+  color: var(--warn);
+}
+
+/* 고른 날 — 곡선의 세로선과 같은 날입니다. */
+.trend-cal-cell[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 2px var(--text);
+}
+
+.trend-cal-date {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trend-cal-value {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 세 칸이 함께 쓰는 가로 날짜. 폭은 그림 폭이고(값 열 제외), 날짜는 제 날의
+ * 가로 자리를 가운데로 섭니다. 첫 날짜는 왼쪽 맞춤, 끝 날짜는 오른쪽 맞춤이라
+ * 그림 밖으로 나가지 않습니다. */
+.trend-axis {
+  position: relative;
+  height: 16px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.trend-tick.is-first {
+  transform: translateX(-8px);
+}
+
+.trend-tick.is-last {
+  transform: translateX(calc(-100% + 8px));
+}
+
+/* 그 값이 어떻게 만들어졌는지. **경고가 아니라 출처**라 색을 안 씁니다. */
+.trend-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 한 점도 없을 때만 서는 자리. 한 점이라도 있으면 그림이 섭니다. */
+.trend-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+/* 품목별 누적손익 — 두 열. */
+.trend-products {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px;
+  row-gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 값 열은 값과 품목 통화 단위(「 USD」)가 한 줄에 드는 폭입니다. */
+.trend-product {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 128px;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.trend-product-name {
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.trend-product-bar {
+  display: block;
+  height: 10px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+}
+
+.trend-product-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+
+.trend-product-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+
+/* 품목 목록 아래 환산 합계 한 줄 — 막대 없이 이름과 값. 두 열이어도 전체 폭입니다. */
+.trend-product-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.trend-product-total-name {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.trend-product-total-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-product-total-none {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 패널 안쪽 폭이 모자라면 카드는 두 칸씩, 곡선과 달력은 위아래로, 품목은 한
+ * 열로 섭니다. */
+@container trend (max-width: 759px) {
+  .trend-stats,
+  .trend-stats.is-three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trend-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trend-cal-cell {
+    min-height: 40px;
+  }
+
+  .trend-products {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 그림과 그 곁의 값. 눈금은 최고·최저(와 가운데 또는 0)만 둡니다 — 이 그림에서
+ * 읽는 것은 흐름이고, 하루의 값은 그 날을 고르면 상자가 말합니다. */
+.trend-plot {
+  position: relative;
+}
+
+/* 값 곁의 수. **자리는 그 값의 높이**라 위치를 화면이 잽니다 — 모서리에 두면
+ * 0선 옆에 붙어 그 선을 그 값으로 읽게 됩니다.
+ *
+ * **그림 바깥 오른쪽 열에 섭니다.** 그림 위에 얹으면 그 높이의 점·막대를
+ * 가리는데, 하필 가려지는 것이 마지막 날입니다(머리 띠와 맞춰 보는 값).
+ * 폭은 그림이 내려보내는 변수(`--trend-edge-col`, `TrendPanel.tsx` 의 `EDGE_COL`)를
+ * 읽습니다 — 그림이 그만큼 좁게 그려집니다. */
+.trend-edge {
+  position: absolute;
+  right: 0;
+  width: var(--trend-edge-col);
+  padding-left: 8px;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  background: var(--surface);
+}
+
+/* 가까운 두 값을 묶은 덩어리의 한 줄. 위가 최고, 아래가 최저입니다. */
+.trend-edge-line {
+  display: block;
+}
+
+/* 긴 기간을 받는 단추. **누르기 전에 값을 말합니다** — 몇 날을 얼마나 물을지
+ * 모르고 누르면 그만둘 판단도 늦습니다. */
+.trend-fetch {
+  height: 28px;
+  margin-left: auto;
+  padding: 0 12px;
+}

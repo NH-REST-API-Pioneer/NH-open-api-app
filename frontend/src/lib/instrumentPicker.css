@@ -1,0 +1,176 @@
+/* 종목 고르기 팝오버.
+ *
+ * **부품과 함께 다닙니다** — 이 판은 일반주문의 차트와 전략 설정이 같이
+ * 씁니다. 스타일을 한쪽 화면의 판에 두면, 그 화면을 한 번도 안 연 채로 다른
+ * 화면에서 열었을 때 모양 없이 섭니다.
+ */
+
+/* ── 종목 고르기 팝오버 ───────────────────────────────── */
+
+/* 부르는 쪽의 칸 아래에 뜹니다. 자리는 **부르는 쪽이 다시 잡습니다** —
+   차트는 배지 아래, 설정은 칸 아래입니다. */
+.pick-popover {
+  position: absolute;
+  left: 8px;
+  top: 30px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  /* 「주력」 배지가 붙는 줄도 배지가 없는 줄과 같은 만큼 이름·코드를 보이게
+     배지와 사이 간격(34+8)만큼 넓습니다. 그러지 않으면 배지가 선 줄에서만
+     종목코드가 잘려 나가, 같은 목록에서 줄마다 보이는 것이 달라집니다. */
+  width: 342px;
+  /* **창 기준입니다.** 담는 칸의 높이로 잡으면(`calc(100% - 40px)`) 설정의
+     한 줄짜리 칸 안에서는 스물 남짓으로 줄어 목록이 통째로 안 보입니다 —
+     부품이 어디에 붙을지 모르는 채 부모 높이에 기대면 안 됩니다. 차트 안에서는
+     차트가 제 높이로 다시 잡습니다(`trade.css`). */
+  max-height: 60vh;
+  padding: 10px;
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(var(--ink) / 0.16);
+}
+
+.pick-input {
+  height: 32px;
+}
+
+.pick-title {
+  margin: 12px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.pick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pick-chip small {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+/* 지금 이 칸의 만기. 초록은 「사용자가 고른 것」입니다. */
+.pick-chip[aria-pressed='true'] {
+  background: var(--brand-soft);
+  color: var(--brand-text);
+}
+
+.pick-chip[aria-pressed='true'] small {
+  color: var(--brand-text);
+}
+
+.pick-rows {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.pick-row:hover,
+.pick-row[aria-pressed='true'] {
+  background: var(--hover);
+}
+
+.pick-row-name {
+  /* 이름이 남은 폭을 다 씁니다 — 배지와 값이 오른쪽 끝에 붙어야, 배지가 있는
+     줄과 없는 줄에서 값의 세로선이 어긋나지 않습니다. */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 월물 줄에 붙는 표시(「주력」·「최근 만기」). 색은 배지 쪽이 정하고 여기서는
+   자리만 잡습니다 — 줄 높이 32에 배지 20은 빠듯해 둘을 맞춥니다. */
+.pick-row-tag {
+  flex: 0 0 auto;
+  height: 18px;
+}
+
+.pick-row-code {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 갈래(선물·옵션·스프레드). **이름보다 한 급 낮습니다** — 품목 이름에
+   「스프레드」가 든 품목이 있어, 갈래를 이름과 같은 글자로 이어 붙이면 둘이 한
+   이름으로 읽힙니다. 줄 높이 32에 맞춰 만기 표시와 같은 높이로 둡니다. */
+.pick-row-kind {
+  flex: 0 0 auto;
+  height: 18px;
+}
+
+/* 목록 안에 서는 시장 머리글. 스크롤 칸의 세로 칸이라 **줄어들지 않게** 잡습니다 —
+   기본값대로 두면 목록이 길어질 때 머리글이 먼저 눌립니다. */
+.pick-rows .pick-title {
+  flex: 0 0 auto;
+  margin: 10px 0 4px;
+}
+
+.pick-rows .pick-title:first-child {
+  margin-top: 0;
+}
+
+.pick-row-price {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 주간 마감 값. 국내 야간에 야간 값을 안 받은 월물의 수입니다. */
+.pick-row-price.is-close {
+  color: var(--text-dim);
+}
+
+/* 제목 줄 끝에 한 마디가 붙는 자리. 제목은 왼쪽, 그 마디는 오른쪽 끝입니다. */
+.pick-title-noted {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 제목(11/600)보다 크면 곁말이 제목 위로 올라서므로 같은 크기에 무게만 낮춥니다. */
+.pick-title-note {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.pick-empty {
+  padding: 8px 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}

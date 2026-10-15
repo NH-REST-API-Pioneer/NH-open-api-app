@@ -1,0 +1,31 @@
+[project]
+name = "nh-futures-open-api"
+version = "0.1.0"
+description = "NH선물 Open API 기반 데스크톱 트레이딩 플랫폼 (백엔드)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pyyaml>=6.0",
+    "pywebview>=5.0",
+    "httpx>=0.27",
+    # 실시간 시세를 받는 웹소켓 클라이언트. `uvicorn[standard]` 를 통해서도
+    # 들어오지만 우리가 직접 부르므로 여기에 적어 둡니다. 남이 데려오는 것에
+    # 기대면 그쪽 구성이 바뀌는 날 조용히 사라집니다.
+    "websockets>=14",
+    "truststore>=0.10.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+# 프로젝트를 패키지로 설치하지 않으므로 루트를 import 경로에 추가합니다.
+pythonpath = ["."]
+testpaths = ["tests"]

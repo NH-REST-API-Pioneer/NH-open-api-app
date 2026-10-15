@@ -1,0 +1,77 @@
+# 설치 도우미(`NH FUTURES API Setup.exe`)를 검사합니다.
+#
+# **실행 파일은 저장소 루트에 있습니다.** 소스 ZIP(`Code → Download ZIP`)과
+# `git clone` 으로 받은 사람이 그대로 쓸 수 있어야 하기 때문입니다. 대신 소스를
+# 고치고 실행 파일을 안 바꾸면 둘이 어긋나므로, 여기서 **지금 소스로 다시 빌드한
+# 것과 견줍니다.**
+#
+# **바이트 해시를 맞대지 않습니다.** 쓰는 C# 컴파일러가 결정적 빌드를 지원하지
+# 않는 옛 것이라 같은 소스도 두 번 빌드하면 몇 바이트가 달라집니다. 어느 자리가
+# 왜 달라지는지와 견주는 규칙은 `scripts/compare-setup.ps1` 첫머리에 있습니다.
+#
+# **`run:` 안은 ASCII 만 씁니다.** 러너는 이 블록을 BOM 없는 임시 `.ps1` 로 적어
+# 두는데, Windows PowerShell 5.1 은 BOM 이 없으면 그것을 시스템 ANSI 로 읽습니다.
+# 한글이 섞여 있으면 글자가 깨지면서 구문 오류가 납니다(`CLAUDE.md` 의 그 함정).
+# 사람이 읽을 한글은 이 YAML 주석과 스텝 이름에 둡니다 — 저장소의 `.ps1` 은 BOM 이
+# 있어 안전합니다.
+#
+# 빌드는 NH선물 서버에 닿지 않고 설정 파일도 읽지 않습니다 — 인증 정보는 사용자
+# 홈(`~/NHFutures`)에 있고 빌드에 필요하지 않습니다.
+name: 설치 도우미 검사
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 읽기만 합니다. 저장소에 쓰는 자리가 없습니다.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # 설치 도우미는 Windows 전용입니다 — .NET Framework 의 C# 컴파일러로 만듭니다.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 스크립트는 사용자가 Windows PowerShell 5.1 로 돌립니다. 그 셸에서 검증해야
+      # 사용자가 겪을 것과 같은 것을 봅니다(러너의 기본은 PowerShell 7 입니다).
+      - name: 스크립트 검사와 시험
+        shell: powershell
+        run: .\scripts\test-setup.ps1
+
+      # 루트의 실행 파일이 지금 소스로 만든 것인지 봅니다. 견주는 규칙과 왜
+      # 해시가 아닌지는 `scripts/compare-setup.ps1` 첫머리에 있습니다.
+      #
+      # **같은 이름으로 빌드한 것끼리만 견줄 수 있습니다.** 어셈블리 이름이
+      # `/out:` 의 파일 이름에서 나와, 다른 이름으로 빌드하면 메타데이터가 통째로
+      # 밀려 아무것도 안 맞습니다. `build-setup.ps1` 이 늘 같은 이름으로 내므로
+      # 그 산출물을 그대로 씁니다.
+      - name: 루트 실행 파일이 소스와 맞는지
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $committed = 'NH FUTURES API Setup.exe'
+          if (-not (Test-Path -LiteralPath $committed)) {
+            throw 'The setup executable is missing from the repository root.'
+          }
+          # The test step above also builds the helper, under the same file name.
+          # Clear the output folder so the fresh build below is the only match.
+          if (Test-Path -LiteralPath 'desktop\setup-dist') {
+            Remove-Item -LiteralPath 'desktop\setup-dist' -Recurse -Force
+          }
+          .\scripts\build-setup.ps1 -SkipZip | Out-Null
+          $built = @(Get-ChildItem 'desktop\setup-dist' -Recurse -Filter 'NH FUTURES API Setup.exe')
+          if ($built.Count -ne 1) { throw "Expected one fresh build, found $($built.Count)." }
+          .\scripts\compare-setup.ps1 -Reference $committed -Candidate $built[0].FullName
+
+      # 받아 볼 수 있게 남깁니다. 확인용이라 오래 둘 이유가 없습니다.
+      - name: 만든 것 남기기
+        uses: actions/upload-artifact@v4
+        with:
+          name: NHFutures-Setup
+          path: "NH FUTURES API Setup.exe"
+          if-no-files-found: error
+          retention-days: 7

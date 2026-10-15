@@ -1,0 +1,41 @@
+{
+ "api_id": "domestic_open-interest",
+ "collected_at": "2026-09-09T06:21:26.945559+00:00",
+ "environment": "paper",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "POST",
+ "path": "/trade/v1/domestic/open-interest",
+ "record_id": "20260909T062126_a9131369a2f7",
+ "request": {
+  "nxt_key": ""
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_ac_nm": "FIXTURE_MASKED",
+    "occurs1_ac_no": "673595705994",
+    "occurs1_avg_pric": "000000001335.900000000",
+    "occurs1_close_pric": "000000001335.900000000",
+    "occurs1_cls_psb_qty": "000000000001.000000000",
+    "occurs1_exch_cd": "KRX",
+    "occurs1_fut_opt_div_cd": "1",
+    "occurs1_ko_sym_nm": "미국달러 F 202609",
+    "occurs1_opint_amt": "000000000013359000.000",
+    "occurs1_opint_qty": "000000000001.000000000",
+    "occurs1_pl_amt": "000000000000000000.000",
+    "occurs1_pl_rt": "0000000000000.000000",
+    "occurs1_sym": "A7569000",
+    "occurs1_trd_div": "1",
+    "occurs1_trd_div_nm_v2": "매수"
+   }
+  ],
+  "nrec": "0001",
+  "nxt_key": ""
+ },
+ "scenario_id": "domestic_open-interest__base",
+ "status": "response_received",
+ "test_group": "모의왕복_20260909_152001",
+ "transport": "HTTP"
+}

@@ -1,0 +1,418 @@
+/* 설정 — 항목이 하나뿐이라 화면을 채우지 않습니다.
+ *
+ * 카드를 화면 폭만큼 늘리면 빈 자리가 「덜 만들어졌다」로 읽힙니다.
+ * 읽기 좋은 폭에서 끊고 왼쪽에 둡니다 — 가운데에 두면 항목이 늘었을 때
+ * 자리가 통째로 옮겨갑니다.
+ */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-card {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 560px;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.settings-title {
+  margin-bottom: 16px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-label {
+  min-width: 0;
+}
+
+.settings-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.settings-seg {
+  flex: 0 0 auto;
+}
+
+/* 줄 오른쪽의 단추는 제 폭을 지킵니다. 왼쪽 설명이 길어져도(바꿀 수 없는 까닭이
+ * 붙을 때) 단추 글자가 두 줄로 꺾이지 않습니다 — 꺾이면 「모의로 바/꾸기」처럼
+ * 읽힙니다. */
+.settings-row > .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* 확인 줄. 고른 것과 같은 카드 안에 열려, 무엇을 바꾸려는지가 위에 보입니다.
+ * 별도 팝업으로 띄우면 그 위에 무엇이 있었는지 가려집니다. */
+.settings-confirm {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background-color: var(--warn-bg);
+}
+
+.settings-confirm-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-confirm-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.settings-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* 안 된 까닭. 같은 블록 안에 한 줄이라 어디가 안 됐는지가 눈 밑에 있습니다. */
+.settings-confirm-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--error);
+}
+
+/* ── 알림 ─────────────────────────────────────────────── */
+
+/* 「모의 / 실전」 아래의 묶음. 위 줄과 선 하나로 가릅니다. */
+.settings-alerts {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.alert-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.alert-preview {
+  margin-left: auto;
+}
+
+.alert-preview[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 켜고 끄는 스위치. 글자까지 누를 수 있습니다. */
+.alert-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.alert-switch-track {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--inactive);
+  transition: background 120ms ease-out;
+}
+
+.alert-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  transition: transform 120ms ease-out;
+}
+
+.alert-switch[aria-checked='true'] .alert-switch-track {
+  background: var(--brand);
+}
+
+.alert-switch[aria-checked='true'] .alert-switch-knob {
+  transform: translateX(12px);
+}
+
+.alert-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.alert-table th,
+.alert-table td {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--row-line);
+  text-align: center;
+}
+
+.alert-table th[scope='row'],
+.alert-table thead th:first-child {
+  text-align: left;
+  font-weight: 400;
+}
+
+.alert-table thead th {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-label);
+}
+
+/* 「소리」가 꺼져 있으면 소리 열을, 「토스트」가 꺼져 있으면 토스트 열을 흐리게 —
+   켜 둔 칸도 지금은 그 알림이 안 납니다. */
+.alert-table.is-muted .alert-sound-cell,
+.alert-table.is-muted thead th:nth-child(3),
+.alert-table.is-toast-off .alert-toast-cell,
+.alert-table.is-toast-off thead th:nth-child(2),
+.alert-table.is-os-off .alert-os-cell {
+  opacity: 0.4;
+}
+
+/* 「OS」 머리는 열이 켜졌는지를 글자색으로 말합니다 — 켜짐은 다른 머리와 같은 색,
+   꺼지거나 잠기면 흐린 색. */
+.alert-table.is-os-off thead th:nth-child(4) {
+  color: var(--text-dim);
+}
+
+.alert-switch[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.alert-preview-os[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 브라우저가 알림을 막아 두었다는 한 줄. 스위치 줄 바로 아래입니다. */
+.alert-denied {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--warn);
+  word-break: keep-all;
+}
+
+.alert-silent {
+  color: var(--text-dim);
+}
+
+.alert-sim {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+/* ── 인증 정보 ───────────────────────────────────────── */
+
+.settings-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--divider);
+}
+
+.settings-section .settings-note code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  font-size: 11px;
+}
+
+/* 네 묶음이 나란히 섭니다. 모의와 실전이 세로로 붙어 있으면 어느 쪽에 값을
+ * 넣고 있는지 놓치기 쉬워, 묶음마다 제목을 답니다. */
+.cred-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.cred-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cred-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.cred-label {
+  font-size: 12px;
+}
+
+/* 채워진 값은 글자입니다. 입력칸처럼 보이면 지우고 쓰려 하게 됩니다. */
+.cred-masked {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.cred-input {
+  width: 100%;
+  text-align: left;
+}
+
+.cred-action {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.cred-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.cred-actions .settings-note {
+  margin-top: 0;
+}
+
+/* 저장이 안 된 까닭. 안내와 같은 자리·같은 크기이고 색만 경고색입니다. */
+.cred-fail {
+  font-size: 12px;
+  color: var(--warn);
+}
+
+/* 실전으로 가는 확인만 경고 바탕입니다. 반대 방향은 위험이 줄어드는 쪽이라
+ * 주의를 요구하지 않습니다 — 늘 경고하면 진짜 경고할 때 덜 먹습니다. */
+.settings-confirm {
+  background-color: var(--wash);
+}
+
+.settings-confirm-risky {
+  background-color: var(--warn-bg);
+}
+
+/* 묶음 제목은 접었다 펴는 버튼입니다. */
+.cred-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 2px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.cred-head:hover {
+  background: var(--hover);
+}
+
+/* 묶음 머리 한 줄. 접고 펴는 단추 곁에 「토큰 다시 받기」가 **형제로** 섭니다 —
+ * 단추 안에 단추를 넣을 수 없고, 넣으면 누르는 자리가 둘로 갈리지 않습니다. */
+.cred-headrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cred-headrow .cred-head {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cred-reissue {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 다시 받은 결과. 그 묶음 머리 줄에 작게 섭니다 — 시장은 묶음 제목이 이미 말합니다. */
+.cred-reissued {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* 다시 받지 못했거나 새 토큰이 옛것과 같을 때. 머리 줄 아래 한 줄이고, 들여쓰기는
+ * 묶음 제목 글자와 맞춥니다(펼침 표시 폭 + 사이). */
+.cred-reissue-warn {
+  margin: 2px 0 0;
+  padding-left: 22px;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+/* 낱말 가운데서 꺾지 않습니다 — 「합 / 니다」처럼 끊기면 끊긴 자리에서 읽기가 멈춥니다. */
+.cred-confirm-text {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: keep-all;
+}
+
+.cred-confirm-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.cred-caret {
+  width: 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* 빈 칸이 있을 때만 답니다. 다 찬 묶음에는 아무것도 없어서, 표시가 있다는 것
+ * 자체가 신호가 됩니다. */
+.cred-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 처음 켰을 때 왜 이 창이 떴는지 한 줄. 값을 넣는 자리 바로 위에 섭니다 —
+ * 창 제목에 두면 탭을 옮겼을 때 자리 없는 말이 됩니다. */
+.settings-need {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  font-size: 13px;
+  color: var(--warn);
+}

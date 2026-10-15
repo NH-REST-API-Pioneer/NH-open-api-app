@@ -1,0 +1,42 @@
+{
+ "api_id": "overseas_chart-daily",
+ "collected_at": "2026-09-09T00:03:42.684316+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "overseas",
+ "method": "POST",
+ "path": "/trade/v1/overseas/chart-daily",
+ "record_id": "20260909T000342_c42612fbc34e",
+ "request": {
+  "cidx_yn": "0",
+  "exch_cd": "OCME",
+  "inq_ed_dt": "20260909",
+  "inq_strt_dt": "20260909",
+  "nxt_key": "99999999",
+  "req_qty": "300",
+  "sym": "O_ESU26-C7600.0"
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_close_pric": "115.50",
+    "occurs1_cum_trd_qty": "21",
+    "occurs1_diff_rt": "-34.00",
+    "occurs1_high_pric": "127.50",
+    "occurs1_low_pric": "116.50",
+    "occurs1_open_pric": "126.50",
+    "occurs1_ref_dt": "20260908",
+    "occurs1_rt": "-22.74"
+   }
+  ],
+  "exch_cd": "OCME",
+  "nrec": "0001",
+  "nxt_key": "99999999999999999999999999999999",
+  "sym": ""
+ },
+ "scenario_id": "overseas_chart-daily__base",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

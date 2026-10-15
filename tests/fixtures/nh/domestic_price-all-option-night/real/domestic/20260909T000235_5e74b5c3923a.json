@@ -1,0 +1,26 @@
+{
+ "api_id": "domestic_price-all-option-night",
+ "collected_at": "2026-09-09T00:02:35.099841+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 400,
+ "market": "domestic",
+ "method": "POST",
+ "path": "/trade/v1/domestic/price-all-option-night",
+ "record_id": "20260909T000235_5e74b5c3923a",
+ "request": {
+  "exp_mon": "260910",
+  "nxt_stkr_pric": "99999999",
+  "prd": "AK"
+ },
+ "response": {
+  "errorMessage": "'AK' 데이터 없음 [SDIF7224Q02@dom]",
+  "errorPath": "/trade/v1/domestic/price-all-option-night",
+  "errorStatus": 400,
+  "errorTime": "2026-09-09 09:02:35"
+ },
+ "scenario_id": "domestic_price-all-option-night__prd_AK",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

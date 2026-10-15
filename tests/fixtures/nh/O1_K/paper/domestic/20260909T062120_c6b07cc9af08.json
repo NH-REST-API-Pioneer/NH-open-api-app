@@ -1,0 +1,431 @@
+{
+ "api_id": "O1_K",
+ "collected_at": "2026-09-09T06:21:20.683609+00:00",
+ "environment": "paper",
+ "events": [
+  {
+   "direction": "sent",
+   "offset_ms": 42.806,
+   "payload": {
+    "body": {
+     "action_code": "session_init",
+     "session_token": "FIXTURE_SECRET"
+    },
+    "header": {
+     "action": "0",
+     "api_ver": "1"
+    }
+   },
+   "seq": 1
+  },
+  {
+   "direction": "received",
+   "offset_ms": 52.257,
+   "payload": {
+    "code": "INIT",
+    "msg": "INIT_SUCCESS"
+   },
+   "seq": 2
+  },
+  {
+   "direction": "sent",
+   "offset_ms": 52.854,
+   "payload": {
+    "body": {
+     "action_code": "O1"
+    },
+    "header": {
+     "action": "A",
+     "api_ver": "1"
+    }
+   },
+   "seq": 3
+  },
+  {
+   "direction": "received",
+   "offset_ms": 65.865,
+   "payload": {
+    "code": "RT_INIT",
+    "data": {
+     "action": "A",
+     "action_acnt": "673595705994",
+     "action_code": "O1"
+    },
+    "msg": ""
+   },
+   "seq": 4
+  },
+  {
+   "direction": "received",
+   "offset_ms": 2196.391,
+   "payload": {
+    "body": {
+     "ac_no": "673595705994",
+     "blk_no": "",
+     "cls_pstn_no": "",
+     "cur_cd": "KRW",
+     "cxl_qty": "0000000",
+     "eff_tp": "0",
+     "err_cd": "",
+     "exec_avg_pric": "000000000000000",
+     "exec_cnd_div": "1",
+     "exec_no": "0000000000",
+     "exec_pric": "000000000000000",
+     "exec_qty": "0000000",
+     "exec_tm": "",
+     "fcm_exec_proc_tm": "",
+     "fcm_ord_rcv_tm": "",
+     "hdg_tp": "",
+     "med_div": "R",
+     "mkt_tp": "1",
+     "mod_qty": "0000000",
+     "mod_tp": "1",
+     "opt_ord_amt": "0",
+     "opt_strk_bkg_yn": "",
+     "ord_dt": "20260909",
+     "ord_ed_dt": "20260909",
+     "ord_no": "5959762237",
+     "ord_pric": "0",
+     "ord_qty": "1",
+     "ord_sts": "1",
+     "org_ord_dt": "",
+     "org_ord_no": "",
+     "per_exec_qty": "0000000",
+     "pric_cnd": "2",
+     "rcv_tm": "152122",
+     "ref_ord_no": "0",
+     "rem_ord_qty": "1",
+     "sl_pric": "0",
+     "sl_ts": "0",
+     "stop_pric": "0",
+     "str_tp": "1",
+     "sym": "A7569000",
+     "sym_tp": "1",
+     "tpf_pric": "0",
+     "trd_div": "1",
+     "work_empl": "FIXTURE_MASKED"
+    },
+    "header": {
+     "action_acnt": "673595705994",
+     "action_code": "O1"
+    }
+   },
+   "seq": 5
+  },
+  {
+   "direction": "received",
+   "offset_ms": 2226.235,
+   "payload": {
+    "body": {
+     "ac_no": "673595705994",
+     "blk_no": "",
+     "cls_pstn_no": "",
+     "cur_cd": "KRW",
+     "cxl_qty": "0",
+     "eff_tp": "0",
+     "err_cd": "",
+     "exec_avg_pric": "000000000000000",
+     "exec_cnd_div": "1",
+     "exec_no": "0000000000",
+     "exec_pric": "000000000000000",
+     "exec_qty": "0000000",
+     "exec_tm": "",
+     "fcm_exec_proc_tm": "",
+     "fcm_ord_rcv_tm": "",
+     "hdg_tp": "",
+     "med_div": "R",
+     "mkt_tp": "1",
+     "mod_qty": "0",
+     "mod_tp": "1",
+     "opt_ord_amt": "0",
+     "opt_strk_bkg_yn": "",
+     "ord_dt": "20260909",
+     "ord_ed_dt": "20260909",
+     "ord_no": "5959762237",
+     "ord_pric": "0",
+     "ord_qty": "1",
+     "ord_sts": "3",
+     "org_ord_dt": "20260909",
+     "org_ord_no": "5959762237",
+     "per_exec_qty": "0000000",
+     "pric_cnd": "2",
+     "rcv_tm": "152122",
+     "ref_ord_no": "0",
+     "rem_ord_qty": "1",
+     "sl_pric": "0",
+     "sl_ts": "0",
+     "stop_pric": "0",
+     "str_tp": "1",
+     "sym": "A7569000",
+     "sym_tp": "1",
+     "tpf_pric": "0",
+     "trd_div": "1",
+     "work_empl": "FIXTURE_MASKED"
+    },
+    "header": {
+     "action_acnt": "673595705994",
+     "action_code": "O1"
+    }
+   },
+   "seq": 6
+  },
+  {
+   "direction": "received",
+   "offset_ms": 2253.131,
+   "payload": {
+    "body": {
+     "ac_no": "673595705994",
+     "blk_no": "",
+     "cls_pstn_no": "",
+     "cur_cd": "KRW",
+     "cxl_qty": "0000000",
+     "eff_tp": "0",
+     "err_cd": "",
+     "exec_avg_pric": "000000000000000",
+     "exec_cnd_div": "1",
+     "exec_no": "557",
+     "exec_pric": "1335.9",
+     "exec_qty": "1",
+     "exec_tm": "152122",
+     "fcm_exec_proc_tm": "",
+     "fcm_ord_rcv_tm": "",
+     "hdg_tp": "",
+     "med_div": "R",
+     "mkt_tp": "1",
+     "mod_qty": "0000000",
+     "mod_tp": "1",
+     "opt_ord_amt": "0",
+     "opt_strk_bkg_yn": "",
+     "ord_dt": "20260909",
+     "ord_ed_dt": "20260909",
+     "ord_no": "5959762237",
+     "ord_pric": "0",
+     "ord_qty": "1",
+     "ord_sts": "6",
+     "org_ord_dt": "",
+     "org_ord_no": "",
+     "per_exec_qty": "1",
+     "pric_cnd": "2",
+     "rcv_tm": "152122",
+     "ref_ord_no": "0",
+     "rem_ord_qty": "0",
+     "sl_pric": "0",
+     "sl_ts": "0",
+     "stop_pric": "0",
+     "str_tp": "1",
+     "sym": "A7569000",
+     "sym_tp": "1",
+     "tpf_pric": "0",
+     "trd_div": "1",
+     "work_empl": "FIXTURE_MASKED"
+    },
+    "header": {
+     "action_acnt": "673595705994",
+     "action_code": "O1"
+    }
+   },
+   "seq": 7
+  },
+  {
+   "direction": "received",
+   "offset_ms": 10649.346,
+   "payload": {
+    "body": {
+     "ac_no": "673595705994",
+     "blk_no": "",
+     "cls_pstn_no": "",
+     "cur_cd": "KRW",
+     "cxl_qty": "0000000",
+     "eff_tp": "0",
+     "err_cd": "",
+     "exec_avg_pric": "000000000000000",
+     "exec_cnd_div": "1",
+     "exec_no": "0000000000",
+     "exec_pric": "000000000000000",
+     "exec_qty": "0000000",
+     "exec_tm": "",
+     "fcm_exec_proc_tm": "",
+     "fcm_ord_rcv_tm": "",
+     "hdg_tp": "",
+     "med_div": "R",
+     "mkt_tp": "1",
+     "mod_qty": "0000000",
+     "mod_tp": "1",
+     "opt_ord_amt": "0",
+     "opt_strk_bkg_yn": "",
+     "ord_dt": "20260909",
+     "ord_ed_dt": "20260909",
+     "ord_no": "7745231861",
+     "ord_pric": "0",
+     "ord_qty": "1",
+     "ord_sts": "1",
+     "org_ord_dt": "",
+     "org_ord_no": "",
+     "per_exec_qty": "0000000",
+     "pric_cnd": "2",
+     "rcv_tm": "152131",
+     "ref_ord_no": "0",
+     "rem_ord_qty": "1",
+     "sl_pric": "0",
+     "sl_ts": "0",
+     "stop_pric": "0",
+     "str_tp": "1",
+     "sym": "A7569000",
+     "sym_tp": "1",
+     "tpf_pric": "0",
+     "trd_div": "2",
+     "work_empl": "FIXTURE_MASKED"
+    },
+    "header": {
+     "action_acnt": "673595705994",
+     "action_code": "O1"
+    }
+   },
+   "seq": 8
+  },
+  {
+   "direction": "received",
+   "offset_ms": 10678.216,
+   "payload": {
+    "body": {
+     "ac_no": "673595705994",
+     "blk_no": "",
+     "cls_pstn_no": "",
+     "cur_cd": "KRW",
+     "cxl_qty": "0",
+     "eff_tp": "0",
+     "err_cd": "",
+     "exec_avg_pric": "000000000000000",
+     "exec_cnd_div": "1",
+     "exec_no": "0000000000",
+     "exec_pric": "000000000000000",
+     "exec_qty": "0000000",
+     "exec_tm": "",
+     "fcm_exec_proc_tm": "",
+     "fcm_ord_rcv_tm": "",
+     "hdg_tp": "",
+     "med_div": "R",
+     "mkt_tp": "1",
+     "mod_qty": "0",
+     "mod_tp": "1",
+     "opt_ord_amt": "0",
+     "opt_strk_bkg_yn": "",
+     "ord_dt": "20260909",
+     "ord_ed_dt": "20260909",
+     "ord_no": "7745231861",
+     "ord_pric": "0",
+     "ord_qty": "1",
+     "ord_sts": "3",
+     "org_ord_dt": "20260909",
+     "org_ord_no": "7745231861",
+     "per_exec_qty": "0000000",
+     "pric_cnd": "2",
+     "rcv_tm": "152131",
+     "ref_ord_no": "0",
+     "rem_ord_qty": "1",
+     "sl_pric": "0",
+     "sl_ts": "0",
+     "stop_pric": "0",
+     "str_tp": "1",
+     "sym": "A7569000",
+     "sym_tp": "1",
+     "tpf_pric": "0",
+     "trd_div": "2",
+     "work_empl": "FIXTURE_MASKED"
+    },
+    "header": {
+     "action_acnt": "673595705994",
+     "action_code": "O1"
+    }
+   },
+   "seq": 9
+  },
+  {
+   "direction": "received",
+   "offset_ms": 10706.03,
+   "payload": {
+    "body": {
+     "ac_no": "673595705994",
+     "blk_no": "",
+     "cls_pstn_no": "",
+     "cur_cd": "KRW",
+     "cxl_qty": "0000000",
+     "eff_tp": "0",
+     "err_cd": "",
+     "exec_avg_pric": "000000000000000",
+     "exec_cnd_div": "1",
+     "exec_no": "558",
+     "exec_pric": "1335.9",
+     "exec_qty": "1",
+     "exec_tm": "152131",
+     "fcm_exec_proc_tm": "",
+     "fcm_ord_rcv_tm": "",
+     "hdg_tp": "",
+     "med_div": "R",
+     "mkt_tp": "1",
+     "mod_qty": "0000000",
+     "mod_tp": "1",
+     "opt_ord_amt": "0",
+     "opt_strk_bkg_yn": "",
+     "ord_dt": "20260909",
+     "ord_ed_dt": "20260909",
+     "ord_no": "7745231861",
+     "ord_pric": "0",
+     "ord_qty": "1",
+     "ord_sts": "6",
+     "org_ord_dt": "",
+     "org_ord_no": "",
+     "per_exec_qty": "1",
+     "pric_cnd": "2",
+     "rcv_tm": "152131",
+     "ref_ord_no": "0",
+     "rem_ord_qty": "0",
+     "sl_pric": "0",
+     "sl_ts": "0",
+     "stop_pric": "0",
+     "str_tp": "1",
+     "sym": "A7569000",
+     "sym_tp": "1",
+     "tpf_pric": "0",
+     "trd_div": "2",
+     "work_empl": "FIXTURE_MASKED"
+    },
+    "header": {
+     "action_acnt": "673595705994",
+     "action_code": "O1"
+    }
+   },
+   "seq": 10
+  },
+  {
+   "direction": "sent",
+   "offset_ms": 17292.422,
+   "payload": {
+    "body": {
+     "action_code": "O1"
+    },
+    "header": {
+     "action": "D",
+     "api_ver": "1"
+    }
+   },
+   "seq": 11
+  }
+ ],
+ "format": "nh-fixture-1",
+ "market": "domestic",
+ "record_id": "20260909T062120_c6b07cc9af08",
+ "request": {
+  "body": {
+   "action_code": "O1"
+  },
+  "header": {
+   "action": "A",
+   "api_ver": "1"
+  }
+ },
+ "scenario_id": "O1_K__base",
+ "status": "stream_stopped",
+ "test_group": "모의왕복_20260909_152001",
+ "transport": "WEBSOCKET"
+}

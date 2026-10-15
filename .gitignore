@@ -1,0 +1,162 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+*.egg
+*.egg-info/
+.eggs/
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Testing / coverage
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+
+# uv
+.uv/
+
+# ---------------------------------------------------------------------------
+# Node.js / Frontend
+# ---------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Vite / build outputs
+.vite/
+frontend/dist/
+frontend/build/
+# `just build` 산출물 (프론트엔드를 백엔드가 서빙할 위치로 직접 빌드)
+backend/static/
+
+# ---------------------------------------------------------------------------
+# PyInstaller (desktop packaging)
+# ---------------------------------------------------------------------------
+# NOTE: PyInstaller creates build/ and dist/ at run time.
+# Ignore only the packaging output locations, not project source folders.
+desktop/build/
+desktop/dist/
+desktop/setup-dist/
+*.manifest
+
+# ---------------------------------------------------------------------------
+# IDE / Editors
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ---------------------------------------------------------------------------
+# OS artifacts
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ---------------------------------------------------------------------------
+# Environment / Secrets
+# ---------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# 실제 설정 파일. 사용자 홈(~/NHFutures/config/)에 두는 것이 원칙이지만,
+# 프로젝트 폴더 안에 만들더라도 인증 정보가 커밋되지 않도록 막습니다.
+# (예시 파일 config.example.yaml 은 이름이 달라 영향받지 않습니다.)
+config.yaml
+
+# ---------------------------------------------------------------------------
+# Claude Code (local settings & credentials — must not be committed)
+# ---------------------------------------------------------------------------
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+
+# Codex (local-only; never commit)
+.codex/
+.agents/
+CODEX.md
+CODEX.local.md
+AGENTS.md
+AGENTS.override.md
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+logs/
+
+# ---------------------------------------------------------------------------
+# NH선물 원본 API 스펙 문서 및 종목 마스터 파일 (로컬 참고용, 커밋 대상 아님)
+# ---------------------------------------------------------------------------
+# 명세는 개정될 때마다 폴더 이름이 달라지므로(뒤에 번호가 붙거나 대소문자가 바뀜)
+# 정확한 이름 대신 패턴으로 막습니다.
+*API 문서*/
+*api 문서*/
+rest_api_docs/
+
+# 명세 원본과 종목 마스터 데이터. 저장소에 들어갈 일이 없는 형식입니다.
+*.xlsx
+*.xls
+*.mst
+
+# ---------------------------------------------------------------------------
+# 화면 확인용 캡처 (로컬 참고용, 커밋 대상 아님)
+# ---------------------------------------------------------------------------
+captures/
+
+# 화면 확인용 캡처는 captures/ 에만 둡니다. 저장소 루트에 떨어진 이미지는 커밋하지 않습니다.
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+
+# ---------------------------------------------------------------------------
+# 실전 계좌 응답 (로컬 전용 — 저장소에 올리지 않습니다)
+# ---------------------------------------------------------------------------
+# 예수금·잔고·손익 금액이 실제 값 그대로 들어 있습니다. 식별자는 가명으로
+# 바뀌지만 금액은 바뀌지 않아, 저장소에 두면 받는 사람이 모두 보게 됩니다.
+# 이 폴더가 없어도 시험은 그대로 돕니다.
+tests/fixtures/nh_private/

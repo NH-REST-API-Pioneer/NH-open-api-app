@@ -1,0 +1,87 @@
+{
+ "api_id": "domestic_chart-minute",
+ "collected_at": "2026-09-09T00:01:03.905384+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "POST",
+ "path": "/trade/v1/domestic/chart-minute",
+ "record_id": "20260909T000103_9f3f365b284c",
+ "request": {
+  "cidx_yn": "0",
+  "dcnt": "5",
+  "ed_tm": "235959",
+  "fut_cidx_exp_mod": "0",
+  "inq_ed_dt": "20260909",
+  "inq_strt_dt": "20260909",
+  "nght_tp": "1",
+  "nxt_key": "99999999",
+  "req_qty": "300",
+  "strt_tm": "000000",
+  "sym": "B0169A34"
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_close_pric": "18.70",
+    "occurs1_cum_trd_amt": "41",
+    "occurs1_cum_trd_qty": "9",
+    "occurs1_diff_rt": "1.75",
+    "occurs1_exch_tm": "090000",
+    "occurs1_high_pric": "18.70",
+    "occurs1_low_pric": "18.10",
+    "occurs1_open_pric": "18.10",
+    "occurs1_opint": "5823",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   },
+   {
+    "occurs1_close_pric": "16.80",
+    "occurs1_cum_trd_amt": "244",
+    "occurs1_cum_trd_qty": "59",
+    "occurs1_diff_rt": "-0.15",
+    "occurs1_exch_tm": "085500",
+    "occurs1_high_pric": "17.20",
+    "occurs1_low_pric": "15.75",
+    "occurs1_open_pric": "16.05",
+    "occurs1_opint": "5823",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   },
+   {
+    "occurs1_close_pric": "16.05",
+    "occurs1_cum_trd_amt": "211",
+    "occurs1_cum_trd_qty": "53",
+    "occurs1_diff_rt": "-0.90",
+    "occurs1_exch_tm": "085000",
+    "occurs1_high_pric": "16.30",
+    "occurs1_low_pric": "15.60",
+    "occurs1_open_pric": "16.05",
+    "occurs1_opint": "5828",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   },
+   {
+    "occurs1_close_pric": "16.25",
+    "occurs1_cum_trd_amt": "429",
+    "occurs1_cum_trd_qty": "104",
+    "occurs1_diff_rt": "-0.70",
+    "occurs1_exch_tm": "084500",
+    "occurs1_high_pric": "18.00",
+    "occurs1_low_pric": "15.95",
+    "occurs1_open_pric": "17.50",
+    "occurs1_opint": "5834",
+    "occurs1_ref_dt": "20260909",
+    "occurs1_rt": ""
+   }
+  ],
+  "nrec": "4",
+  "nxt_key": "30919151086003",
+  "sym": "B0169A34"
+ },
+ "scenario_id": "domestic_chart-minute__dcnt_5",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

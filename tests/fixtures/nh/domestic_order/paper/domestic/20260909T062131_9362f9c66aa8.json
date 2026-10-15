@@ -1,0 +1,28 @@
+{
+ "api_id": "domestic_order",
+ "collected_at": "2026-09-09T06:21:31.164470+00:00",
+ "environment": "paper",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "POST",
+ "path": "/trade/v1/domestic/order",
+ "record_id": "20260909T062131_9362f9c66aa8",
+ "request": {
+  "exec_cnd_cd": "1",
+  "ord_pric": "0",
+  "ord_qty": "1",
+  "ord_tp_cd": "2",
+  "sym": "A7569000",
+  "trd_div": "2"
+ },
+ "response": {
+  "msg_cd": "",
+  "msg_cntn": "",
+  "ord_no": "7745231861"
+ },
+ "scenario_id": "domestic_order__ord_tp_cd_2",
+ "status": "response_received",
+ "test_group": "모의왕복_20260909_152001",
+ "transport": "HTTP"
+}

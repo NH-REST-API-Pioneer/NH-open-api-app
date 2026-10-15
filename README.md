@@ -79,7 +79,7 @@ APP Key 와 Secret Key 는 설치 도우미에서 받지 않고, 앱을 실행�
 
 ### 설치 순서
 
-1. 이 페이지 상단의 초록색 **Code** 버튼을 누르고 **Download ZIP** 을 선택합니다. 또는 [내려받기 링크](https://github.com/NHFutures-OpenAPI/nh-futures-open-api/archive/refs/heads/main.zip)를 눌러 바로 받으셔도 됩니다. 설치 도우미가 함께 들어 있습니다.
+1. 이 페이지 상단의 초록색 **Code** 버튼을 누르고 **Download ZIP** 을 선택합니다. 또는 [내려받기 링크](https://github.com/PetterChanHyuk/nh-futures-open-api/archive/refs/heads/main.zip)를 눌러 바로 받으셔도 됩니다. 설치 도우미가 함께 들어 있습니다.
 2. ZIP 의 **압축을 모두 풀고** 프로젝트 폴더를 엽니다. 압축 파일 안에서 EXE 만 실행하지 마세요.
 3. 폴더 안의 **`NH FUTURES API Setup.exe`** 를 더블클릭합니다.
 4. **다음**으로 설치 위치와 옵션을 확인한 뒤, 설치 준비 화면에서 **설치 시작**을 누릅니다. 진행 상태와 상세 로그를 창에서 확인할 수 있습니다.
@@ -98,9 +98,9 @@ macOS / Linux에서는 이 스크립트 대신 [수동 설치 가이드](#macos-
 ### 1. 설치 파일 내려받기
 
 1. 이 페이지 상단의 초록색 **Code** 버튼을 누르고 **Download ZIP** 을 선택합니다.
-2. 또는 [내려받기 링크](https://github.com/NHFutures-OpenAPI/nh-futures-open-api/archive/refs/heads/main.zip)를 눌러 바로 받으셔도 됩니다.
+2. 또는 [내려받기 링크](https://github.com/PetterChanHyuk/nh-futures-open-api/archive/refs/heads/main.zip)를 눌러 바로 받으셔도 됩니다.
 
-> Git을 쓰시는 분은 `git clone https://github.com/NHFutures-OpenAPI/nh-futures-open-api.git` 으로 받으셔도 됩니다. 어느 방법으로 받으셔도 이후 과정은 같습니다.
+> Git을 쓰시는 분은 `git clone https://github.com/PetterChanHyuk/nh-futures-open-api.git` 으로 받으셔도 됩니다. 어느 방법으로 받으셔도 이후 과정은 같습니다.
 
 ### 2. PowerShell 열기
 
@@ -182,7 +182,7 @@ C:\Users\{사용자 이름}\NHFutures\config\config.yaml
 
 | 증상                                                                 | 조치                                                                                                                                          |
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| 설치 도우미 EXE가 없습니다 | 설치 도우미가 없는 이전 버전 ZIP일 수 있습니다. [최신 ZIP](https://github.com/NHFutures-OpenAPI/nh-futures-open-api/archive/refs/heads/main.zip)을 다시 받아 압축을 모두 풀거나 [Windows 수동 설치](#windows-수동-설치-및-문제-해결)를 이용해 주세요 |
+| 설치 도우미 EXE가 없습니다 | 설치 도우미가 없는 이전 버전 ZIP일 수 있습니다. [최신 ZIP](https://github.com/PetterChanHyuk/nh-futures-open-api/archive/refs/heads/main.zip)을 다시 받아 압축을 모두 풀거나 [Windows 수동 설치](#windows-수동-설치-및-문제-해결)를 이용해 주세요 |
 | 설치 도우미가 프로젝트 파일을 찾지 못합니다 | ZIP의 압축을 모두 풀고 소스와 함께 있는 `NH FUTURES API Setup.exe`를 실행하세요 |
 | 설치 창에서 실패로 표시됩니다 | 상세 로그의 마지막 오류를 확인하세요. 네트워크·권한·도구 버전 문제를 해결한 뒤 다시 시도할 수 있습니다 |
 | `이 시스템에서 스크립트를 실행할 수 없으므로` 라는 메시지가 나옵니다 | [실행 정책 오류 안내](#실행-정책-오류가-나면)를 따라 설치 프로세스에 한정해 다시 실행하세요. 회사의 그룹 정책 제한은 관리자에게 문의해 주세요 |
@@ -414,7 +414,7 @@ real: # 실전투자 — 구조는 paper 와 같습니다
 
 **Windows용 설치 도우미 EXE와 `bootstrap.ps1`은 macOS / Linux용이 아닙니다.** 아래와 같이 개발 도구를 직접 설치해 주세요. Windows 사용자는 [Windows 설치 안내](#원클릭-설치-가이드-windows용)를 참고하세요.
 
-먼저 [소스 ZIP](https://github.com/NHFutures-OpenAPI/nh-futures-open-api/archive/refs/heads/main.zip)을 내려받아 압축을 풀거나 Git으로 저장소를 복제합니다. 터미널에서 **`justfile`이 있는 프로젝트 폴더로 이동**한 뒤 아래 절차를 진행해 주세요.
+먼저 [소스 ZIP](https://github.com/PetterChanHyuk/nh-futures-open-api/archive/refs/heads/main.zip)을 내려받아 압축을 풀거나 Git으로 저장소를 복제합니다. 터미널에서 **`justfile`이 있는 프로젝트 폴더로 이동**한 뒤 아래 절차를 진행해 주세요.
 
 Node.js 요구 버전은 Windows와 동일하게 **22.15.0 이상**입니다. 프로젝트가 운영체제의 인증서 저장소를 사용하도록 `NODE_OPTIONS=--use-system-ca`를 설정하는데, 이 옵션이 22.15 부터 있습니다.
 

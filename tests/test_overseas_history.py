@@ -28,7 +28,7 @@ from backend.overseas_futureoption.overseas_routes import get_client
 
 
 def _줄(biz: str, clock: str, ref: str = "", price: str = "7681.50") -> dict:
-    """봉 한 줄. 칸 이름은 반입 기록 그대로입니다."""
+    """봉 한 줄. 칸 이름은 저장해 둔 기록 그대로입니다."""
     return {
         "occurs1_glb_biz_dt": biz,
         "occurs1_ref_dt": ref or biz,
@@ -175,7 +175,7 @@ def test_다음_장은_경계_쪽부터_다시_걷는다(손님):
 
 
 def test_키를_지어내지_않는다(손님):
-    """답이 준 값을 그대로 되돌려 보냅니다. 키의 속뜻은 확인하지 못했습니다."""
+    """답이 준 값을 그대로 되돌려 보냅니다. 키의 속뜻은 해석하지 않습니다."""
     앱, 호출부 = 손님(
         {
             첫키: _쪽(_줄("20260923", "120000"), 다음키="20260923030200999999"),

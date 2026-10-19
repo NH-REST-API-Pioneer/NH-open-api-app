@@ -1,13 +1,13 @@
 """검증 실행을 만들고 세우고 끝냅니다.
 
 라우트와 엔진 사이의 자리입니다. 라우트는 **무엇을 해 달라는지**만 넘기고,
-여기서 **할 수 있는 일인지**(§8 안전 세트)를 보고 실행 목록을 건사합니다.
+여기서 **할 수 있는 일인지**(안전 세트)를 보고 실행 목록을 건사합니다.
 
-## 시세는 아직 안 물려 있습니다
+## 시세는 여기서 물리지 않습니다
 
 실행을 만들면 엔진이 서지만 **허브 구독을 여기서 걸지 않습니다.** 봉·체결을
-넣어 주는 것은 다음 회차이고, 지금은 실행의 삶(추가·중지·재개·청산·종료)과
-안전 검사까지입니다. 그래서 `feed` 는 만든 직후 `idle` 입니다 — 「살아 있는데
+넣어 주는 것은 펌프(`pump.RunPump`)이고, 여기서는 실행의 삶(추가·중지·재개·청산·종료)과
+안전 검사를 맡습니다. 그래서 `feed` 는 만든 직후 `idle` 입니다 — 「살아 있는데
 값이 안 온다」와 「아직 안 붙였다」가 화면에서 갈려야 합니다.
 
 ## 자리가 정해져 있습니다
@@ -133,7 +133,7 @@ WHY_SWITCH = "전략 실행 {count}개가 남아 있어 환경을 바꿀 수 없
 WHY_ACCOUNT_LOSS = "계좌 손실 한도에 닿아 이 시장의 전략을 모두 중지했습니다"
 ACCOUNT_LOSS_REASON = "account-loss"
 
-# ── 대사 (§7-3·§13-4) ───────────────────────────────────
+# ── 대사 ────────────────────────────────────────────────
 
 #: 「확인」을 받을 수 없는 상태일 때 하는 말.
 WHY_NOT_ATTENTION = "확인이 필요한 실행이 아닙니다."
@@ -280,10 +280,10 @@ class RunService:
     # ── 읽기 ────────────────────────────────────────────
 
     def load(self) -> None:
-        """담아 둔 실행을 읽어 세웁니다. **돌던 종이 실행은 중지 상태입니다**(결정 12).
+        """담아 둔 실행을 읽어 세웁니다. **돌던 종이 실행은 중지 상태입니다**.
 
         **모의 실행은 대사로 섭니다**(`runs._restored`) — 앱이 꺼져 있던 동안
-        계좌에서 무슨 일이 있었는지 우리는 모릅니다. 맞춰 보기 전까지는 판정도
+        계좌에서 무슨 일이 있었는지 이 앱은 모릅니다. 맞춰 보기 전까지는 판정도
         주문도 열지 않고, 조회는 여기서 하지 않습니다(통신이라 루프 밖의
         일입니다). **맞춰 본 뒤에는 끝납니다** — 장부가 이어지지 않아 이어 갈
         수 없습니다(`reconcile`). 그 전략을 계속 돌리려면 실행을 새로 세웁니다.
@@ -295,9 +295,9 @@ class RunService:
             changed = False
             for run in self.store.read():
                 made = self._stand(run)
-                # 앞서 돌던 동안의 성과 수는 메모리에만 있었습니다.
+                # 앞서 돌던 동안의 성과 수는 메모리에만 있어 다시 켜면 남지 않습니다.
                 made.forget_stats()
-                # 같은 봉에서 이미 규칙이 걸렸는지도 메모리에만 있었습니다(「틱」 실행).
+                # 같은 봉에서 이미 규칙이 걸렸는지도 메모리에만 있어 남지 않습니다(「틱」 실행).
                 made.rest_ticks()
                 changed = self._renew_model(made) or changed
             if changed:
@@ -336,7 +336,7 @@ class RunService:
         """시세가 있어야 하는 실행들.
 
         **중지한 실행도 봅니다** — 들고 있는 것의 손절·익절 감시는 중지해도
-        돌아야 합니다(§7-1). 끝난 실행과 확인 필요만 뺍니다.
+        돌아야 합니다. 끝난 실행과 확인 필요만 뺍니다.
         """
         return [
             one.run
@@ -349,7 +349,7 @@ class RunService:
 
         **중지·확인 필요·종료는 빼고 셉니다.** 모의와 실전은 다른 계좌라
         환경이 바뀌면 시세도 장부도 다른 것이 되는데, 판정 중인 실행은 그
-        경계를 모른 채 이어 갑니다(결정 13).
+        경계를 모른 채 이어 갑니다.
         """
         self.load()
         with self._lock:
@@ -492,7 +492,7 @@ class RunService:
                 cash=float(cash),
                 fee_per_contract=float(fee_per_contract),
                 # 해외는 승수를 모르면 `None` 입니다 — 1 로 세우지 않습니다(계좌 실행은
-                # 시작에서 막힙니다). 국내는 앞 판 그대로입니다.
+                # 시작에서 막힙니다). 국내는 모르면 1 로 셉니다.
                 multiplier=(
                     facts["multiplier"]
                     if market == validate.OVERSEAS
@@ -501,7 +501,7 @@ class RunService:
                 margin=facts["margin"],
                 margin_budget=_number(aux.get("marginBudget")),
                 daily_loss=_number(aux.get("dailyLoss")),
-                # **계좌 갈래는 대사부터입니다**(§13-1) — 계좌에 우리가 모르는
+                # **계좌 갈래는 대사부터입니다** — 계좌에 이 앱이 모르는
                 # 주문이나 보유가 있는지 보고 나서 판정을 엽니다. 종이 실행은
                 # 맞춰 볼 계좌가 없어 바로 봅니다.
                 state=runs.RECONCILING if mode in runs.ACCOUNT_MODES else runs.ARMED,
@@ -734,7 +734,7 @@ class RunService:
     def instrument(self, market: str, code: str, session: str = "") -> dict[str, Any]:
         """그 종목의 틱·승수·증거금·남은 날. **모르는 것은 `None` 입니다.**
 
-        증거금은 국내 품목별세부정보에만 있습니다(해외는 그 칸이 없어 이월).
+        증거금은 국내 품목별세부정보에만 있습니다(해외는 그 칸이 없습니다).
         0 으로 답하면 「한 계약도 못 든다」가 되므로 모른다고 답합니다.
 
         증거금은 넷입니다 — 계약당 개시증거금(`margin`)과 두 비율, 그리고
@@ -927,7 +927,7 @@ class RunService:
         """
         made: list[str] = []
         for key, limit in limits.items():
-            # 앞 판의 시장 이름(`domestic`·`overseas`)은 원·달러로 읽습니다.
+            # 시장 이름 열쇠(`domestic`·`overseas`)는 원·달러로 읽습니다.
             currency = limit_lib.currency_of_key(key)
             if currency is None or limit is None or limit <= 0:
                 continue
@@ -986,13 +986,13 @@ class RunService:
         대사에 들기 직전 상태로 돌아갑니다 — 감시 중이던 실행은 감시를 이어 가고,
         사용자가 중지해 둔 실행은 중지 그대로입니다(`Run.keep_after_reconcile`). 그
         상태를 모르면 중지로 내려놓습니다. **앱을 다시 켠 뒤에는 자동 재개가
-        없습니다**(결정 12) — 꺼져 있던 동안 손절 감시가 돌지 않았습니다(`_retire`).
+        없습니다** — 꺼져 있던 동안 손절 감시가 돌지 않았습니다(`_retire`).
 
         어긋나면 `attention` 이고, 그동안 이 실행은 **어떤 요청도 내지
-        않습니다**(§7-2). 푸는 것은 사용자의 「확인」입니다(`acknowledge`).
+        않습니다**. 푸는 것은 사용자의 「확인」입니다(`acknowledge`).
 
         **종이 실행은 여기를 지나지 않습니다** — 맞춰 볼 계좌가 없습니다. 봉만
-        다시 받고 이어 갑니다(§7-3).
+        다시 받고 이어 갑니다.
 
         **끝난 실행도 지나지 않습니다.** 맞춰 볼 장부가 없고, 어긋난 것으로
         보이면 끝낸 실행이 「확인 필요」로 되살아납니다.
@@ -1047,7 +1047,7 @@ class RunService:
 
     def audit(self, run_id: str, at: int) -> list[str]:
         """맞춰 보기만 합니다. **상태를 내려놓지 않습니다** — 거래일 경계와
-        화면이 진행 탭을 열 때의 자리입니다(§13-4).
+        화면이 진행 탭을 열 때의 자리입니다.
 
         여기서도 `paused` 로 내리면, 탭을 여는 것만으로 돌던 전략이 멈춥니다.
         어긋났을 때만 `attention` 으로 갑니다. 어긋난 까닭들을 냅니다.
@@ -1149,7 +1149,7 @@ class RunService:
         return True
 
     def acknowledge(self, run_id: str, at: int) -> dict[str, Any]:
-        """사용자의 「확인」. **대사가 맞을 때만** 풀립니다(§7-2).
+        """사용자의 「확인」. **대사가 맞을 때만** 풀립니다.
 
         상태만 풀어 주면 계좌와 어긋난 채로 판정이 다시 열립니다 — 확인은
         「보았다」이지 「맞다」가 아닙니다. 그래서 여기서 한 번 더 맞춰 봅니다.
@@ -1187,7 +1187,7 @@ class RunService:
         return self._row(run_id, engine=made)
 
     def _quiet(self, made: engine_lib.RunEngine) -> None:
-        """요청을 안 내는 상태면 막습니다(§7-2·§7-3).
+        """요청을 안 내는 상태면 막습니다.
 
         「확인 필요」·「대사 중」은 계좌와 장부가 맞는지 모르는 자리입니다.
         그 상태에서 중지·청산·종료를 받으면 **취소나 주문이 계좌로 나갑니다** —
@@ -1231,9 +1231,9 @@ class RunService:
 
         견주는 것은 셋입니다.
 
-            1. 우리가 아는 **미체결 주문**이 계좌에도 있는가
+            1. 이 앱이 아는 **미체결 주문**이 계좌에도 있는가
             2. 그 주문의 **체결 수량**이 같은가
-            3. 그 종목의 **보유 수량**이 같은가, 계좌에 우리가 모르는 미체결이 있는가
+            3. 그 종목의 **보유 수량**이 같은가, 계좌에 이 앱이 모르는 미체결이 있는가
 
         **모르는 주문번호는 실행 하나가 아니라 모의 실행 전체를 놓고 봅니다.**
         계좌는 한 벌이고 주문번호도 계좌 단위라, 실행 하나만 놓고 보면 옆
@@ -1260,7 +1260,7 @@ class RunService:
         for order in made.book.open_orders:
             no = str(getattr(order, "order_no", "") or "")
             if not no:
-                # 주문번호 없는 주문은 접수 자리에서 이미 「확인 필요」입니다(§13-5).
+                # 주문번호 없는 주문은 접수 자리에서 이미 「확인 필요」입니다.
                 continue
             if no not in theirs:
                 if getattr(order, "cancel_sent", False) and no not in every:
@@ -1391,7 +1391,7 @@ class RunService:
     def _broker(self, run: Run) -> Any:
         """그 실행이 주문을 낼 자리. **갈래가 여기서 갈립니다.**
 
-        종이는 우리가 지어내고 모의는 계좌가 채웁니다. 갈리는 자리를 하나로
+        종이는 이 앱이 지어내고 모의는 계좌가 채웁니다. 갈리는 자리를 하나로
         모아 두면 「어디서 실계좌로 갈 수 있나」를 한 곳에서 답할 수 있습니다.
         """
         if run.mode not in runs.ACCOUNT_MODES:
@@ -1417,6 +1417,9 @@ class RunService:
         # 날이 바뀌면 만기까지 남은 날도 바뀝니다. 줄을 낼 때마다 다시 세웁니다.
         made.expiring = _expiring(facts["daysLeft"])
         self._keep_margin(made, facts)
+        each = made.per_contract
+        used = runs.margin_used(made.ledger, made.open_entry, each)
+        budget = made.run.margin_budget
         return runs.row_of(
             made.run,
             made.ledger,
@@ -1443,8 +1446,19 @@ class RunService:
             openEntry=made.open_entry,
             # 계약 하나에 드는 돈과 **그 값이 어떻게 나온 것인지**. 숫자만
             # 내면 화면이 어림을 확정값으로 읽습니다(`engine.BASIS_*`).
-            perContract=made.per_contract,
+            perContract=each,
             perContractBasis=made.per_contract_basis,
+            # 증거금 예산과 지금 묶인 돈·남은 돈. 묶인 돈은 (보유 + 열린 진입) ×
+            # 계약당이고 진입 검사와 같은 셈입니다(`runs.margin_used`). 계약당 값을
+            # 모르면 둘 다 `None` 이고, 그 까닭은 `perContractBasis`·`budgetUnchecked`
+            # 가 말합니다. 예산이 없으면 남은 돈도 `None` 입니다.
+            marginBudget=budget,
+            marginUsed=used,
+            marginLeft=budget - used if budget is not None and used is not None else None,
+            # 마지막 1호가와 받은 시각. 시세가 끊긴 동안은 비웁니다.
+            **made.quote_now,
+            # 지금 가격으로 낼 주문 — 매수·매도 두 방향과 보유를 닫는 청산.
+            expectedOrder=made.expected_prices(),
             # 오늘(KST) 규칙이 걸렸는데 주문을 안 낸 수. 이벤트 목록은 잘리므로
             # 화면이 세지 않게 따로 냅니다(`engine.RunEngine.unsent_today`).
             unsentToday=made.unsent_today(_now()),
@@ -1594,7 +1608,7 @@ def _look_outcome(run: Run, order: Any) -> dict[str, Any] | None:
 
 
 def _fetch_account(run: Run) -> dict[str, Any]:
-    """대사에 쓰는 계좌 두 벌 — 주문내역과 잔고내역(§13-4).
+    """대사에 쓰는 계좌 두 벌 — 주문내역과 잔고내역.
 
     **화면과 같은 함수로 읽습니다**(`domestic_account`) — 조회 응답을 푸는
     규칙이 두 벌이 되면, 화면이 보는 미체결과 대사가 보는 미체결이 달라집니다.
@@ -1761,6 +1775,15 @@ _UNKNOWN = (
     "openEntry",
     "perContract",
     "perContractBasis",
+    "marginBudget",
+    "marginUsed",
+    "marginLeft",
+    "bid1",
+    "ask1",
+    "bid1Qty",
+    "ask1Qty",
+    "quoteAt",
+    "expectedOrder",
     "unsentToday",
     "realizedPl",
     "openPl",

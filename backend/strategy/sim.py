@@ -1,7 +1,7 @@
 """계좌(모의·실전)로 나가는 주문.
 
-종이 장부(`paper.py`)는 「그때 냈으면 어떻게 채워졌을까」를 우리가 지어냅니다.
-여기서는 **실제로 냅니다** — 실행이 선 계좌로. 채우는 것은 계좌이고 우리는 받아
+종이 장부(`paper.py`)는 「그때 냈으면 어떻게 채워졌을까」를 이 앱이 지어냅니다.
+여기서는 **실제로 냅니다** — 실행이 선 계좌로. 채우는 것은 계좌이고 이 앱은 받아
 적습니다. 그래서 같은 자리를 두 벌로 두되 **엔진이 보는 얼굴은 하나**입니다
 (`place`·`cancel`·`open_orders`·`last_price`·`gap`).
 
@@ -33,9 +33,8 @@
 
 ## 계좌가 답을 안 주면 멈춥니다
 
-접수 답에 주문번호가 없거나 답 자체를 못 받으면 **다시 보내지 않습니다**
-(§8 「재전송 금지」). 같은 주문이 둘 나가는 것보다 한 건이 확인 안 된 채로
-남는 편이 낫습니다. 그때는 실행이 「확인 필요」로 가고 사용자가 풀어야 합니다.
+접수 답에 주문번호가 없거나 답 자체를 못 받으면 **다시 보내지 않습니다**(재전송
+금지). 같은 주문이 둘 나가는 것보다 한 건이 확인 안 된 채로 남는 편이 낫습니다. 그때는 실행이 「확인 필요」로 가고 사용자가 풀어야 합니다.
 
 **계좌가 거부한 것은 답을 받은 것입니다.** 서버가 코드와 문구로 주문을 받지
 않겠다고 답하면(`rejection_of`) 계좌에는 아무것도 남지 않았으므로 「결과를 받지
@@ -95,13 +94,13 @@ REJECTED = "rejected"
 #: 취소를 냈지만 아직 확인이 안 온 주문.
 PENDING = "pending"
 
-#: 보내기 전에 앱이 막은 주문의 까닭 코드와 글 머리. 계좌로는 아무것도 나가지 않았습니다.
+#: 보내기 전에 앱이 막은 주문의 까닭 코드와 글 머리. 계좌로는 아무것도 나가지 않습니다.
 NOT_SENT = "app-check"
 WHY_NOT_SENT = "거부(앱 검사)"
 
 
 class NotSent(ValueError):
-    """보내기 전에 앱이 막았습니다. **계좌로는 아무것도 나가지 않았습니다.**
+    """보내기 전에 앱이 막은 경우입니다. **계좌로는 아무것도 나가지 않습니다.**
 
     다른 실패와 갈라 두는 것은, 같은 값으로 다시 내도 같은 자리에서 막히는데
     「결과를 받지 못했습니다」로 적으면 나갔을지 모르는 주문처럼 읽히기 때문입니다.
@@ -109,7 +108,7 @@ class NotSent(ValueError):
 
 
 class SimRefused(Exception):
-    """주문을 내지 못했습니다. `flag` 가 참이면 「확인 필요」로 가야 합니다.
+    """주문을 내지 못한 경우입니다. `flag` 가 참이면 「확인 필요」로 가야 합니다.
 
     `reason` 은 까닭의 코드입니다. 실행 사건 줄의 `reason` 칸에 그대로 실립니다.
     계좌가 거부한 것(`REJECTED`)이면 `code`·`detail` 에 서버가 준 코드와 문구가
@@ -172,7 +171,7 @@ class SimOrder:
     quantity: int
     order_type: str
     price: float | None = None
-    #: 스탑 가격. STOP 주문에만 있습니다. **계좌로 함께 나간 값**이라 우리도
+    #: 스탑 가격. STOP 주문에만 있습니다. **계좌로 함께 나간 값**이라 이 장부도
     #: 들고 있습니다 — 안 적어 두면 화면이 걸어 둔 주문의 발동가를 못 읽습니다.
     stop_price: float | None = None
     fill_condition: str = ""
@@ -315,7 +314,7 @@ class SimBroker:
 
         given = str((reply or {}).get("id") or "").strip()
         if not given:
-            # **다시 보내지 않습니다**(§8 재전송 금지) — 나갔는지 모르는 주문을
+            # **다시 보내지 않습니다**(재전송 금지) — 나갔는지 모르는 주문을
             # 한 번 더 내면 같은 자리에 둘이 들어갑니다.
             raise SimRefused(WHY_NO_ORDER_NO, reason="no-order-no")
 
@@ -334,7 +333,7 @@ class SimBroker:
             if one.confirm_due is None:
                 continue
             if not one.open or one.cancel_sent:
-                # 알림이 이미 닫았거나 우리가 거두는 중입니다. 결과는 그쪽이 정합니다.
+                # 알림이 이미 닫았거나 이 앱이 거두는 중입니다. 결과는 그쪽이 정합니다.
                 one.confirm_due = None
                 continue
             if one.confirm_due <= now:
@@ -415,7 +414,7 @@ class SimBroker:
         given = str(event.get("id") or "").strip()
         found = next((one for one in self.orders if one.order_no == given), None) if given else None
         if found is None:
-            # 취소 확인은 **새 주문번호**로 오고 원주문번호(`org_ord_no`)가 우리 주문을
+            # 취소 확인은 **새 주문번호**로 오고 원주문번호(`org_ord_no`)가 이 앱의 주문을
             # 가리킵니다(명세). 취소 수량이 남은 수량을 다 덮는 알림만 이 길로 닫습니다 —
             # 체결 알림은 이 길로 짝짓지 않습니다.
             target = self._cancel_target(event)
@@ -492,7 +491,7 @@ class SimBroker:
             order.closed_by = by
 
     def _cancel_target(self, event: dict[str, Any]) -> SimOrder | None:
-        """취소 확인 알림이 가리키는 우리 열린 주문. 원주문번호 + 취소 수량 ≥ 남은 수량일 때만."""
+        """취소 확인 알림이 가리키는 이 장부의 열린 주문. 원주문번호 + 취소 수량 ≥ 남은 수량일 때만."""
         original = str(event.get("originalOrderNo") or "").strip()
         cancelled = _int(event.get("cancelled")) or 0
         if not original or cancelled <= 0:

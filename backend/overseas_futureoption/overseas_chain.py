@@ -27,9 +27,9 @@ def chain(raw: dict[str, Any], *, asked: str) -> dict[str, Any]:
         "underlying": None,
         "future": None,
         # 만기까지 남은 날 — 받은 값 그대로입니다. 명세는 「만기일 포함」이라 적지만
-        # 해외 보유포지션만기조회의 같은 이름 칸은 모의 실측에서 포함하지 않았고
-        # (만기일 − 오늘), 이 응답의 셈 기준은 확인하지 못했습니다. 국내는 선물 잔존일이 이
-        # 자리에 있습니다.
+        # 해외 보유포지션만기조회의 같은 이름 칸은 만기일을 포함하지 않습니다
+        # (만기일 − 오늘). 이 응답도 같은 셈인지는 명세로 가릴 수 없어 그대로 냅니다.
+        # 국내는 선물 잔존일이 이 자리에 있습니다.
         "daysLeft": market_values.count(raw.get("rem_dy")) if isinstance(raw, dict) else None,
         "rows": [_row(row) for row in rows],
         "count": len(rows),

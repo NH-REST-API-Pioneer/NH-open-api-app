@@ -12,8 +12,8 @@
 품목마다 통화가 다릅니다. 통화가 다른 손익을 더하면 뜻이 없는 수가 나오므로
 한도도 통화마다 하나씩 둡니다 — 환율로 맞춰 하나로 세지 않습니다.
 
-앞 판은 시장마다(`domestic`·`overseas`) 하나였습니다. 그 값은 원·달러 한도로
-읽고, 답에도 두 이름을 그 통화의 값으로 함께 싣습니다. 요청도 두 이름을 받습니다.
+시장 이름 열쇠(`domestic`·`overseas`)도 받습니다. 파일·요청의 그 두 열쇠는 원·달러
+한도로 읽고, 답에도 두 이름을 그 통화의 값으로 함께 싣습니다.
 
 `null` 은 **안 건 것**입니다. 0 이 아닙니다 — 0 은 「한 푼도 잃으면 안 된다」라
 첫 수수료에 멈추게 됩니다.
@@ -21,9 +21,9 @@
 ## 실전 계좌는 따로입니다
 
 실전 계좌 실행(`real`)의 손실은 실전 계좌의 것이라, 모의 계좌·앱 시뮬레이션과
-**한도도 합계도 따로** 둡니다(`REAL`). 파일의 `limits` 는 앞 판과 같은 모양으로
-모의 쪽 한도이고, 실전 한도는 그 옆 `real` 에 둡니다 — 앞 판이 담은 파일은 그대로
-모의 한도로 읽히고, 실전 한도는 비어 시작합니다.
+**한도도 합계도 따로** 둡니다(`REAL`). 파일의 `limits` 는 모의 쪽 한도이고, 실전
+한도는 그 옆 `real` 에 둡니다 — `real` 칸이 없는 파일은 그대로 모의 한도로 읽히고,
+실전 한도는 비어 시작합니다.
 
 ## 설정 폴더가 아니라 상태 폴더입니다
 
@@ -53,16 +53,16 @@ LIMITS_PATH = run_state_dir() / "strategy-limits.json"
 #: 파일 형식. 담는 것이 달라지면 올립니다. 3 부터 통화마다입니다.
 VERSION = 3
 
-#: 한도를 따로 두는 계좌. `PAPER` 는 앱 시뮬레이션과 모의 계좌 실행의 한도이고
-#: (앞 판부터 있던 한도), `REAL` 은 실전 계좌 실행의 한도입니다.
+#: 한도를 따로 두는 계좌. `PAPER` 는 앱 시뮬레이션과 모의 계좌 실행의 한도이고,
+#: `REAL` 은 실전 계좌 실행의 한도입니다.
 PAPER = "paper"
 REAL = "real"
 ENVIRONMENTS = (PAPER, REAL)
 
-#: 앞 판의 시장 이름 → 그 통화. 읽기·답·요청에서 이 짝으로 옮깁니다.
+#: 시장 이름 열쇠 → 그 통화. 읽기·답·요청에서 이 짝으로 옮깁니다.
 LEGACY: dict[str, str] = {"domestic": "KRW", "overseas": "USD"}
 
-#: 앞 판의 시장 이름들. 답에 두 이름을 함께 싣습니다.
+#: 시장 이름 열쇠들. 답에 두 이름을 함께 싣습니다.
 MARKETS = tuple(LEGACY)
 
 #: 늘 칸이 있는 통화. 걸지 않았어도 `null` 로 답합니다.
@@ -86,7 +86,7 @@ def blank() -> dict[str, dict[str, Any]]:
 
 
 def currency_of_key(key: Any) -> str | None:
-    """요청·파일의 열쇠 하나 → 통화. 앞 판의 시장 이름도 받습니다. 아니면 `None`."""
+    """요청·파일의 열쇠 하나 → 통화. 시장 이름 열쇠도 받습니다. 아니면 `None`."""
     body = str(key or "").strip()
     made = LEGACY.get(body, body)
     return made if _CURRENCY.match(made) else None
@@ -126,7 +126,7 @@ def problems(values: Any) -> list[dict[str, str]]:
 
 
 def with_legacy(rows: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """통화 칸에 앞 판의 두 이름(`domestic` = 원, `overseas` = 달러)을 더한 답."""
+    """통화 칸에 시장 이름 열쇠 둘(`domestic` = 원, `overseas` = 달러)을 더한 답."""
     made = {currency: dict(row) for currency, row in rows.items()}
     for market, currency in LEGACY.items():
         made[market] = dict(rows.get(currency) or {DAILY_LOSS: None})
@@ -136,7 +136,7 @@ def with_legacy(rows: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
 def daily_losses(values: dict[str, dict[str, Any]]) -> dict[str, float]:
     """`{통화: 한도}` — **안 건 통화는 빠집니다.** 판정이 바로 받는 모양입니다.
 
-    앞 판의 두 이름은 같은 통화 칸이 있으면 그 칸을 따릅니다(답에 함께 실리는 값).
+    시장 이름 열쇠 둘은 같은 통화 칸이 있으면 그 칸을 따릅니다(답에 함께 실리는 값).
     """
     made: dict[str, float] = {}
     for key, row in values.items():
@@ -166,7 +166,7 @@ class LimitStore:
         self._loaded_real: dict[str, dict[str, Any]] = blank()
 
     def read(self, environment: str = PAPER) -> dict[str, dict[str, Any]]:
-        """그 계좌의 담긴 한도(통화마다, 앞 판의 두 이름 포함). 못 읽으면 **안 건 것**입니다."""
+        """그 계좌의 담긴 한도(통화마다, 시장 이름 열쇠 둘 포함). 못 읽으면 **안 건 것**입니다."""
         held = self._all()
         return with_legacy(held.get(environment, blank()))
 
@@ -204,14 +204,14 @@ class LimitStore:
             )
             self._loaded_real = blank()
             return blank()
-        # 실전 한도는 옆 칸입니다. 앞 판이 담은 파일에는 없어 비어 시작합니다.
+        # 실전 한도는 옆 칸입니다. 그 칸이 없는 파일이면 비어 시작합니다.
         self._loaded_real = _rows_of(held.get(REAL) if isinstance(held, dict) else None)
         return _rows_of(held.get("limits") if isinstance(held, dict) else None)
 
     def save(self, values: dict[str, Any], environment: str = PAPER) -> dict[str, dict[str, Any]]:
         """그 계좌의 한도를 담고 담긴 모양을 냅니다. 다른 계좌의 한도는 그대로 둡니다.
 
-        **앞 판의 두 이름만 보낸 요청은 원·달러 칸만** 바꿉니다 — 그 화면은 다른
+        **시장 이름 열쇠 둘만 보낸 요청은 원·달러 칸만** 바꿉니다 — 그 화면은 다른
         통화를 모르므로, 그 통화의 한도를 풀지 않습니다. 통화 이름이 하나라도 있으면
         보낸 것이 그 계좌의 전부입니다(안 보낸 통화는 안 건 것). 모르는 열쇠는 안 담습니다.
 
@@ -251,7 +251,7 @@ class LimitStore:
 def _rows_of(rows: Any) -> dict[str, dict[str, Any]]:
     """파일의 한 계좌 칸을 읽습니다. 모양이 아니면 아무것도 안 건 것입니다.
 
-    앞 판 파일의 `domestic`·`overseas` 는 원·달러 칸으로 읽습니다.
+    파일의 `domestic`·`overseas` 열쇠는 원·달러 칸으로 읽습니다.
     """
     made = blank()
     if not isinstance(rows, dict):

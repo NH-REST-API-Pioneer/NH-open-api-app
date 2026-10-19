@@ -361,7 +361,7 @@ def test_되살린_표지는_파일에_안_담긴다(tmp_path):
 
 
 def test_모드가_없는_옛_줄은_중지로_선다(tmp_path):
-    """앞 판이 담은 줄에는 모드 칸이 없습니다 — 종이로 봅니다."""
+    """모드 칸이 생기기 전 형식의 줄에는 모드 칸이 없습니다 — 종이로 봅니다."""
     길 = tmp_path / "strategy-runs.json"
     runs.RunStore(길).save([_실행(state=runs.HOLDING)])
     담긴것 = json.loads(길.read_text(encoding="utf-8"))
@@ -377,8 +377,8 @@ def test_망가진_줄은_건너뛰고_나머지는_읽는다(tmp_path, caplog):
     """**줄 하나 때문에 목록이 통째로 안 서면 안 됩니다.**
 
     JSON 은 멀쩡한데 줄 하나에 칸이 모자란 자리입니다 — 손으로 고친 파일이
-    닿는 길입니다. 앞 판은 그 한 줄에 `TypeError` 로 터져 실행이 전부 사라진
-    것처럼 보였습니다. 파일이 통째로 안 읽히는 길은 아래 시험이 봅니다.
+    닿는 길입니다. 그 한 줄에 `TypeError` 로 터지면 실행이 전부 사라진 것처럼
+    보입니다. 파일이 통째로 안 읽히는 길은 아래 시험이 봅니다.
     """
     길 = tmp_path / "strategy-runs.json"
     runs.RunStore(길).save([_실행()])
@@ -569,7 +569,7 @@ def test_다른_앱이_쓴_실행_파일은_안_세운다(tmp_path, caplog):
 
 
 def test_표지가_없는_옛_파일은_그대로_읽는다(tmp_path):
-    """앞 판이 담은 파일에는 이 칸이 없습니다 — 없다고 버리면 실행이 사라집니다."""
+    """이 칸이 생기기 전 형식의 파일에는 이 칸이 없습니다 — 없다고 버리면 실행이 사라집니다."""
     길 = tmp_path / "strategy-runs.json"
     runs.RunStore(길).save([_실행()])
     담긴것 = json.loads(길.read_text(encoding="utf-8"))

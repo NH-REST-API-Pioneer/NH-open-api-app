@@ -80,7 +80,7 @@ import {
  * 지표 설정은 밖(ChartPanel)에서 받습니다. 두 칸이 같은 설정을 씁니다 —
  * 칸마다 다르면 같은 이름의 선이 두 칸에서 다른 색으로 그려집니다.
  *
- * 범례와 마지막 값 배지는 우리가 그립니다. 라이브러리의 말풍선은 봉 위에
+ * 범례와 마지막 값 배지는 이 앱이 그립니다. 라이브러리의 말풍선은 봉 위에
  * 상자를 띄워 봉을 가리고, 마지막 값 표시는 켜면 모든 지표에 붙어 가격축이
  * 이동평균 값으로 덮입니다.
  *
@@ -143,7 +143,7 @@ const X_AXIS_HEIGHT = 26
  * 확대에서는 세로가 넉넉하므로 칸도 그만큼 키웁니다. */
 const SUB_PANE_MAX = 96
 const SUB_PANE_MAX_EXPANDED = 180
-/* 라이브러리가 칸에 두는 기본 바닥. 우리가 이보다 낮게 주려면 바닥도 같이
+/* 라이브러리가 칸에 두는 기본 바닥. 칸 높이를 이보다 낮게 주려면 바닥도 같이
  * 내려야 합니다. 안 그러면 칸 셋이 자리를 넘겨 봉 칸이 0 이 됩니다. */
 const PANE_FLOOR = 30
 /* 아래 칸 전부가 가져갈 수 있는 몫. 나머지는 봉이 갖습니다 — 봉이 이 화면의
@@ -445,7 +445,7 @@ function styleFromTokens(): Record<string, unknown> {
         low: { color: label },
         last: { upColor: up, downColor: down, noChangeColor: dim },
       },
-      /* 값은 우리 범례가 말합니다. 라이브러리 말풍선은 봉 위에 상자를 띄워
+      /* 값은 이 앱의 범례가 말합니다. 라이브러리 말풍선은 봉 위에 상자를 띄워
          봉을 가립니다. */
       tooltip: { showRule: 'none' },
     },
@@ -459,7 +459,7 @@ function styleFromTokens(): Record<string, unknown> {
       circles: [{ upColor: upBar, downColor: downBar, noChangeColor: dim }],
       tooltip: { showRule: 'none' },
       /* 마지막 값 표시는 켜면 모든 지표에 붙어 가격축이 이동평균 값으로
-         덮입니다. 아래 칸의 배지는 우리가 따로 그립니다. */
+         덮입니다. 아래 칸의 배지는 이 앱이 따로 그립니다. */
       lastValueMark: { show: false },
     },
 
@@ -579,7 +579,7 @@ export class SyncHub {
     target.scrollToDataIndex(source.getVisibleRange().realTo - 1, 0)
   }
 
-  /* 맞추는 동안 상대 칸이 내는 스크롤·확대 액션은 우리가 만든 것이라 되받지
+  /* 맞추는 동안 상대 칸이 내는 스크롤·확대 액션은 이 코드가 만든 것이라 되받지
      않습니다. 액션이 한 틱 뒤에 올 수도 있어 다음 틱까지 잠급니다. */
   private lock(work: () => void): void {
     if (this.busy) return
@@ -971,7 +971,7 @@ export function ChartView({
     })
 
     /* 십자선을 따라 범례 값이 바뀝니다. 액션은 화면 좌표만 주므로 어느 봉인지는
-       우리가 되찾습니다. 차트 밖으로 나가면 액션이 오지 않아, 나가는 것은
+       여기서 되찾습니다. 차트 밖으로 나가면 액션이 오지 않아, 나가는 것은
        따로 듣고 마지막 봉으로 돌아갑니다. */
     const onCross = (data?: unknown) => {
       const cross = (data ?? {}) as Crosshair
@@ -1265,7 +1265,7 @@ export function ChartView({
       if (setting.on && !has) {
         /* 봉 위에 겹치는 지표는 봉 칸에 쌓고, 축이 다른 지표는 아래에 제 칸을
            받습니다. 한 칸에 섞으면 값의 범위가 달라 한쪽이 눌립니다.
-           아래 칸의 이름은 우리가 정합니다 — 만들기의 반환값은 칸이 아니라
+           아래 칸의 이름은 이 코드가 정합니다 — 만들기의 반환값은 칸이 아니라
            지표의 id 라, 라이브러리가 지어 준 칸은 다시 찾을 수 없습니다. */
         const paneId = overlay ? CANDLE_PANE : `pane_${def.name}`
         const made = chart.createIndicator({ ...create, paneId }, overlay)

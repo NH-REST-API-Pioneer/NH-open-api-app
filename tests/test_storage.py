@@ -232,7 +232,7 @@ def test_다른_앱이_쓴_파일을_알아본다():
 
 @pytest.mark.parametrize("담긴것", [{}, {ORIGIN: ""}, {ORIGIN: "live"}, {ORIGIN: " live "}, []])
 def test_표지가_없거나_같으면_우리_것이다(담긴것):
-    """앞 판이 담은 파일에는 이 칸이 없다 — 없다고 버리면 안 된다."""
+    """이 칸이 생기기 전 형식의 파일에는 이 칸이 없다 — 없다고 버리면 안 된다."""
     상태 = ReadState()
 
     assert from_other_app(담긴것, "live", state=상태) is False
@@ -240,7 +240,7 @@ def test_표지가_없거나_같으면_우리_것이다(담긴것):
 
 
 def test_우리_파일을_다시_읽으면_알림이_풀린다(tmp_path):
-    """저쪽 파일을 치우고 우리 것을 쓰면 알림도 함께 놓여야 한다."""
+    """저쪽 파일을 치우고 이 앱의 것을 쓰면 알림도 함께 놓여야 한다."""
     경로 = tmp_path / "값.json"
     상태 = ReadState()
     from_other_app({ORIGIN: "replay"}, "live", state=상태)

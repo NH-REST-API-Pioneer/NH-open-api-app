@@ -33,6 +33,10 @@ interface Props {
    *  세울 수 있는 것은 듣고 있을 때뿐입니다 — 안 듣는 동안에는 없는 것이
    *  아니라 모르는 것입니다. */
   listening?: boolean
+  /** 서버가 이 종목의 실시간 등록을 거절했는지(시세 사용 신청 전인 거래소). 그때는
+   *  기다려도 오지 않으므로 「연결되면 쌓입니다」 대신 오지 않는다고 적습니다.
+   *  까닭은 카드 머리의 꼬리표가 말합니다. */
+  refused?: boolean
   /** 이 시장에 **조회 경로가 아직 없는지.** 그때는 이 카드만의 사정이 아니라
    *  화면 전체가 같은 사정이라, 카드는 짧은 표지만 답니다 — 문장은 헤더가
    *  한 번 말합니다. */
@@ -49,6 +53,7 @@ export function TickTape({
   quote,
   ticks,
   listening = false,
+  refused = false,
   unasked = false,
   pending = false,
 }: Props) {
@@ -72,13 +77,15 @@ export function TickTape({
         <p className="ticks-empty">
           {unasked
             ? '조회 전'
-            : listening
+            : refused
+              ? '실시간 시세가 오지 않습니다'
+              : listening
               ? '아직 체결이 없습니다'
               : '시세가 연결되면 체결이 쌓입니다'}
         </p>
       ) : (
         <div className="ticks-scroll">
-          {/* **열쇠는 자리 번호입니다.** 체결에는 우리가 아는 고유 번호가 없고,
+          {/* **열쇠는 자리 번호입니다.** 체결에는 화면이 아는 고유 번호가 없고,
               시각·가격·수량이 모두 같은 체결이 실제로 여러 건 옵니다(같은 초에
               같은 값으로 여러 번 체결됩니다). 값으로 열쇠를 지으면 그 겹치는
               줄들이 한 줄로 뭉쳐, **새 체결이 와도 옛 줄이 안 걷히고 목록이

@@ -184,7 +184,7 @@ def test_담겨_있던_해외_실행은_담긴_승수_그대로_선다(tmp_path)
 
 
 def test_지난_봉_셈의_승수_모름_막음은_해외만이다(monkeypatch):
-    """국내는 앞 판처럼 승수가 비면 1 로 셉니다(국내 변경 없음)."""
+    """국내는 승수가 비면 1 로 셉니다."""
     from fastapi.testclient import TestClient
 
     from backend.main import app

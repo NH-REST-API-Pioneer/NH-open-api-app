@@ -24,7 +24,7 @@ import './instruments.css'
 const NAV_WIDTH = 240
 
 /* 종류 이름. **마스터 규격이 `type` 값 옆에 적어 둔 낱말 그대로**입니다
- * (`F` 선물 · `O` 옵션 · `S` 스프레드). 우리가 따로 짓지 않습니다. */
+ * (`F` 선물 · `O` 옵션 · `S` 스프레드). 이 앱이 따로 짓지 않습니다. */
 const KIND_LABEL: Record<ProductKind, string> = {
   futures: '선물',
   option: '옵션',

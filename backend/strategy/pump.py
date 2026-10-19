@@ -249,8 +249,8 @@ class RunPump:
         """다시 붙은 실행 하나를 따라잡게 합니다. 통신이 있어 루프 밖에서 부릅니다.
 
         먼저 끊긴 동안의 봉을 조회로 다시 받습니다(`service.refill`). 그다음 계좌 갈래
-        실행은 **계좌와 맞춰 봅니다**(§7-3) — 끊겨 있던 동안 계좌에서 무슨 일이
-        있었는지 우리는 모릅니다. 맞으면 대사 전 상태로 돌아가고, 어긋나면 확인을
+        실행은 **계좌와 맞춰 봅니다** — 끊겨 있던 동안 계좌에서 무슨 일이
+        있었는지 이 앱은 모릅니다. 맞으면 대사 전 상태로 돌아가고, 어긋나면 확인을
         기다립니다. 종이 실행은 대사가 할 일이 없어 봉만 다시 받아 이어 갑니다.
 
         **확인을 기다리는 실행은 봉만 다시 받고 맞춰 보지 않습니다.** 그 상태는
@@ -357,8 +357,12 @@ class RunPump:
         스무 자리를 나눠 쓰다 밀리면 조용히 값이 안 옵니다 — 화면에는 살아
         있는 것처럼 보이는데 봉이 안 서는 상태가 됩니다. 그 실행을 `idle` 로
         되돌리고 까닭을 남깁니다.
+
+        서버가 등록을 거절한 구독(`failed`)이면 자리 때문이 아니므로 **서버가 보낸
+        코드와 글을 그대로** 남깁니다(`refused_text`).
         """
         rejected = payload.get("rejected")
+        failed = payload.get("failed")
         if not isinstance(rejected, list):
             return
         missed = {
@@ -366,11 +370,18 @@ class RunPump:
             for one in rejected
             if isinstance(one, dict)
         }
+        refused: dict[tuple[str, str], str] = {}
+        for one in failed if isinstance(failed, list) else []:
+            if not isinstance(one, dict):
+                continue
+            where = (str(one.get("context") or ""), str(one.get("sym") or ""))
+            refused.setdefault(where, refused_text(one.get("code"), one.get("message")))
         for one in self.service.engines():
-            if (one.run.session, one.run.code) not in missed:
+            where = (one.run.session, one.run.code)
+            if where not in missed and where not in refused:
                 continue
             one.feed = IDLE
-            one._say(at, engine_lib.GAP, NO_ROOM)
+            one._say(at, engine_lib.GAP, refused.get(where, NO_ROOM))
 
     def _for(self, context: Any, sym: Any) -> list[engine_lib.RunEngine]:
         """그 종목·창을 보는 실행들. **끝난 실행은 뺍니다.**
@@ -487,7 +498,7 @@ class RunPump:
                 self._fault(exc, _now())
 
     async def _audit_forever(self) -> None:
-        """대사를 기다리는 실행과 거래일이 바뀐 실행을 계좌와 맞춰 봅니다(§13-4).
+        """대사를 기다리는 실행과 거래일이 바뀐 실행을 계좌와 맞춰 봅니다.
 
         **방송 박자와 따로 돕니다.** 계좌 조회는 초당 제한이 있어 한 건에
         1초 가까이 걸릴 수 있는데, 방송 박자(100밀리초) 안에서 기다리면 그동안
@@ -571,7 +582,7 @@ class RunPump:
         지납니다. 부른 횟수를 냅니다.
 
         **흘렀다**는 조회의 누적 거래량이 이 실행이 실시간으로 마지막에 본 누적
-        거래량보다 큰 것입니다. 그 뒤에 체결이 있었는데 우리에게 오지 않았다는
+        거래량보다 큰 것입니다. 그 뒤에 체결이 있었는데 이 앱에 오지 않았다는
         뜻입니다. 조회가 실패하거나 견줄 값이 없으면 판단하지 않고 기존 문장을
         그대로 둡니다.
         """
@@ -600,7 +611,7 @@ class RunPump:
         return asked
 
     def _fault(self, exc: Exception, at: int) -> None:
-        """박자가 터졌습니다. **같은 것은 한 번만 남깁니다.**
+        """박자가 터졌을 때. **같은 것은 한 번만 남깁니다.**
 
         박자는 초에 열 번입니다. 고쳐지지 않는 예외 하나가 같은 줄을 초당 열
         번씩 쌓으면, 기록에서 다른 일이 묻히고 파일만 자랍니다. 대신 실행에
@@ -752,7 +763,7 @@ class RunPump:
         return got
 
     def _broke(self, made: engine_lib.RunEngine, exc: Exception, at: int) -> None:
-        """그 실행의 값을 못 꺼냈습니다. **같은 까닭은 실행마다 한 번만** 남깁니다.
+        """그 실행의 값을 못 꺼냈을 때. **같은 까닭은 실행마다 한 번만** 남깁니다.
 
         박자는 초에 열 번입니다. 고쳐지지 않는 예외 하나가 같은 줄을 초당 열
         번씩 쌓으면 기록에서 다른 일이 묻히고 파일만 자랍니다.
@@ -791,6 +802,17 @@ FAULT = "실행을 돌리다 막혔습니다 —"
 
 #: 구독 자리가 없어 밀렸을 때 남기는 말.
 NO_ROOM = "실시간 시세 한도를 넘어 이 실행은 시세를 못 받습니다"
+
+#: 서버가 실시간 등록을 거절했을 때 남기는 말의 머리. 뒤에 서버의 코드와 글이 붙습니다.
+REFUSED = "실시간 등록을 서버가 거절했습니다 —"
+
+
+def refused_text(code: Any, message: Any) -> str:
+    """서버가 거절한 구독에 남기는 말. 코드와 글은 서버가 보낸 그대로, 글이 비면 코드만."""
+    said = " ".join(
+        part for part in (str(code or "").strip(), str(message or "").strip()) if part
+    )
+    return f"{REFUSED} {said}" if said else REFUSED
 
 #: 실행이 쓰는 창 이름 → 세션 판정이 내는 값.
 _WINDOW_OF = {"domestic-day": "day", "domestic-night": "night"}

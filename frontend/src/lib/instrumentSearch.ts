@@ -126,7 +126,7 @@ export function hitsOf(market: Market, product: Product, term: string): Hit[] {
   }
 
   /* 종목 쪽은 코드·만기 표기에 더해 **마스터가 실어 준 이름 원문**까지 봅니다 —
-     화면에는 우리가 지은 이름이 서지만, 마스터에 적힌 대로 친 사람도 찾을 수
+     화면에는 이 앱이 지은 이름이 서지만, 마스터에 적힌 대로 친 사람도 찾을 수
      있어야 합니다. */
   return byKind
     .flatMap((item) => item.refs)

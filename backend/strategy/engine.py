@@ -10,7 +10,7 @@
     1. 청산 규칙 — 보유 방향에 맞는 것 하나. 걸리면 **그 봉의 진입은 보지 않습니다.**
     2. 진입 규칙 — 보유가 없으면 둘 다, 있으면 같은 방향 하나만.
 
-틱마다 보는 것은 손절·추적 청산·익절입니다(§5-2). **마지막 체결가**가 기준가에서
+틱마다 보는 것은 손절·추적 청산·익절입니다. **마지막 체결가**가 기준가에서
 틱 거리만큼 움직이면 시장가 전량으로 닫습니다. 같은 틱에 여럿이 함께 닿으면
 **손절 → 추적 청산 → 익절** 차례로 하나만 적습니다 — 어느 쪽이 먼저였는지 모르는데
 좋은 쪽을 골라 적으면 성적이 부풀어 오릅니다.
@@ -23,8 +23,7 @@
 시세는 **이벤트 루프**가 넣고, 중지·청산·종료는 **라우트 스레드**가 부릅니다.
 그래서 엔진마다 잠금(`lock`)을 하나 두고 들어오는 자리마다 겁니다. 루프로
 넘겨 순서를 세우지 않는 것은, 라우트가 답을 바로 내놓아야 하는데 루프에 줄을
-서면 **느린 실행 하나가 모든 라우트를 기다리게** 하기 때문입니다 — 실행마다
-따로 도는 편이 규격 §10 의 뜻에 맞습니다.
+서면 **느린 실행 하나가 모든 라우트를 기다리게** 하기 때문입니다.
 
 ## 값이 없으면 판정하지 않습니다
 
@@ -42,12 +41,12 @@ from typing import Any
 
 from backend.sessions.hours import KST
 from backend.strategy import bars as bar_lib
-from backend.strategy import indicators, paper, rules, runs, sim
+from backend.strategy import indicators, paper, rules, runs, sim, validate
 from backend.strategy.runs import Ledger, Run
 
 #: 오프셋. 화면의 `PRICE_BASES` 와 같은 말이고 값은 **틱 수**입니다.
 #:
-#: 부호는 **공격 방향**입니다(결정 8) — `+1틱` 은 체결되기 쉬운 쪽이라 매수는
+#: 부호는 **공격 방향**입니다 — `+1틱` 은 체결되기 쉬운 쪽이라 매수는
 #: 한 칸 위, 매도는 한 칸 아래입니다. 「싸게 사고 비싸게 판다」로 읽으면 같은
 #: 설정이 두 방향에서 반대로 움직입니다.
 PRICE_OFFSETS: dict[str, int] = {"신호가": 0, "신호가 + 1틱": 1, "신호가 − 1틱": -1}
@@ -97,6 +96,9 @@ STOP_LOSS = "stop"
 TRAIL_STOP = "trail"
 TAKE_PROFIT = "take"
 RULE_EXIT = "exit"
+#: 보유 중에 반대 방향 진입 규칙이 걸려 닫은 청산(`aux.oppositeSignal` 이 청산·반전).
+#: 청산 규칙과 같이 버전의 주문유형과 체결조건으로 나갑니다.
+OPPOSITE_EXIT = "opposite"
 FLATTEN = "flatten"
 #: 시장가 전량 청산(손절·익절·추적·세션 끝·사용자 청산)의 국내 체결조건. **늘 FAS** 입니다 —
 #: FOK·FAK 면 한 번에 다 채워지지 않을 때 남은 수량이 취소돼 보유가 남습니다.
@@ -152,6 +154,11 @@ WHY_DEFERRED_STATE = "실행 상태가 바뀌어 미룬 진입을 내지 않았�
 WHY_DEFERRED_EXIT = "보유가 바뀌어 미룬 청산을 내지 않았습니다"
 WHY_DEFERRED_EXPIRED = "다음 세션에 내지 못해 미룬 주문을 버렸습니다"
 
+#: 반전 예약을 버릴 때의 말. 반대 신호로 낸 청산이 보유를 다 닫기 전에 청산이
+#: 끝나거나(일부 체결·취소), 실행 상태가 바뀌거나, 세션이 끝나거나, 다른 규칙이
+#: 걸린 때입니다(`RunEngine._reverse`).
+WHY_REVERSE_DROPPED = "보유가 다 안 닫혀 반전 진입을 내지 않았습니다"
+
 #: 규칙이 걸렸는데 주문을 내지 않은 사건(`BLOCKED`)의 글 머리. 뒤에 까닭이 붙습니다.
 UNSENT_HEAD = "조건이 참이었지만 주문을 내지 않았습니다 — "
 
@@ -179,6 +186,7 @@ BLOCK_REASONS: dict[str, str] = {
     WHY_DEFERRED_STATE: "deferred-state",
     WHY_DEFERRED_EXIT: "deferred-exit",
     WHY_DEFERRED_EXPIRED: "deferred-expired",
+    WHY_REVERSE_DROPPED: "reverse-dropped",
 }
 OTHER_REASON = "other"
 
@@ -195,6 +203,7 @@ REASON_LABELS: dict[str, str] = {
     TRAIL_STOP: "추적 청산",
     TAKE_PROFIT: "익절",
     RULE_EXIT: "청산 규칙",
+    OPPOSITE_EXIT: "반대 신호",
     FLATTEN: "사용자 청산",
     SESSION_END: "세션 끝 정리",
 }
@@ -202,7 +211,7 @@ REASON_LABELS: dict[str, str] = {
 #: 계약당 값이 **어떻게 나온 것인지**. 화면이 이 값으로 문구를 고릅니다.
 #:
 #: 숫자만 내면 화면이 어림을 확정값으로 읽습니다. 그래서 값과 **근거를 함께**
-#: 냅니다 — 이름만 보고도 어떤 값인지 알 수 있게 지었습니다.
+#: 냅니다 — 이름만 보고도 어떤 값인지 알 수 있는 이름입니다.
 #:
 #:     margin        계약당 개시증거금. 품목별세부정보에서 온 **고정값**
 #:     premium-now   프리미엄 × 승수를 **지금 값으로 잰 것**. 틱마다 바뀝니다
@@ -224,7 +233,7 @@ BASIS_MIXED = "mixed"
 #: **실행에 남기는 문장에만 씁니다.** 규칙 이름은 설정의 열쇠라 값으로는 그대로
 #: 두고(`rules` 의 칸 이름, 저장 검사의 `field`), 사람이 읽는 자리에서만 옮깁니다 —
 #: 체결 줄의 까닭과 같은 규칙입니다(`REASON_LABELS`). 「buyEntry 규칙이
-#: 걸렸습니다」는 우리끼리 쓰는 이름이 그대로 화면에 선 것입니다.
+#: 걸렸습니다」처럼 설정의 열쇠 이름을 화면에 그대로 세우지 않습니다.
 #:
 #: **말은 화면의 `strategyRules.ts` 와 같습니다.** 둘이 갈리면 설정 화면의
 #: 「매수 청산」과 실행 이벤트의 다른 말이 같은 규칙을 가리키게 됩니다.
@@ -286,7 +295,7 @@ class RunEngine:
         self.aux = run.draft.get("aux") if isinstance(run.draft.get("aux"), dict) else {}
         self.rules = run.draft.get("rules") if isinstance(run.draft.get("rules"), dict) else {}
         self.bars = bar_lib.BarBuilder(str(run.draft.get("baseBar") or ""))
-        #: 주문을 채우는 자리. 종이는 우리가 지어내고(`paper.PaperBook`),
+        #: 주문을 채우는 자리. 종이는 이 앱이 지어내고(`paper.PaperBook`),
         #: 모의는 계좌가 채웁니다(`sim.SimBroker`). **엔진이 보는 얼굴은
         #: 하나**라 여기만 갈아 끼우면 나머지가 그대로 돕니다.
         self.book = book if book is not None else paper.PaperBook(delay=delay)
@@ -354,6 +363,12 @@ class RunEngine:
         #: 미룬 일봉 주문. `entry`·`exit` 마다 많아야 하나이고 메모리에만 둡니다 —
         #: 앱을 다시 켜면 사라집니다(되살린 실행은 중지·대사로 섭니다).
         self._deferred: dict[str, dict[str, Any]] = {}
+        #: 반전 예약. 반대 신호로 낸 청산(`order`)이 보유를 다 닫으면 `side` 로 진입합니다.
+        #: `rule` 은 그 신호를 낸 진입 규칙입니다. 메모리에만 둡니다.
+        self._reverse: dict[str, str] | None = None
+        #: 보유를 마지막으로 0 으로 만든 체결의 주문 id. 반전은 그 주문이 예약된
+        #: 청산일 때만 들어갑니다(`_turn`).
+        self._flat_by = ""
         #: 아직 안 닫힌 주문이 무엇을 하려던 것인지. `orderId` → `entry`/`exit`.
         self._purpose: dict[str, str] = {}
         #: 아직 안 닫힌 주문을 낸 순간의 지표 값. `orderId` → 체결 줄의 `snapshot`.
@@ -423,6 +438,8 @@ class RunEngine:
         #: 마지막으로 받은 1호가. `bid1`·`ask1`·`bid1Qty`·`ask1Qty` 이고, 아직 못
         #: 받았으면 `None` 입니다.
         self._quote: dict[str, float | None] | None = None
+        #: 그 1호가를 받은 시각(밀리초). 아직 못 받았으면 0 입니다.
+        self._quote_at = 0
         #: 지금 받는 체결이 들어오기 전의 장부 `(부호 있는 수량, 평균가, 실현,
         #: 수수료)`. 그 체결이 봉을 닫을 때 닫히는 봉에 적을 값입니다. 체결
         #: 밖에서는 `None`.
@@ -443,7 +460,7 @@ class RunEngine:
         #: 거래일·세션마다의 **개장 시각**(`note_open`). 봉 순서(`barOrder`)를
         #: 여기서부터 봉 길이로 셉니다. 모르는 날의 봉 순서는 `None` 입니다.
         self._opens: dict[tuple[int, str], int] = {}
-        #: 거래일이 바뀌어 계좌와 다시 맞춰 보아야 하는지(§13-4).
+        #: 거래일이 바뀌어 계좌와 다시 맞춰 보아야 하는지.
         #:
         #: **엔진은 계좌를 조회하지 않습니다** — 판정 한가운데에서 통신을 하면
         #: 그 실행의 봉이 응답을 기다리는 동안 멈춥니다. 여기서는 표시만 하고,
@@ -500,6 +517,7 @@ class RunEngine:
         """
         with self.lock:
             self._quote = _best_of(book)
+            self._quote_at = int(at)
             self._take(self.book.on_book(book, at=at), at)
 
     def seed(self, rows: list[dict[str, Any]], context: str) -> set[int]:
@@ -517,7 +535,7 @@ class RunEngine:
     def on_order(self, event: dict[str, Any], *, at: int) -> None:
         """계좌가 보낸 주문/체결 알림 한 건.
 
-        **종이 실행은 이 자리를 안 씁니다** — 채우는 것이 우리라서입니다.
+        **종이 실행은 이 자리를 안 씁니다** — 채우는 것이 이 앱이라서입니다.
         계좌 갈래(모의·실전) 실행만 여기서 체결을 받습니다.
 
         **접수 뒤 거절(처리구분 9)이 알림으로 오면 접수 자리의 거부와 같이
@@ -551,7 +569,7 @@ class RunEngine:
         self._halt(purpose, at)
 
     def mark_live(self) -> None:
-        """그 종목의 시세가 들어왔습니다. **공백은 여기서 풀지 않습니다.**
+        """그 종목의 시세가 들어왔을 때. **공백은 여기서 풀지 않습니다.**
 
         공백 중이거나, 공백 표지를 든 채 시세를 못 받는 상태(`idle`)로 있었으면
         공백으로 둡니다 — 공백은 첫 체결에서 풉니다(`on_trade`). 여기서 살아
@@ -638,7 +656,7 @@ class RunEngine:
     def rest_ticks(self) -> None:
         """다음 봉이 닫힐 때까지 틱 판정을 쉽니다. 앱을 다시 켜 되살린 실행에 씁니다.
 
-        앞서 돌던 동안 그 봉에서 이미 규칙이 걸렸는지는 메모리에만 있었습니다.
+        앞서 돌던 동안 그 봉에서 이미 규칙이 걸렸는지는 메모리에만 있어 다시 켜면 모릅니다.
         지난 봉은 조회로 받고(`seed`, 봉 마감이 아님) 실시간은 진행 중인 봉부터
         오므로, 다시 켠 뒤 처음 닫히는 봉이 앞서 돌던 엔진이 보던 그 봉입니다.
         """
@@ -687,15 +705,15 @@ class RunEngine:
                 self._say(at, GAP, FEED_LOST)
 
     def close_session(self, at: int) -> None:
-        """세션이 끝났습니다. 열린 봉을 닫습니다. **나머지는 갈래가 다릅니다.**
+        """세션이 끝났을 때. 열린 봉을 닫습니다. **나머지는 갈래가 다릅니다.**
 
         **종이 장부는 거둡니다.** 지어낸 주문이라 내보낼 곳이 없고, 거두지 않으면
         다음 세션 첫 호가에 채워져 **현실에 없던 체결**이 성적에 들어갑니다. 거둔
         뒤에는 나가 있는 주문을 기다리던 자리(`entering`·`exiting`)에서 내려옵니다.
 
-        **모의 주문은 우리가 거두지 않습니다.** 그 취소는 계좌로 나가는 요청인데,
-        장이 닫혔는지는 **우리 시계로 판정한 것**이라 그 판정이 틀리면 살아 있는
-        주문을 우리가 없애게 됩니다. 주문의 수명은 계좌가 정합니다 — 만료되면 그
+        **모의 주문은 이 앱이 거두지 않습니다.** 그 취소는 계좌로 나가는 요청인데,
+        장이 닫혔는지는 **이 앱의 시계로 판정한 것**이라 그 판정이 틀리면 살아 있는
+        주문을 이 앱이 없애게 됩니다. 주문의 수명은 계좌가 정합니다 — 만료되면 그
         알림이 `(entering, entry-cancelled)` 로 내려놓고, 알림이 없으면 대사가
         어긋난 것으로 잡습니다(`service.reconcile`). **상태도 그대로 둡니다** —
         나가 있는 주문을 기다리는 자리가 맞고, 그 주문이 다음 세션에 채워지면
@@ -732,6 +750,8 @@ class RunEngine:
                         ORDER,
                         f"세션이 닫힌 것으로 보임 — 미체결 {left}건은 서버 판정을 따릅니다",
                     )
+            # 반전은 그 세션 안에서만 잇습니다. 다 닫히기 전에 세션이 끝났으면 버립니다.
+            self._drop_reverse(at)
             self._say(at, SESSION, "세션이 끝났습니다")
 
     # ── 봉 ──────────────────────────────────────────────
@@ -748,7 +768,7 @@ class RunEngine:
             self._on_bar(one, self.bars.sessions[start + step], at)
 
     def _on_bar(self, bar: indicators.Bar, context: str, at: int) -> None:
-        """봉 하나가 닫혔습니다."""
+        """봉 하나가 닫혔을 때."""
         if self._tick_rest_from is not None and self._closed_at(bar) > self._tick_rest_from:
             # 쉬기 시작한 뒤에 끝나는 봉입니다. 다음 봉부터 다시 틱으로 판정합니다.
             self._tick_rest_from = None
@@ -1111,7 +1131,7 @@ class RunEngine:
     def _settle_tick(
         self, series: rules.Series, index: int, bar: indicators.Bar, at: int
     ) -> None:
-        """「틱」 실행에서 봉이 닫혔습니다. **새로 판정하지 않고** 그 봉까지의 상태만 확정합니다.
+        """「틱」 실행에서 봉이 닫혔을 때. **새로 판정하지 않고** 그 봉까지의 상태만 확정합니다.
 
         봉 안에서 걸린 규칙은 걸린 것으로 확정합니다(`_rolled`). 확정한 상태는 다음
         봉의 틱 판정이 출발점으로 씁니다.
@@ -1368,7 +1388,7 @@ class RunEngine:
         return self._conditions
 
     def _count_signal(self, at: int) -> None:
-        """규칙 하나가 판정에서 걸렸습니다. 주문을 냈든 안 냈든 셉니다."""
+        """규칙 하나가 판정에서 걸렸을 때. 주문을 냈든 안 냈든 셉니다."""
         if self.signal_count is not None:
             self.signal_count += 1
             self.last_signal_at = int(at)
@@ -1419,6 +1439,7 @@ class RunEngine:
         said = RULE_LABELS.get(_EXIT_OF[held.side], _EXIT_OF[held.side])
         self._count_signal(at)
         self._say(at, SIGNAL, f"{said} 규칙이 걸렸습니다", extra=self._tick_mark())
+        self._other_signal(key, at)
         if self._deferring:
             self._defer("exit", held.side, bar.close, at)
             return True
@@ -1442,6 +1463,9 @@ class RunEngine:
             self._say(
                 at, SIGNAL, f"{RULE_LABELS.get(key, key)} 규칙이 걸렸습니다", extra=self._tick_mark()
             )
+            self._other_signal(key, at)
+            if self._opposite(key, side, bar.close, at):
+                return
             why = runs.entry_block(
                 self.run,
                 self.ledger,
@@ -1469,6 +1493,128 @@ class RunEngine:
             self._send(side, self.run.qty, bar.close, "entry", at)
             return
 
+    # ── 보유 중 반대 신호 ────────────────────────────────
+
+    def _opposite(self, key: str, side: str, signal: float, at: int) -> bool:
+        """보유와 반대 방향의 진입 규칙이 걸렸을 때. 여기서 맡았으면 참입니다.
+
+        설정의 「보유 중 반대 신호」(`aux.oppositeSignal`)가 정합니다.
+
+        - 「무시」면 맡지 않습니다. 진입 검사가 반대 방향이라 막고 「안 낸 신호」로
+          남깁니다(`runs.WHY_OPPOSITE`).
+        - 「청산」이면 보유 전량을 닫습니다. 청산 규칙과 같은 길이라 버전의
+          주문유형·체결조건으로 나갑니다. 반대 방향으로는 들어가지 않습니다.
+        - 「반전」이면 「청산」과 같이 닫고, 그 청산이 보유를 **다 닫은 체결**에서
+          반대 방향으로 진입합니다(`_turn`).
+
+        닫는 것은 진입 규칙을 판정하는 상태(감시 중·보유 중)이고 시세가 이어질
+        때뿐입니다. 그 밖이면 진입 검사가 그 까닭으로 막습니다. 하루 주문 수·하루
+        손실·만기 같은 **새 진입의 한도는 청산을 막지 않습니다** — 반전의 진입은
+        그 한도를 모두 다시 거칩니다. 이미 나가 있는 청산이 있으면 또 내지 않습니다.
+        """
+        held = self.ledger.position
+        if not held.quantity or held.side == side:
+            return False
+        mode = validate.opposite_signal(self.aux)
+        if mode == validate.OPPOSITE_SIGNAL_IGNORE:
+            return False
+        if self.run.state not in runs.ENTRY_STATES or self.feed == GAP:
+            return False
+        if any(self._purpose.get(one.id) == "exit" for one in self.book.open_orders):
+            return True
+        turn = side if mode == validate.OPPOSITE_SIGNAL_REVERSE else None
+        if self._deferring:
+            self._defer("exit", held.side, signal, at, reason=OPPOSITE_EXIT, reverse=turn, rule=key)
+            return True
+        self._close_opposite(held.size, signal, at, turn=turn, rule=key)
+        return True
+
+    def _close_opposite(
+        self, quantity: int, signal: float, at: int, *, turn: str | None, rule: str
+    ) -> None:
+        """반대 신호의 청산을 냅니다. 반전이면 낸 청산 주문에 진입을 예약합니다.
+
+        주문을 내는 자리에서는 체결이 오지 않으므로(체결은 시세·알림이 가져옵니다)
+        낸 뒤에 예약해도 늦지 않습니다. 청산을 못 냈으면 예약 대신 사건 한 줄입니다.
+        """
+        order_id = self._close(quantity, signal, OPPOSITE_EXIT, at)
+        if turn is None:
+            return
+        if order_id is None:
+            self._unsent_now(at, WHY_REVERSE_DROPPED)
+            return
+        self._reverse = {"order": order_id, "side": turn, "rule": rule}
+
+    def _turn(self, order: Any, at: int) -> None:
+        """청산 주문 하나가 끝났을 때. 그 주문에 반전이 예약돼 있으면 처리합니다.
+
+        보유가 0 이 됐으면 반대 방향으로 진입합니다. 가격 기준은 그 청산의 마지막
+        체결가입니다. 진입은 보통 진입과 같은 검사(`runs.entry_block`·`_entry_gate`)
+        를 다시 거치고, 막히면 「안 낸 신호」로 남깁니다 — 청산 뒤 재진입 대기도
+        여기서 막습니다.
+
+        보유를 0 으로 만든 것이 **이 주문의 체결**이어야 합니다(`_flat_by`). 다른
+        청산이 먼저 닫았거나, 보유가 남았거나, 실행 상태가 감시 중이 아니면 예약을
+        버립니다.
+        """
+        if self._reverse is None or self._reverse.get("order") != order.id:
+            return
+        side = self._reverse["side"]
+        if self.ledger.position.quantity or self._flat_by != order.id or self.run.state != runs.ARMED:
+            self._drop_reverse(at)
+            return
+        self._reverse = None
+        fills = getattr(order, "fills", None) or []
+        price = _float(fills[-1].get("price")) if fills else None
+        if price is None:
+            price = self.book.last_price
+        if price is None:
+            self._unsent_now(at, WHY_REVERSE_DROPPED)
+            return
+        self._reverse_entry(side, float(price), at)
+
+    def _reverse_entry(self, side: str, signal: float, at: int) -> None:
+        """반전의 진입. 보통 진입과 같은 검사를 거칩니다."""
+        why = runs.entry_block(
+            self.run,
+            self.ledger,
+            side=side,
+            open_entry=self.open_entry,
+            max_hold=_int(self.aux.get("maxHold")) or 0,
+            add_while_open=bool(self.aux.get("addWhileOpen")),
+            gap=self.feed == GAP,
+            expiring=self.expiring,
+            last_price=self.book.last_price,
+            signal=signal,
+            streak_limit=_int(self.aux.get("lossStreak")) or 0,
+        )
+        if why is None:
+            why = self._entry_gate(None, moment=at)
+        if why is not None:
+            self._unsent_now(at, why)
+            return
+        self.run.count_intent()
+        self._send(side, self.run.qty, signal, "entry", at)
+
+    def _other_signal(self, key: str, at: int) -> None:
+        """규칙이 걸렸을 때. 반전을 예약한 규칙이 아니면 그 예약을 버립니다."""
+        if self._reverse is not None and self._reverse.get("rule") != key:
+            self._drop_reverse(at)
+
+    def _drop_reverse(self, at: int) -> None:
+        """반전 예약을 버리고 사건 한 줄을 남깁니다."""
+        if self._reverse is None:
+            return
+        self._reverse = None
+        self._unsent_now(at, WHY_REVERSE_DROPPED)
+
+    def _unsent_now(self, at: int, why: str) -> None:
+        """「안 낸 신호」 한 줄. 판정 중이면 그 판정이 세고, 밖이면 여기서 셉니다."""
+        if self._judging:
+            self._say_unsent(at, why)
+        else:
+            self._drop(at, why)
+
     # ── 일봉 주문 미루기 ─────────────────────────────────
 
     @property
@@ -1483,14 +1629,30 @@ class RunEngine:
         """
         return self.bars.daily and self._closing_session
 
-    def _defer(self, purpose: str, side: str, signal: float, at: int) -> None:
+    def _defer(
+        self,
+        purpose: str,
+        side: str,
+        signal: float,
+        at: int,
+        *,
+        reason: str = RULE_EXIT,
+        reverse: str | None = None,
+        rule: str = "",
+    ) -> None:
         """주문 하나를 미룹니다. 같은 갈래(진입·청산)는 새 것으로 갈아 끼웁니다.
 
         가격 기준은 **판정한 봉의 종가**입니다 — 지정가·STOP 의 값도 그 종가로
         셉니다. 다음 거래 창이 갭으로 열리면 지정가가 곧바로 유리해 채워지거나
         멀어져 기다립니다.
+
+        청산이면 무엇이 낸 청산인지(`reason`)와, 반대 신호의 반전이면 다 닫은 뒤
+        들어갈 방향(`reverse`)을 함께 담습니다.
         """
-        self._deferred[purpose] = {"side": side, "signal": float(signal), "at": int(at)}
+        made: dict[str, Any] = {"side": side, "signal": float(signal), "at": int(at)}
+        if purpose == "exit":
+            made.update({"reason": reason, "reverse": reverse, "rule": rule})
+        self._deferred[purpose] = made
         self._say(at, ORDER, DEFERRED_TEXT)
 
     def _window_open(self, context: str, at: int) -> bool:
@@ -1523,10 +1685,24 @@ class RunEngine:
         leaving = self._deferred.pop("exit", None)
         if leaving is not None:
             held = self.ledger.position
+            reason = str(leaving.get("reason") or RULE_EXIT)
+            turn = leaving.get("reverse")
             if self.run.state in runs.EXIT_STATES and held.side == leaving["side"]:
-                self._close(held.size, leaving["signal"], RULE_EXIT, at)
+                if reason == OPPOSITE_EXIT:
+                    self._close_opposite(
+                        held.size, leaving["signal"], at, turn=turn, rule=str(leaving.get("rule") or "")
+                    )
+                else:
+                    self._close(held.size, leaving["signal"], reason, at)
             else:
                 self._drop(at, WHY_DEFERRED_EXIT)
+                if turn:
+                    # 미룬 반전 — 그 사이 보유가 이미 0 이면 진입만 냅니다. 다른 보유가
+                    # 섰으면 버립니다.
+                    if held.side is None and self.run.state == runs.ARMED:
+                        self._reverse_entry(turn, leaving["signal"], at)
+                    else:
+                        self._unsent_now(at, WHY_REVERSE_DROPPED)
         entering = self._deferred.pop("entry", None)
         if entering is None:
             return
@@ -1563,7 +1739,7 @@ class RunEngine:
 
         일봉은 세션 마감에서야 봉이 닫혀, 봉으로만 넘기면 하루 내내 어제 날로 셉니다.
         그래서 거래 창이 열린 뒤 첫 체결에서 넘깁니다(시간표를 몰라 개장 시각이 없으면
-        예전처럼 마감 봉에서 넘깁니다).
+        마감 봉에서 넘깁니다).
 
         **하루 손실의 기준은 어제 일봉의 종가로 셉니다** — 보유의 평가를 그 값으로
         기준에 넣으므로, 밤사이 갭으로 난 손익이 **오늘 몫**이 되어 하루 손실 한도에
@@ -1594,16 +1770,9 @@ class RunEngine:
 
     # ── 주문 ────────────────────────────────────────────
 
-    def _send(self, side: str, quantity: int, signal: float, purpose: str, at: int) -> None:
-        order_type = str(self.aux.get("orderType") or paper.MARKET_ORDER).strip()
-        price = None
-        if order_type not in NO_PRICE:
-            price = order_price(signal, side, self._price_basis(side), self.tick)
-        # STOP 은 스탑 가격이 있어야 발동할 값이 정해집니다. 없이 보내면 영영
-        # 안 켜지는 주문이 됩니다(§5-1).
-        stop_price = None
-        if order_type in STOP_TYPES:
-            stop_price = order_price(signal, side, str(self.aux.get("stopBasis") or ""), self.tick)
+    def _send(self, side: str, quantity: int, signal: float, purpose: str, at: int) -> str | None:
+        """주문 하나를 버전의 주문유형으로 냅니다. 낸 주문의 id, 못 냈으면 `None` 입니다."""
+        order_type, price, stop_price = self._order_prices(side, signal)
         order_id = f"{self.run.id}-{len(self.book.orders) + 1}"
         if not self._placed(
             order_id,
@@ -1616,7 +1785,7 @@ class RunEngine:
             at=at,
             purpose=purpose,
         ):
-            return
+            return None
         self._purpose[order_id] = purpose
         self._snap[order_id] = self._snapshot_now()
         # 진입 주문의 남은 수량도 사용률에 듭니다(예산 검사와 같은 셈).
@@ -1624,6 +1793,66 @@ class RunEngine:
         self._move(runs.ENTRY_SENT if purpose == "entry" else runs.EXIT_SENT, at)
         shown = "시장가" if price is None else f"{price:g}"
         self._say(at, ORDER, f"{side} {quantity}계약 {order_type} {shown}")
+        return order_id
+
+    def _order_prices(self, side: str, signal: float) -> tuple[str, float | None, float | None]:
+        """버전의 주문유형으로 낼 주문의 (주문유형, 주문가격, 스탑가격).
+
+        값 칸을 쓰지 않는 유형(시장가·STOP-M)은 주문가격이 `None` 입니다. STOP 은
+        스탑 가격이 있어야 발동할 값이 정해져, 스탑 가격 기준(`aux.stopBasis`)으로
+        함께 셉니다 — 없이 보내면 켜지지 않는 주문이 됩니다. 주문을 낼 때와 예상
+        주문가(`expected_prices`)가 이 셈 하나를 씁니다.
+        """
+        order_type = str(self.aux.get("orderType") or paper.MARKET_ORDER).strip()
+        price = None
+        if order_type not in NO_PRICE:
+            price = order_price(signal, side, self._price_basis(side), self.tick)
+        stop_price = None
+        if order_type in STOP_TYPES:
+            stop_price = order_price(signal, side, str(self.aux.get("stopBasis") or ""), self.tick)
+        return order_type, price, stop_price
+
+    def expected_prices(self) -> dict[str, dict[str, Any] | None]:
+        """지금 가격으로 규칙이 걸리면 낼 주문. `buy`·`sell`·`exit` 세 칸입니다.
+
+        신호가 자리에 마지막 체결가(`book.last_price`)를 넣고 실제 주문과 같은 셈
+        (`_order_prices`)을 거칩니다. 시장가·STOP-M 의 `price` 는 `None` 입니다.
+
+        - `buy`·`sell` — 그 방향으로 버전의 주문유형으로 낼 주문
+          `{orderType, price, stopPrice}`. 규칙이 있든 없든 **두 방향을 늘** 냅니다.
+          진입으로 읽을지 청산으로 읽을지는 보유를 보고 가립니다. 마지막 체결가를
+          모르면 값이 `None` 입니다.
+        - `exit` — 보유를 청산 규칙으로 닫을 때 낼 주문 `{side, orderType, price,
+          stopPrice}`. 청산 규칙은 진입과 **같은 주문유형·같은 셈**(`_close` →
+          `_send`)이라, 값은 보유 반대 방향의 `buy`·`sell` 칸과 같습니다. 보유가 없거나
+          마지막 체결가를 모르면 `None` 입니다. 손절·익절·사용자 청산은 시장가
+          전량이라 이 값과 다릅니다.
+        """
+        last = self.book.last_price
+        made: dict[str, dict[str, Any] | None] = {}
+        for side in (paper.BUY, paper.SELL):
+            if last is None:
+                made[side] = None
+                continue
+            order_type, price, stop_price = self._order_prices(side, float(last))
+            made[side] = {"orderType": order_type, "price": price, "stopPrice": stop_price}
+        held = self.ledger.position
+        leaving = made.get(_CLOSE_SIDE[held.side]) if held.side is not None else None
+        made["exit"] = {"side": _CLOSE_SIDE[held.side], **leaving} if leaving is not None else None
+        return made
+
+    @property
+    def quote_now(self) -> dict[str, Any]:
+        """화면에 내는 1호가와 받은 시각(`quoteAt`, 밀리초).
+
+        시세가 끊긴 동안과 아직 못 받았을 때는 모두 `None` 입니다 — 끊기기 전의
+        호가를 지금 값으로 그리지 않게 합니다(봉에 적는 호가와 같은 규칙).
+        """
+        made: dict[str, Any] = {name: None for name in QUOTE_FIELDS}
+        if self._quote is not None and self.feed != GAP:
+            made.update(self._quote)
+            made["quoteAt"] = self._quote_at or None
+        return made
 
     def _price_basis(self, side: str) -> str:
         """그 **주문 방향**의 가격 기준. 방향 칸이 비었으면 공용 칸(`priceBasis`)입니다.
@@ -1634,25 +1863,30 @@ class RunEngine:
         own = "buyPriceBasis" if side == paper.BUY else "sellPriceBasis"
         return str(self.aux.get(own) or "").strip() or str(self.aux.get("priceBasis") or "")
 
-    def _close(self, quantity: int, signal: float, reason: str, at: int) -> None:
-        """보유를 닫습니다.
+    def _close(self, quantity: int, signal: float, reason: str, at: int) -> str | None:
+        """보유를 닫습니다. 낸 청산 주문의 id, 못 냈으면 `None` 입니다.
 
-        **버전의 주문유형으로 나가는 것은 청산 규칙뿐입니다.** 손절·익절·사용자
+        **버전의 주문유형으로 나가는 것은 청산 규칙과 반대 신호뿐입니다.** 손절·익절·사용자
         청산은 「지금 닫는다」는 뜻이라 시장가 전량으로 나갑니다 — 지정가로 걸면
         값이 지나가 버려 들고 있는 채로 남습니다.
 
         체결조건도 같습니다. 설정의 체결조건(`aux.fillCond`)은 청산 규칙과 진입에만
         쓰고, 시장가 전량 청산은 국내면 늘 FAS(`EXIT_FILL_CONDITION`)로 냅니다. 해외
         주문에는 체결조건이 없습니다.
+
+        반대 신호가 아닌 청산(청산 규칙·손절·익절·추적·세션 끝·사용자 청산)을 내면
+        걸려 있던 반전 예약을 버립니다 — 그 청산이 닫은 보유에 반전 진입이 붙지
+        않게 합니다.
         """
+        if reason != OPPOSITE_EXIT:
+            self._drop_reverse(at)
         held = self.ledger.position
         if held.side is None or quantity <= 0:
-            return
+            return None
         side = _CLOSE_SIDE[held.side]
         self._exit_reason = reason
-        if reason == RULE_EXIT:
-            self._send(side, quantity, signal, "exit", at)
-            return
+        if reason in (RULE_EXIT, OPPOSITE_EXIT):
+            return self._send(side, quantity, signal, "exit", at)
         order_id = f"{self.run.id}-{len(self.book.orders) + 1}"
         if not self._placed(
             order_id,
@@ -1663,12 +1897,13 @@ class RunEngine:
             at=at,
             purpose="exit",
         ):
-            return
+            return None
         self._purpose[order_id] = "exit"
         self._snap[order_id] = self._snapshot_now()
         self._move(runs.EXIT_SENT, at)
         label = REASON_LABELS.get(reason, reason)
         self._say(at, ORDER, f"{label} — {side} {quantity}계약 시장가 전량")
+        return order_id
 
     def _snapshot_now(self) -> dict[str, Any]:
         """지금 낼 주문에 묶을 지표 값 — **마지막으로 닫힌 봉**의 것입니다.
@@ -2036,7 +2271,7 @@ class RunEngine:
     def _distance(self, value_key: str, unit_key: str, base: float) -> float | None:
         """손절·익절·추적 청산의 거리(가격). 칸이 비었거나 셀 수 없으면 `None` 입니다.
 
-        틱 단위는 앞 판과 **같은 셈**입니다(정수 틱 × 틱 크기). `base` 는 %의 기준
+        틱 단위는 **정수 틱 × 틱 크기**로 셉니다. `base` 는 %의 기준
         값입니다. ATR 단위는 ATR 이 아직 없으면 `None` — 그때는 진입 자체를 막아
         두므로(`_entry_gate`) 손절 없는 보유가 생기지 않습니다.
         """
@@ -2200,7 +2435,7 @@ class RunEngine:
                 "intent": purpose,
                 "reason": self._reason_of(purpose),
                 "virtual": self.virtual,
-                # 그 주문을 낸 순간의 지표 값. **우리가 내지 않은 주문의 체결이면
+                # 그 주문을 낸 순간의 지표 값. **이 실행이 내지 않은 주문의 체결이면
                 # `None` 입니다** — 칸을 빼지 않는 것은, 칸이 없는 옛 기록과
                 # 「이 체결에는 값이 없다」를 갈라 읽게 하려는 것입니다.
                 "snapshot": self._snap.get(order_id),
@@ -2237,6 +2472,7 @@ class RunEngine:
             self._keep(FILL, row)
             self._follow(before, row)
             if before is not None and self.ledger.position.side is None:
+                self._flat_by = order_id
                 # 보유가 0 이 됐습니다. 어떤 청산이었든 그 뒤 판정 봉 N개는 쉽니다.
                 self._wait_left = _int(self.aux.get("reentryWaitBars")) or 0
             if closed is not None:
@@ -2279,12 +2515,14 @@ class RunEngine:
         if self.ledger.position.quantity == 0:
             self._exit_reason = ""
             self._move(runs.EXIT_FILLED, at)
+            self._turn(order, at)
             return
         # 주문은 끝났는데 아직 들고 있습니다. **보유로 돌려놓습니다** — 그대로
         # 두면 채울 주문이 없는 채로 청산 중에 머물러 다음 봉도 판정하지
         # 않습니다. 사용자가 보고 다시 청산할 수 있어야 합니다.
         self._move(runs.EXIT_CANCELLED, at)
         self._say(at, ORDER, f"청산이 다 안 됐습니다 — {self.ledger.position.size}계약 남았습니다")
+        self._turn(order, at)
 
     @property
     def per_contract(self) -> float | None:
@@ -2322,7 +2560,7 @@ class RunEngine:
     def _per_contract(self) -> tuple[float | None, str]:
         """계약당 값과 그 근거. 두 프로퍼티가 같은 셈을 나눠 씁니다."""
         # **「켜짐」이 아니라 「발사할 수 있나」입니다.** 규칙이 ON 인데 조건이
-        # 0 개인 설정을 저장이 받아 주고(§9 는 경고만 냅니다), 그 규칙은 절대
+        # 0 개인 설정을 저장이 받아 주고(저장 검사는 경고만 냅니다), 그 규칙은 절대
         # 발사하지 않습니다. `on` 칸만 보면 나갈 수 없는 방향까지 세어, 매수만
         # 나갈 수 있는 옵션 실행이 「방향이 갈린다」로 잡힙니다. 판정은 엔진의
         # 발사 경로가 쓰는 그 함수로 합니다(`rules.steps_of`).
@@ -2432,9 +2670,9 @@ class RunEngine:
 
     @property
     def virtual(self) -> bool:
-        """이 실행의 체결과 주문이 **우리가 지어낸 것인지.**
+        """이 실행의 체결과 주문이 **이 앱이 지어낸 것인지.**
 
-        종이 실행은 참입니다 — 장부도 체결도 우리가 만듭니다. **계좌 갈래(모의·실전) 실행은
+        종이 실행은 참입니다 — 장부도 체결도 이 앱이 만듭니다. **계좌 갈래(모의·실전) 실행은
         거짓입니다** — 주문이 계좌로 나가고 체결도 계좌가 채웁니다. 그것을
         「가상」으로 적으면 사용자가 **실제로 난 체결을 지어낸 것으로** 읽습니다.
 
@@ -2450,7 +2688,7 @@ class RunEngine:
 
         **「확인 필요」 동안의 공백은 사건으로 적지 않습니다.** 그 상태의 실행은
         시세를 보지 않아 구독을 놓고(`service.watching`), 그 시장에 이 실행 말고
-        보는 것이 없으면 실시간 연결도 닫힙니다. 그것은 끊긴 것이 아니라 우리가
+        보는 것이 없으면 실시간 연결도 닫힙니다. 그것은 끊긴 것이 아니라 이 앱이
         놓은 것이라 「연결이 끊겼습니다」로 적으면 사실과 다릅니다. 공백 표지는
         그대로 세워 둡니다 — 확인 뒤 다시 볼 때 그 사이 받지 못한 시세를 공백으로
         다뤄야 하고, 그 일은 확인하는 자리가 적습니다(`after_attention`).
@@ -2600,7 +2838,7 @@ def _warmup_of(rule_set: dict[str, Any]) -> int:
     """그 규칙들이 쓰는 지표 중 가장 긴 준비 봉. 아무 지표도 안 쓰면 2 입니다.
 
     지표마다 **적힌 매개변수로** 셉니다(`rules.warmup_of`). 매개변수가 생기기 전의
-    이름(`ema20` 등)은 같은 기간으로 옮겨 세므로 앞 판과 같은 수가 나옵니다.
+    이름(`ema20` 등)은 같은 기간으로 옮겨 세므로 그 이름으로 셀 때와 같은 수가 나옵니다.
     """
     wanted = {2}
     for name, params in rules.wanted_of(rule_set):
@@ -2637,14 +2875,18 @@ def _snapshot_ids(rule_set: dict[str, Any]) -> tuple[str, ...]:
                     raw = str(cond.get(side) or "")
                     name, params = rules.resolve(raw, cond.get(f"{side}Params"))
                     if name in rules.OPERAND_IDS:
-                        # 차례는 **적힌 이름**의 자리입니다 — 옛 이름으로 적은 전략의
-                        # 칸 차례가 앞 판과 같게 남습니다.
+                        # 차례는 **적힌 이름**의 자리입니다 — 옛 이름으로 적은 전략도
+                        # 칸 차례가 바뀌지 않습니다.
                         wanted.setdefault(
                             rules.operand_key(name, params),
                             raw if raw in rules.OPERAND_IDS else name,
                         )
     order = {name: at for at, name in enumerate(rules.OPERAND_IDS)}
     return tuple(sorted(wanted, key=lambda key: (order[wanted[key]], key)))
+
+
+#: 실행 줄에 싣는 1호가 칸과 그 시각(`RunEngine.quote_now`).
+QUOTE_FIELDS = ("bid1", "ask1", "bid1Qty", "ask1Qty", "quoteAt")
 
 
 def _best_of(book: dict[str, Any]) -> dict[str, float | None]:

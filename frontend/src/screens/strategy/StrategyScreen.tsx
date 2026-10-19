@@ -87,7 +87,7 @@ export function StrategyScreen() {
 
   /* 목록에서 「검증 화면으로」·「진행 화면으로」. **그 전략을 들고 갑니다** —
      탭만 바꾸면 방금 고른 전략과 무관한 화면이 서고, 사용자가 거기서 같은
-     전략을 다시 찾아야 합니다(원본 §2). */
+     전략을 다시 찾아야 합니다. */
   function openVerify() {
     if (!selected) return goTab('전략 검증')
     openRunsTab('verify', { strategy: selected.name, version: selected.version })
@@ -112,7 +112,7 @@ export function StrategyScreen() {
     })
   }
 
-  /* 「새 버전 저장」 — 목록에 **다음 버전 초안 행**을 만듭니다(규격 §9 ④).
+  /* 「새 버전 저장」 — 목록에 **다음 버전 초안 행**을 만듭니다.
      「저장」과 결과가 같으면 두 단추가 같은 일을 하는 셈이라, 하나는 눌러도
      아무 일이 없는 단추가 됩니다.
      새 행은 초안이라 성과 칸이 비어 있습니다 — 거래를 가진 채로 태어나는

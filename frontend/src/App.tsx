@@ -105,7 +105,7 @@ function App() {
   const [homeVisit, setHomeVisit] = useState(0)
   /* 저장 안 한 전략 설정을 두고 **상단 페이지를** 떠나려 할 때 붙잡는 자리.
      하위 탭과 같은 창을 씁니다 — 나가는 길이 둘인데 한쪽에만 경고가 붙으면,
-     사용자는 어느 길이 안전한지를 외워야 합니다(원본 §14). */
+     사용자는 어느 길이 안전한지를 외워야 합니다. */
   const [leavingPage, setLeavingPage] = useState<Page | null>(null)
   const pageRef = useRef(page)
   pageRef.current = page

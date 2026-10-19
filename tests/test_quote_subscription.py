@@ -82,12 +82,13 @@ def test_시세_신청이_필요한_조회는_무엇을_할지_알린다(세우�
     ],
     ids=["다른_업무_거부", "HTTP_오류"],
 )
-def test_다른_거절은_지금과_같다(세우기, 상태, 본문):
+def test_다른_거절은_코드가_있을_때만_헤더로_단다(세우기, 상태, 본문):
     앱, _ = 세우기(상태, 본문)
 
     응답 = 앱.post("/api/overseas/price", json={"syms": [{"exch_cd": "FCME", "sym": "ESZ26"}]})
 
     assert 응답.status_code == 502
     assert 응답.json()["detail"] != QUOTE_SUBSCRIPTION_DETAIL
-    assert ERROR_KIND_HEADER not in 응답.headers
-    assert ERROR_CODE_HEADER not in 응답.headers
+    assert 응답.headers.get(ERROR_KIND_HEADER) != "quote-subscription"
+    # 코드가 실려 온 거절만 코드를 헤더로 답니다(`orders.lookup_refusal`).
+    assert 응답.headers.get(ERROR_CODE_HEADER) == 본문.get("errorCode")

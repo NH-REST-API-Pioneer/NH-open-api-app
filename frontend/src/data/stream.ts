@@ -53,7 +53,7 @@ export type StreamState = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'sto
  *  붙는 동안 다른 쪽은 그대로 받고 있습니다. */
 export interface MarketFeed {
   state: StreamState
-  /** 서버가 준 문구. 우리가 지어내지 않습니다. */
+  /** 서버가 준 문구. 화면이 지어내지 않습니다. */
   detail: string
   /** 그 시장을 언제부터 받고 있는지(`HH:MM`). **구독해도 첫 값이 없어**, 붙은 뒤
    *  처음 체결이 일어날 때까지 화면이 빕니다. 그 빈 자리가 「고장」이 아니라
@@ -79,6 +79,15 @@ export interface StreamStatus {
   markets: Readonly<Record<DepositMarket, MarketFeed>>
   /** 자리가 모자라 밀린 구독. 그 카드가 「실시간이 안 붙었다」를 말합니다. */
   rejected: readonly string[]
+  /** 서버가 등록을 거절한 구독(`wishKey` → 그 까닭). 시세 사용 신청을 하지 않은
+   *  거래소의 종목이 여기 듭니다. 이 구독은 `rejected` 에도 함께 듭니다. */
+  failed: Readonly<Record<string, SubscriptionFailure>>
+}
+
+/** 등록이 거절된 구독 하나의 까닭. 코드와 문구는 NH선물이 준 그대로입니다. */
+export interface SubscriptionFailure {
+  code: string
+  message: string
 }
 
 const MARKETS: readonly DepositMarket[] = ['domestic', 'overseas']
@@ -90,6 +99,7 @@ const IDLE: StreamStatus = {
   lagging: [],
   markets: { domestic: IDLE_FEED, overseas: IDLE_FEED },
   rejected: [],
+  failed: {},
 }
 
 /** 지금 한국시각을 `HH:MM` 으로. */
@@ -320,7 +330,16 @@ function receive(message: Record<string, unknown>): void {
     }
     case 'subscriptions': {
       const rejected = ((message.rejected ?? []) as Wish[]).map(wishKey)
-      announce({ ...status, rejected })
+      /* 서버가 등록을 거절한 구독. 실패가 생기거나 풀릴 때마다 목록 전체가 다시
+         오므로 덮어씁니다. 칸이 없는 답은 실패가 없는 것으로 읽습니다. */
+      const failed: Record<string, SubscriptionFailure> = {}
+      for (const one of (message.failed ?? []) as (Wish & { code?: unknown; message?: unknown })[]) {
+        failed[wishKey(one)] = {
+          code: typeof one.code === 'string' ? one.code.trim() : '',
+          message: typeof one.message === 'string' ? one.message.trim() : '',
+        }
+      }
+      announce({ ...status, rejected, failed })
       return
     }
     case 'session': {

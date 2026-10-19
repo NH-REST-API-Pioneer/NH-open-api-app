@@ -150,7 +150,7 @@ export interface ChainRow {
   put: ChainLeg
 }
 
-/** 백엔드에 닿는지. **「연결 실패」와 「끊김」을 못 가릅니다** — 우리가 아는
+/** 백엔드에 닿는지. **「연결 실패」와 「끊김」을 못 가릅니다** — 화면이 아는
  *  것은 「닿았다 / 못 닿았다 / 확인 중」 셋뿐이라 화면도 그렇게 말합니다. */
 export type ConnectionState = 'checking' | 'ok' | 'error'
 
@@ -269,7 +269,7 @@ export interface OpenOrder {
   stopPrice?: number | null
   quantity: number | null
   filled: number | null
-  /** 다른 경로로 낸 주문은 우리 폼으로 표현할 수 없어 정정·취소를 잠급니다. */
+  /** 다른 경로로 낸 주문은 이 앱의 폼으로 표현할 수 없어 정정·취소를 잠급니다. */
   source: string
   strategy?: string
   editable: boolean
@@ -279,7 +279,7 @@ export interface OpenOrder {
  *  체결로 섭니다. */
 export type OrderProgress =
   | 'working'
-  /** **우리가 방금 낸 주문의 접수 답.** `working` 과 가르는 것은 체결 수량
+  /** **이 화면이 방금 낸 주문의 접수 답.** `working` 과 가르는 것은 체결 수량
    *  때문입니다 — 접수 답에는 체결이 없어 「미체결 0 / 3」으로 적으면 서버가
    *  말한 적 없는 0 을 적게 됩니다. 조회와 실시간 알림이 그 줄을 덮으면
    *  `working` 이 됩니다. */
@@ -391,7 +391,7 @@ export interface AccountOrder {
   /** 선물·옵션·스프레드. **서버가 주는 줄에만 있습니다** — 안 주면 `undefined`
    *  이고 화면은 아무 표시도 달지 않습니다. */
   productKind?: string
-  /** 우리 폼으로 낼 수 없는 주문이면 왜 그런지 */
+  /** 이 앱의 폼으로 낼 수 없는 주문이면 왜 그런지 */
   locked?: string
 }
 

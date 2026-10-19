@@ -660,7 +660,7 @@
 }
 
 /* 세로 간격을 6 으로 둡니다 — 1280×800 에서 기본 내용(2단계·조건 셋)이
- * 구르지 않고 서야 합니다(원본 §14: 세로 스크롤은 1200×720 에서만). */
+ * 구르지 않고 서야 합니다(세로 스크롤은 1200×720 에서만 허용합니다). */
 .set-main {
   display: flex;
   flex-direction: column;
@@ -1059,7 +1059,7 @@
  * 위에 선을 한 줄 긋습니다. 이 줄은 붙박이고 바로 위는 구르는 칸이라, 경계가
  * 없으면 굴리다 반쯤 잘린 단추가 「잘린 것」인지 「그렇게 생긴 것」인지
  * 갈리지 않습니다. 테두리가 아니라 그림자인 것은 줄의 높이를 바꾸지 않고
- * 위 칸과의 간격 안에 그리기 위해서입니다(#56 의 고정 머리 아래 선과 같은
+ * 위 칸과의 간격 안에 그리기 위해서입니다(표의 고정 머리 아래 선과 같은
  * 장치이고 방향만 반대입니다). */
 .set-step-foot {
   display: flex;
@@ -1655,7 +1655,7 @@
 /* ── 전략 검증 ───────────────────────────────────────── */
 
 /* 이 화면은 세로로 밀립니다. 차트와 아래 표에는 그 아래로 못 내려가는 바닥이
- * 있고(규격 §2: 차트 355 · 탭 슬롯 212), 낮은 창에서 그 둘을 줄이면 봉이
+ * 있고(차트 355 · 탭 슬롯 212), 낮은 창에서 그 둘을 줄이면 봉이
  * 뭉개지고 표가 한 줄만 남습니다 — 뭉개는 대신 밉니다. */
 .vrf {
   display: flex;
@@ -2122,7 +2122,7 @@
 }
 
 /* 차트가 이 화면의 주인이라 남는 높이를 다 가져가되, 355 아래로는 안
- * 내려갑니다(규격 §2). 그보다 낮아지면 봉이 뭉개져 매매 자리를 못 읽습니다. */
+ * 내려갑니다. 그보다 낮아지면 봉이 뭉개져 매매 자리를 못 읽습니다. */
 .vrf-chart {
   position: relative;
   display: flex;
@@ -2252,8 +2252,8 @@
    * 거래와 그 앞 한 줄까지 한눈에 듭니다.
    *
    * 행이 그보다 늘면 표 안에서 구릅니다. 탭을 바꿀 때마다 높이가 달라지면
-   * 차트가 따라 흔들리므로 행 수에 맞춰 늘이지 않습니다(#58 「탭 슬롯 바닥 =
-   * 든 카드의 최대」). */
+   * 차트가 따라 흔들리므로 행 수에 맞춰 늘이지 않습니다(「탭 슬롯 바닥 =
+   * 든 카드의 최대」 규칙). */
   height: 274px;
 }
 
@@ -2383,8 +2383,8 @@
 }
 
 /* 고정 상태는 카드 **한 장에 두 줄**입니다. 위험 요약을 첫 줄에 밀어 넣으면
- * 국내·해외 여섯 값이 말줄임에 걸리는데, 원본 §7 은 추가증거금·한도 초과를
- * 「항상 노출」하라고 합니다 — 잘리면 그 규칙이 깨집니다. */
+ * 국내·해외 여섯 값이 말줄임에 걸리는데, 추가증거금·한도 초과는 「항상 노출」
+ * 규칙이라 잘리면 그 규칙이 깨집니다. */
 .stg .run-head {
   flex: 0 0 auto;
   gap: 4px;
@@ -2564,12 +2564,15 @@
 
 /* ── 왼쪽 목록 ──────────────────────────────────────── */
 
+/* 창 높이에 맞춰 섭니다. 상세(오른쪽 열)가 그보다 길면 **그 열만** 세로로 구르고,
+ * 실행 목록과 위 머리 카드는 제자리에 남습니다(`.run-main`). */
 .run-body {
   display: grid;
   grid-template-columns: 250px minmax(520px, 1fr);
   gap: 12px;
-  flex: 1 0 auto;
+  flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
 }
 
 /* 검증과 같은 이유로 이 열은 화면 높이를 정하지 않습니다. */
@@ -2725,7 +2728,9 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   gap: 6px;
+  overflow-y: auto;
 }
 
 .run-bar {
@@ -2748,10 +2753,102 @@
 }
 
 /* 서버가 접수한 STOP 과 앱이 보고 있는 손절은 다릅니다 — 앱이 꺼지면
- * 뒤엣것은 멈추므로 어느 쪽인지 낱말로 적습니다(원본 §7). */
+ * 뒤엣것은 멈추므로 어느 쪽인지 낱말로 적습니다. */
 .run-watch {
   margin-left: auto;
   color: var(--text-dim);
+}
+
+/* 상태 카드 — 자금 · 가격 · 신호가 나면 나갈 주문 세 칸(`RunStatusCard.tsx`).
+ * 칸 사이는 세로 선 하나이고, 합이 나오는 줄은 위에 가로 선을 긋습니다. */
+.run-status {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1.2fr;
+  flex: 0 0 auto;
+  padding: 10px 0;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.run-status-cell {
+  min-width: 0;
+  padding: 0 16px;
+  border-left: 1px solid var(--divider);
+}
+
+.run-status-cell:first-child {
+  border-left: none;
+}
+
+.run-status-title {
+  display: flex;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* 가격 칸의 갱신 시각. 칸 머리 오른쪽 끝입니다. */
+.run-status-at {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.run-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
+.run-status-list > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.run-status-list dt {
+  color: var(--text-label);
+}
+
+.run-status-list dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.run-status-big {
+  font-size: 15px;
+}
+
+/* 묶인 돈의 셈 한 줄. 값이 아니라 셈이라 작고 흐리게 둡니다. */
+.run-status-sub dt {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.run-status-sum {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--divider);
+}
+
+/* 나갈 주문이 둘이면(보유 없이 매수·매도 진입이 다 켜진 실행) 사이에 선을 긋습니다. */
+.run-status-order + .run-status-order {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.run-status-foot {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: keep-all;
 }
 
 /* **이 화면은 표가 주인입니다**(차트를 두지 않습니다) — 남는 세로를 표가
@@ -2844,7 +2941,7 @@
 /* ── 확인 창 ────────────────────────────────────────── */
 
 /* 되돌릴 수 없는 동작이라 무엇이 일어나는지를 줄여 적지 않습니다 —
- * 「진입 주문」과 「보유분」이 각각 어떻게 되는지 두 줄로 답니다(원본 §7). */
+ * 「진입 주문」과 「보유분」이 각각 어떻게 되는지 두 줄로 답니다. */
 .run-confirm {
   display: flex;
   flex-direction: column;
@@ -2992,7 +3089,7 @@
 }
 
 /* 시작하면 실제로 어떤 주문이 나가는지. 계좌·계약·수량·청산 감시 넷을
- * 마지막에 한 번 더 세웁니다(원본 §7). */
+ * 마지막에 한 번 더 세웁니다. */
 .run-final {
   display: flex;
   flex-direction: column;
@@ -3832,7 +3929,7 @@
 }
 
 /* 옆 칸은 줄어들지 않습니다. 줄어들면 글자가 잘리는데, 좁은 창에서 할 일은
- * 뭉개는 것이 아니라 미는 것입니다(원본 §14 — 1200×720 은 세로 스크롤 허용).
+ * 뭉개는 것이 아니라 미는 것입니다(1200×720 에서는 세로 스크롤을 허용합니다).
  * 그래서 가운데 칸도 「늘어나되 줄지는 않는」 자리로 둡니다. */
 .ana-body {
   flex-grow: 1;

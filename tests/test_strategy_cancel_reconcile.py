@@ -122,7 +122,7 @@ def test_다른_종목_줄에라도_그_번호가_있으면_닫지_않는다(tmp
 def test_표본_재현_확인_필요에서_확인하면_중지로_내려가_끝내고_지운다(tmp_path):
     목록, 엔진, 주문, 계좌 = _걸어_두고_멈춤(tmp_path)
     계좌.orders = []
-    엔진.run.state = runs.ATTENTION  # 고치기 전 판의 대사가 남긴 상태
+    엔진.run.state = runs.ATTENTION  # 대사가 「확인 필요」로 남긴 상태
 
     assert 목록.acknowledge("run1", 30)["state"] == runs.PAUSED
     assert 목록.end("run1", 40)["state"] == runs.ENDED

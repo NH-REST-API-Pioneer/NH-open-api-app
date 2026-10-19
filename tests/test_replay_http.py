@@ -191,7 +191,7 @@ def test_빈_응답으로_답할_때_경고를_남긴다(store, caplog):
 
 
 def test_반입해_둔_실제_기록으로도_답한다():
-    """저장소에 반입해 둔 자료로 한 번 확인한다."""
+    """저장소에 저장해 둔 자료로 한 번 확인한다."""
     실제 = FixtureStore.load()
     응답 = 부르기(실제, "/trade/v1/domestic/price", {"sym": "A7569000"})
     assert 응답.status_code == 200

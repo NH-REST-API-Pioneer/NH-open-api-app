@@ -1,7 +1,7 @@
 """`/api/ui` 라우트 — 화면이 기억해 두는 것을 읽고 씁니다.
 
 **주소에 시장 칸이 없습니다.** `/api/{시장}/{API 이름}` 은 NH선물 서버에 그대로
-물어보는 거래 API 의 규칙입니다. 여기 담기는 것은 NH선물에 없는 우리 파일이라
+물어보는 거래 API 의 규칙입니다. 여기 담기는 것은 NH선물에 없는 이 앱의 파일이라
 국내·해외로 나뉘지 않습니다. `/api/health`, `/api/config`, `/api/master/…` 도
 같은 자리입니다. 규칙에 맞춘다며 `/api/domestic/ui` 같은 주소로 옮기지 마세요.
 """
@@ -79,7 +79,7 @@ def _write(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 
     답의 `detail` 은 `{message, code}` 입니다. 화면은 `code` 로 갈래를 가르고
     `message` 는 사람에게 보여 줄 때만 씁니다 — 까닭은 `ui_store` 의 갈래 값에
-    적어 두었습니다.
+    적혀 있습니다.
     """
     try:
         return action()

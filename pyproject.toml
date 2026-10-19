@@ -10,7 +10,7 @@ dependencies = [
     "pywebview>=5.0",
     "httpx>=0.27",
     # 실시간 시세를 받는 웹소켓 클라이언트. `uvicorn[standard]` 를 통해서도
-    # 들어오지만 우리가 직접 부르므로 여기에 적어 둡니다. 남이 데려오는 것에
+    # 들어오지만 이 앱이 직접 부르므로 여기에 적어 둡니다. 남이 데려오는 것에
     # 기대면 그쪽 구성이 바뀌는 날 조용히 사라집니다.
     "websockets>=14",
     "truststore>=0.10.4",
@@ -20,6 +20,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pyinstaller>=6.0",
+    "ruff>=0.17.1",
 ]
 
 [tool.uv]
@@ -29,3 +30,36 @@ package = false
 # 프로젝트를 패키지로 설치하지 않으므로 루트를 import 경로에 추가합니다.
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+# 검사하는 자리. 저장소의 파이썬 코드는 이 네 폴더에 있습니다.
+include = ["backend/**/*.py", "tests/**/*.py", "desktop/**/*.py", "scripts/**/*.py"]
+# 서식은 `ruff format` 으로 바꾸지 않습니다.
+line-length = 120
+
+[tool.ruff.lint]
+# pycodestyle(E·W), pyflakes(F), flake8-bugbear(B), pyupgrade(UP).
+select = ["E", "F", "W", "B", "UP"]
+# 아래 규칙은 끕니다. 지금 코드에 그 규칙에 걸리는 자리가 있습니다.
+ignore = [
+    "E402",   # 모듈 맨 위가 아닌 import
+    "E501",   # 긴 줄 — 줄 길이는 검사하지 않습니다(긴 줄을 허용합니다)
+    "E741",   # 헷갈리는 변수 이름(l·O·I)
+    "F401",   # 쓰지 않는 import
+    "F811",   # 쓰기 전에 다시 정의한 이름
+    "F821",   # 정의되지 않은 이름
+    "W291",   # 줄 끝 공백
+    "W292",   # 파일 끝 줄바꿈 없음
+    "B006",   # 바뀌는 값을 기본 인자로
+    "B007",   # 쓰지 않는 반복 변수
+    "B008",   # 기본 인자 자리의 함수 호출(FastAPI 의 Depends 등)
+    "B017",   # 너무 넓은 예외를 기다리는 시험
+    "B023",   # 반복 변수를 붙든 함수
+    "B904",   # except 안에서 from 없이 다시 올림
+    "B905",   # strict 없는 zip
+    "UP012",  # 필요 없는 .encode("utf-8")
+    "UP017",  # datetime.UTC 별칭
+    "UP035",  # 옮겨 간 typing import
+    "UP037",  # 따옴표로 감싼 타입 표기
+    "UP042",  # str 과 Enum 을 함께 물려받는 클래스
+]

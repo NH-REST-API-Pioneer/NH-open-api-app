@@ -141,7 +141,7 @@ class DailyRefresh:
             self._settled = local.date()
 
     def _failed(self, local: datetime) -> None:
-        """오늘 것을 못 받았습니다. 시간이 남았으면 다시 가 보고, 아니면 내일로 넘깁니다."""
+        """오늘 것을 못 받았을 때. 시간이 남았으면 다시 가 보고, 아니면 내일로 넘깁니다."""
         retry = local + RETRY_EVERY
         if retry < datetime.combine(local.date(), GIVE_UP_AT, KST):
             self._retry_at = retry

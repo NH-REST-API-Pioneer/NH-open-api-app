@@ -133,7 +133,7 @@ export function OptionChain({
   useEffect(() => {
     const box = scrollRef.current
     if (!box) return
-    /* 우리가 앉힌 자리. 사용자가 손으로 굴렸는지 가리는 데 씁니다. */
+    /* 코드가 앉힌 자리. 사용자가 손으로 굴렸는지 가리는 데 씁니다. */
     let ours = -1
     let watching = true
     /* 마지막으로 앉힐 때의 판 높이. **이 값이 다시 앉히기를 멈춥니다** — 앉히면서

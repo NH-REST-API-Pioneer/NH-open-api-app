@@ -22,12 +22,12 @@ from backend.nh_api.session import create_session
 from backend.overseas_futureoption import overseas_routes
 from backend.overseas_futureoption.overseas_routes import get_client
 
-# 지어낸 종목코드입니다. 실제 종목과 겹치지 않게 골랐습니다.
+# 지어낸 종목코드입니다. 실제 종목과 겹치지 않는 값입니다.
 지어낸종목 = "ZZZZ26"
 
 
 def _기록(api_id: str, path: str, request: dict[str, Any], response: dict[str, Any]):
-    """저장본 한 줄. 반입한 기록과 칸 구성이 같아야 재생이 읽습니다."""
+    """저장본 한 줄. 저장소의 기록과 칸 구성이 같아야 재생이 읽습니다."""
     return _build(
         {
             "format": FIXTURE_FORMAT,
@@ -154,7 +154,7 @@ def client():
 
 # ── 시세 ────────────────────────────────────────────────────
 #
-# **여기는 저장소의 진짜 기록으로 돕니다.** 해외 시세는 반입해 둔 응답이
+# **여기는 저장소의 진짜 기록으로 돕니다.** 해외 시세는 저장해 둔 응답이
 # 있습니다(현재가·호가·분봉). 계좌 쪽이 만든 저장소를 쓰는 것과 다릅니다.
 
 
@@ -335,7 +335,8 @@ def test_해외_현재가_한_종목이_실패해도_나머지는_답한다():
     몸 = 응답.json()
     assert [줄["code"] for 줄 in 몸["quotes"]] == ["MESZ26"]
     assert 몸["failed"] == [
-        {"code": "MESU26", "message": 해외._QUOTE_REJECTED},
+        # 코드가 실려 온 거절이라 코드와 원문이 함께 섭니다(`orders.lookup_refusal`).
+        {"code": "MESU26", "message": "시세 조회가 거절되었습니다 — EGW999 거절"},
         {"code": "ESZ26", "message": 해외._QUOTE_NOT_RECEIVED},
     ]
 
@@ -353,7 +354,7 @@ def test_해외_현재가_전부_실패하면_요청이_실패한다():
 
     # 마지막 실패의 종류로 답합니다 — 거절이면 502.
     assert 응답.status_code == 502
-    assert 응답.json()["detail"] == 해외._QUOTE_REJECTED
+    assert 응답.json()["detail"] == "시세 조회가 거절되었습니다 — EGW999 거절"
 
 
 def test_해외_현재가_재생_헤더는_종목_전체를_한_번에_알린다(시세client):
@@ -584,7 +585,7 @@ def test_해외_품목_실패는_품목_문구로_온다():
     finally:
         app.dependency_overrides.pop(get_client, None)
     assert 응답.status_code == 502
-    assert 응답.json()["detail"] == 해외._PRODUCT_REJECTED
+    assert 응답.json()["detail"] == "품목 정보 조회가 거절되었습니다 — EGW999 거절"
 
 
 # ── 실패 문구는 시세와 계좌를 가른다 ────────────────────────────
@@ -625,7 +626,8 @@ def test_해외_시세_실패는_시세_문구로_온다(주소, 본문):
     finally:
         app.dependency_overrides.pop(get_client, None)
     assert 응답.status_code == 502
-    assert 응답.json()["detail"] == 국내._REJECTED
+    assert 응답.json()["detail"] == "시세 조회가 거절되었습니다 — EGW999 거절"
+    assert "계좌" not in 응답.json()["detail"]
 
 
 def test_해외_계좌_실패_문구는_그대로다():
@@ -640,6 +642,68 @@ def test_해외_계좌_실패_문구는_그대로다():
     assert 응답.status_code == 504
     assert 응답.json()["detail"] == 해외._NOT_RECEIVED
     assert "계좌 정보" in 응답.json()["detail"]
+
+
+_수량물음 = {"sym": "MESU26", "side": "buy", "glb_ord_tp_cd": "2", "ord_pric": "6500.25"}
+
+
+def _수량을_묻는다(터질것):
+    호출부 = 적어두는호출부({}, 터질것=터질것)
+    app.dependency_overrides[get_client] = lambda: 호출부
+    try:
+        return TestClient(app).post("/api/overseas/orderable-quantity", json=_수량물음)
+    finally:
+        app.dependency_overrides.pop(get_client, None)
+
+
+@pytest.mark.parametrize(
+    "코드, 원문",
+    [
+        ("5016", "[tdg_td_im_series_vs002(종목및품목정보조회)] 모듈 처리중 오류가 발생하였습니다."),
+        ("5033", "[주문불가계좌] 계좌입니다. 계좌번호를 확인하세요."),
+    ],
+    ids=["모의_5016", "실전_5033"],
+)
+def test_해외_주문가능수량_거절은_코드와_원문을_싣는다(코드, 원문):
+    응답 = _수량을_묻는다(BusinessError("overseas_orderable-quantity", 코드, 원문, {}))
+
+    assert 응답.status_code == 502
+    assert 응답.json()["detail"] == f"계좌 조회가 거절되었습니다 — {코드} {원문}"
+    assert (응답.headers["x-nh-error-code"], 응답.headers["x-nh-error-kind"]) == (코드, "other")
+
+
+def test_해외_거절에_원문이_없으면_사전의_예비_문구를_쓴다():
+    응답 = _수량을_묻는다(BusinessError("overseas_orderable-quantity", "5016", "", {}))
+
+    assert 응답.json()["detail"] == "계좌 조회가 거절되었습니다 — 5016 종목 및 품목 정보가 없습니다."
+
+
+def test_해외_사전에도_없는_코드는_코드만_남는다():
+    응답 = _수량을_묻는다(BusinessError("overseas_orderable-quantity", "E1234", "", {}))
+
+    assert 응답.json()["detail"] == "계좌 조회가 거절되었습니다 — E1234"
+    assert 응답.headers["x-nh-error-code"] == "E1234"
+
+
+def test_해외_코드_없는_거절은_기존_문구_그대로다():
+    from backend.nh_api.errors import HttpError
+
+    응답 = _수량을_묻는다(HttpError("overseas_orderable-quantity", 400, {"errorMessage": "잘못된 요청"}))
+
+    assert 응답.status_code == 502
+    assert 응답.json()["detail"] == overseas_routes._REJECTED
+    assert "x-nh-error-code" not in 응답.headers and "x-nh-error-kind" not in 응답.headers
+
+
+def test_해외_HTTP_오류_본문의_코드도_싣는다():
+    from backend.nh_api.errors import HttpError
+
+    응답 = _수량을_묻는다(
+        HttpError("overseas_orderable-quantity", 400, {"errorCode": "5033", "errorMessage": "막힌 계좌"})
+    )
+
+    assert 응답.json()["detail"] == "계좌 조회가 거절되었습니다 — 5033 막힌 계좌"
+    assert 응답.headers["x-nh-error-code"] == "5033"
 
 
 def test_해외_시세_주소가_붙어_있다():
@@ -887,7 +951,7 @@ def test_STOP_주문유형은_스탑가격이_있어야_한다(적어두는):
 
 
 def test_STOP_이_아니면_스탑가격은_빈_값으로_나간다(적어두는):
-    """칸을 빼지 않습니다 — 반입해 둔 기록이 빈 값으로 부르고 있습니다."""
+    """칸을 빼지 않습니다 — 저장해 둔 기록이 빈 값으로 부르고 있습니다."""
     앱, 호출부 = 적어두는
     앱.post("/api/overseas/orderable-quantity", json=_물음(glb_ord_tp_cd="1"))
 
@@ -927,8 +991,8 @@ def test_해외_가격과_방향과_유형을_검사한다(적어두는):
     "ord_qty": "2",
     "qt_div_cd": "1",
     "trd_div_cd": "1",
-    # **정상 답에도 코드가 실려 옵니다.** 모의 계좌로 신규·정정·취소를 내 보니
-    # 셋 다 이 값이었습니다(2026-09-23). 「코드가 있으면 거절」로 읽으면 들어간
+    # **정상 답에도 코드가 실려 옵니다.** 모의 계좌의 신규·정정·취소 답은
+    # 셋 다 이 값입니다. 「코드가 있으면 거절」로 읽으면 들어간
     # 주문을 거절이라고 답하게 됩니다.
     "err_cd": "00000",
     "err_msg": "주문이 정상처리 되었습니다.",
@@ -1088,8 +1152,8 @@ def test_해외_지정가는_가격이_STOP_은_스탑가격이_필요하다(주
 def test_해외_정상_코드는_접수다(주문):
     """**실물이 이렇습니다** — 접수 답이 `00000` 과 「정상처리」 문구를 함께 냅니다.
 
-    모의 계좌에서 신규·정정·취소 셋 다 이 모양이었는데, 그때 우리는 「코드가
-    있으면 거절」로 읽어 **들어간 주문을 거절이라고 답했습니다.**
+    모의 계좌에서 신규·정정·취소 셋 다 이 모양입니다. 「코드가 있으면 거절」로
+    읽으면 **들어간 주문을 거절이라고 답합니다.**
     """
     앱, _ = 주문
 
@@ -1555,7 +1619,7 @@ def test_누적손익_한_쪽이면_그대로():
 
     assert [줄["productCode"] for 줄 in 몸["rows"]] == ["AAA"]
     assert 몸["total"]["netPl"] == 5
-    # 건수는 원문 건수(9)가 아니라 우리가 낸 줄 수입니다.
+    # 건수는 원문 건수(9)가 아니라 이 앱이 낸 줄 수입니다.
     assert (몸["count"], 몸["pages"], 몸["nextKey"], 몸["truncated"]) == (1, 1, "", False)
 
 

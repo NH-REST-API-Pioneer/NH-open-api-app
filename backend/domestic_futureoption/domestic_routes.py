@@ -4,12 +4,18 @@
 원문이 아니라 **화면이 쓰는 모양**입니다 — 무엇을 어떻게 바꾸는지는
 `domestic_quotes.py` 첫머리에 있습니다.
 
-**오류는 우리 문구로 냅니다.** NH선물 서버가 보낸 문구를 그대로 내보내면
-우리가 보낸 값이 되비쳐 브라우저의 네트워크 탭에 남습니다. 원문은 서버
-기록에만 남기고, 화면에는 무엇을 못 했는지만 알립니다.
+**오류는 화면용 문구로 냅니다.** 화면에는 무엇을 못 했는지를 알립니다.
+NH선물이 오류 코드를 주면 그 코드와 서버 문구를 문장에 함께 싣습니다
+(`orders.lookup_refusal`). 코드가 없는 실패는 서버 문구를 기록에만 남깁니다 —
+요청에 실어 보낸 값이 되비쳐 브라우저의 네트워크 탭에 남지 않게 하려는 것입니다.
+
+예외가 둘 있습니다. 모의투자에서 제공하지 않는 조회(`EGW053`)와 시세 사용 신청이
+필요한 거래소(`ETR010`)는 서버 문구 대신 정해진 문장을 내고, 까닭을 헤더
+`x-nh-error-kind` 로 답니다(`orders.paper_refusal`·`orders.quote_subscription_refusal`).
 
     504  응답을 받지 못했습니다 (연결 실패·시간 초과)
     502  NH선물이 요청을 거절했거나 업무 처리가 거부되었습니다
+    503  시장의 참고 자료를 받을 인증 정보가 어느 환경에도 없습니다
 """
 from __future__ import annotations
 
@@ -235,8 +241,7 @@ def read_trend_investor(
     응답이 없으면 `investors` 가 빈 목록입니다.
 
     **실전 서버에서 받습니다.** 매매동향은 시장의 통계라 거래시간표와 같은 규칙을
-    따릅니다 — 거래시간표에서는 모의 서버 값이 실전과 다른 것을 확인했고, 매매동향이
-    두 서버에서 다른지는 따로 확인하지 않았습니다. 국내 실전 인증 정보가 없을 때만
+    따릅니다 — 거래시간표는 모의 서버 값이 실전과 다릅니다. 국내 실전 인증 정보가 없을 때만
     모의 서버에서 받고, 어느 쪽에서 받았는지는 `environment` 에 적습니다.
     `x-nh-environment` 헤더는 화면에서 고른 환경입니다(`backend.nh_api.reference`).
     """
@@ -326,10 +331,9 @@ def read_chart_daily(
 ) -> dict[str, Any]:
     """차트(일). 봉은 오래된 것부터 옵니다.
 
-    저장해 둔 응답으로 도는 재생 모드에서는 **일봉이 0개로 나옵니다.** 수집해
-    둔 일봉 두 건이 봉의 날짜 자리를 가린 채로 들어왔기 때문입니다 — 수집기가
-    연속조회 키를 가명으로 바꿀 때, 그 키와 글자가 같았던 날짜까지 함께
-    덮였습니다. 실서버로 부르면 날짜가 그대로 옵니다.
+    저장해 둔 응답으로 도는 재생 모드에서는 **일봉이 0개로 나옵니다.** 저장본의
+    일봉은 봉의 날짜 자리가 가려져 있습니다 — 연속조회 키를 가명으로 바꿀 때 그
+    키와 글자가 같은 날짜까지 함께 바뀝니다. 실서버로 부르면 날짜가 그대로 옵니다.
     """
     raw = _call(
         lambda: api.chart_daily(
@@ -417,8 +421,7 @@ def read_chart_history(
     때문입니다(휴장일 달력이 없습니다). `partial` 은 그 판단에 쓰는 값이 아닙니다.
 
     `nextKey` 는 **늘 빈 값**입니다. 조회 셋의 이어받기 키를 하나로 낼 수 없고,
-    받아 보니 같은 키로 다시 불러도 같은 줄이 옵니다 — 더 과거는 `before` 로
-    갑니다.
+    같은 키로 다시 불러도 같은 줄이 옵니다 — 더 과거는 `before` 로 갑니다.
     """
     day = history.as_day(ask.before)
     day = history.previous_business_day(day) if day else history.latest_business_day(now_kst())
@@ -523,7 +526,7 @@ def read_product_detail(
 
 #: 종목 정보를 못 채운 까닭. **화면이 그대로 적습니다.**
 #:
-#: 그래서 읽는 사람은 이 앱을 쓰는 분입니다 — 우리가 받아 오는 자료의 이름
+#: 그래서 읽는 사람은 이 앱을 쓰는 분입니다 — 코드가 받아 오는 자료의 이름
 #: (「종목 마스터」·「품목별세부정보」·「품목 줄」)을 여기 쓰지 않습니다. 화면에서
 #: 부르는 이름(「종목 목록」·「품목정보」)으로 적습니다. **표 이름은 하나입니다** —
 #: 같은 표를 자리마다 다른 말로 부르면 읽는 사람이 둘을 맞춰 봐야 합니다.
@@ -573,7 +576,7 @@ def read_product_info(
     단위라 종목코드로는 바로 못 찾습니다 — 마스터에서 그 종목의 거래대상코드
     (`trd_code`)와 갈래를 꺼내 품목 줄과 잇습니다(`domestic_hours.product_row`).
 
-    **시세 라우트에 얹지 않았습니다.** 현재가는 마스터를 안 보는 자리이고
+    **시세 라우트에 얹지 않습니다.** 현재가는 마스터를 안 보는 자리이고
     (`AllFuturesRequest` 첫머리), 증거금을 거기 얹으면 시세가 마스터 적재
     상태에 묶입니다.
 
@@ -654,7 +657,7 @@ def read_product_info(
         return _with_why_code(made)
 
     # **창은 안 가립니다.** 증거금은 주간 줄과 야간 줄이 같은 값입니다 —
-    # 받아 둔 응답에서 (야간)코스피200선물이 주간 줄과 같은 액수로 옵니다.
+    # 예를 들어 (야간)코스피200선물은 주간 줄과 같은 액수로 옵니다.
     found = domestic_hours.product_row(
         products, row, domestic_hours.DAY, any_window=True
     )
@@ -694,9 +697,9 @@ class DepositRequest(BaseModel):
     「오늘이 며칠인가」는 화면과 백엔드가 서로 다른 시계를 볼 수 있는 자리이고,
     화면마다 각자 채우면 자정 근처에서 서로 다른 날을 묻게 됩니다.
 
-    **오늘이 휴일이면 NH선물이 무엇을 주는지 모릅니다.** 빈 표로 오는지,
-    직전 영업일로 답하는지, 거절하는지 실물로 못 봤습니다 — 첫 실호출 확인
-    항목입니다. 날짜를 정해 부르고 싶으면 `biz_dt` 에 넣으면 됩니다.
+    **오늘이 휴일일 때 NH선물의 답은 명세에 없습니다** — 빈 표일 수도, 직전
+    영업일 값일 수도, 거절일 수도 있습니다. 날짜를 정해 부르고 싶으면 `biz_dt` 에
+    넣으면 됩니다.
     """
 
     # 자리 수만 세면 `2026abcd` 가 그대로 NH선물로 나갑니다.
@@ -849,9 +852,9 @@ class OrderErrorRequest(PageRequest):
     「오늘이 며칠인가」를 화면마다 채우면 **자정 근처에서 화면과 백엔드가
     다른 날을 묻게 됩니다.**
 
-    **오늘이 휴일이면 NH선물이 무엇을 주는지 모릅니다** — 빈 표로 오는지,
-    직전 영업일로 답하는지, 거절하는지 실물로 못 봤습니다. 날짜를 정해 부르고
-    싶으면 `inq_dt` 에 넣으면 됩니다.
+    **오늘이 휴일일 때 NH선물의 답은 명세에 없습니다** — 빈 표일 수도, 직전
+    영업일 값일 수도, 거절일 수도 있습니다. 날짜를 정해 부르고 싶으면 `inq_dt` 에
+    넣으면 됩니다.
     """
 
     inq_dt: str = Field(
@@ -1162,7 +1165,7 @@ def _result(
 
     **주문번호가 비어 오면 접수라고 답하지 않습니다.** 무엇을 담은 줄인지는
     `domestic_account.order_reply()` 에, 왜 504 인지는 `orders.NO_ORDER_NUMBER` 에
-    적어 두었습니다.
+    있습니다.
 
     접수됐으면 **주문내역으로 결과를 확인해** `outcome` 에 싣습니다 — 접수 뒤에
     거부되는 주문이 있습니다. 거부면 줄의 상태도 거부로 바뀝니다. 확인하느라
@@ -1173,7 +1176,7 @@ def _result(
     body = raw or {}
     order_id = str(body.get("ord_no") or "").strip()
     if not order_id:
-        # 원문을 통째로 남기지 않습니다 — 우리가 보낸 값이 되비쳐 올 수 있습니다.
+        # 원문을 통째로 남기지 않습니다 — 요청에 실어 보낸 값이 되비쳐 올 수 있습니다.
         logger.warning("접수 답에 주문번호가 없습니다. 받은 칸: %s", sorted(body))
         raise HTTPException(
             status_code=504,
@@ -1282,7 +1285,11 @@ def _order(
 def _call(
     action, response: Response | None = None, *, account: bool = False, kind: str = "quote"
 ) -> dict[str, Any]:
-    """부르고, 실패는 화면용 문구로 바꿉니다. 원문은 기록에만 남깁니다.
+    """부르고, 실패는 화면용 문구로 바꿉니다.
+
+    거절에 NH선물의 오류 코드가 실려 오면 문장에 코드와 원문을 함께 싣고 헤더로도
+    답니다(`orders.lookup_refusal`). 코드가 없는 실패는 화면용 문구만 내고 원문은
+    기록에 남깁니다.
 
     저장본으로 돌 때는 **무엇으로 답했는지를 응답 헤더에 실어 보냅니다.**
     같은 API 의 다른 기록으로 대신 답할 수 있는데, 화면 쪽에서 그것을 알 수
@@ -1313,14 +1320,14 @@ def _call(
         if orders.quote_subscription(exc):
             # 시세 사용 신청이 먼저인 자리입니다. 무엇을 하면 되는지 알립니다.
             raise orders.quote_subscription_refusal(exc) from exc
-        raise HTTPException(status_code=502, detail=rejected) from exc
+        raise orders.lookup_refusal(exc, what, rejected) from exc
     except NHApiError as exc:
         if paper_unavailable(exc):
             # 모의투자에서는 NH선물이 이 조회를 제공하지 않습니다(`EGW053`).
             logger.info("국내 %s 는 모의투자에서 부를 수 없습니다: %s", what, exc)
             raise orders.paper_refusal(exc) from exc
         logger.warning("국내 %s 응답을 다루지 못했습니다: %s", what, exc)
-        raise HTTPException(status_code=502, detail=rejected) from exc
+        raise orders.lookup_refusal(exc, what, rejected) from exc
     finally:
         _stamp(response)
 

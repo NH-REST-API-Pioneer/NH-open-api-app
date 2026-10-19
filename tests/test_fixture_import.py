@@ -379,7 +379,7 @@ def test_두_자리에_각각_쓰고_각자_색인을_만든다(tmp_path):
 
 
 def test_콘솔이_한글을_못_받아도_안_죽는다(tmp_path, capsys, monkeypatch):
-    """Windows 기본 콘솔(cp949)에서 반입이 도중에 멈추던 자리입니다."""
+    """Windows 기본 콘솔(cp949)에서 반입이 도중에 멈출 수 있는 자리입니다."""
     import io
     import sys
 
@@ -390,7 +390,7 @@ def test_콘솔이_한글을_못_받아도_안_죽는다(tmp_path, capsys, monke
     monkeypatch.setattr(sys, "stderr", 좁은출력)
 
     speak_utf8()
-    # 고치기 전에는 여기서 UnicodeEncodeError 로 죽었습니다.
+    # 좁은 콘솔에서는 여기서 UnicodeEncodeError 로 죽을 수 있는 자리입니다.
     print("넣지 않음 — 실전 계좌·주문 응답 3건")
     좁은출력.flush()
 

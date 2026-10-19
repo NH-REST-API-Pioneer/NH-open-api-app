@@ -370,8 +370,8 @@ const SUMMARY_LABELS: Record<DepositMarket, readonly string[]> = {
  * 읽는 순서라, 숫자 열 사이에 끼우면 값 훑는 흐름을 끊습니다.
  *
  * 강조하지 않습니다. 남은 날이 적어도 굵게·색으로 바꾸지 않습니다 —
- * 「만기가 가깝다」는 우리가 내리는 판정이고, 날짜와 남은 일수를 적는
- * 데까지가 우리 일입니다. */
+ * 「만기가 가깝다」는 이 앱이 내리는 판정이고, 날짜와 남은 일수를 적는
+ * 데까지가 이 화면의 일입니다. */
 function Expiry({ row, firstNotice = null }: { row: Position; firstNotice?: string | null }) {
   if (!row.expiry) {
     return (
@@ -422,7 +422,7 @@ function calendarDaysUntil(date: string): number | null {
  *  - **현금결제 종목은 세우지 않습니다.** 최초통보일은 실물을 인수할 의무가
  *    시작되는 날이라, 만기에 정산되고 끝나는 종목에는 경고할 일이 없습니다.
  *  - **최초통보일이 그 줄의 만기일과 같으면 세우지 않습니다.** 현금결제 종목의
- *    답에서 두 날이 같게 오는 것을 보았습니다 — 만기일과 같은 날은 따로 알릴
+ *    답에서는 두 날이 같게 옵니다 — 만기일과 같은 날은 따로 알릴
  *    날이 아닙니다.
  *  - 만기 조회는 체결 단위라 한 종목이 여러 줄입니다. **줄마다 날이나 결제 구분이
  *    다르거나 날이 빠진 줄이 섞이면 세우지 않습니다** — 어느 줄을 골라도 다른
@@ -455,8 +455,8 @@ function firstNoticeByCode(rows: readonly ServerExpiryPosition[]): Map<string, s
  *  값은 현금이 아닌 것으로 봅니다** — 실물 인수 경고를 잘못 숨기는 쪽이 경고가
  *  하나 더 서는 쪽보다 위험합니다.
  *
- *  만기 조회에서 실물 품목의 결제 구분 글자는 아직 표본으로 보지 못했습니다.
- *  같은 뜻의 상품 만기 조회 칸이 실물 품목에 「인수도」를 주는 것을 근거로 합니다. */
+ *  만기 조회에서 실물 품목의 결제 구분 글자는 같은 뜻의 상품 만기 조회 칸이
+ *  실물 품목에 「인수도」를 주는 것을 근거로 봅니다. */
 function isCashSettled(delivery: string): boolean {
   return delivery.startsWith('현금')
 }
@@ -588,7 +588,7 @@ function OrderRow({
               칸이 출처를 겸합니다 — 같은 규칙의 두 결과입니다.
 
               **낱말은 「잠김」입니다.** 이 표에 선 단추는 하나지만 **그 단추가 여는
-              자리에서 정정도 취소도** 하므로, 「못 고침」은 절반만 말합니다. 우리가
+              자리에서 정정도 취소도** 하므로, 「못 고침」은 절반만 말합니다. 이 앱이
               낼 수 없는 주문은 여기서 거둘 수도 없습니다.
 
               **출처 열과 이 칸은 붙여 읽는 짝입니다.** 「잠김」은 스스로 까닭을 말
@@ -656,9 +656,9 @@ function PositionsPanel({
         onMore={() => moreList(market, 'positions')}
         onReload={again}
       />
-      {/* **합계 줄을 걷었습니다.** 잔고 응답은 포지션 줄과 이어받기 열쇠
-          뿐이라, 여기 서 있던 평가손익·매매손익·수수료·순손익은 **서버가
-          주지 않는 값**이었습니다. 응답이 안 주면 우리가 말할 수 없습니다.
+      {/* **이 표에는 합계 줄이 없습니다.** 잔고 응답은 포지션 줄과 이어받기 열쇠
+          뿐이라, 평가손익·매매손익·수수료·순손익의 합계는 **서버가
+          주지 않는 값**입니다. 응답이 안 주면 이 앱이 말할 수 없습니다.
 
           **그 물음에 답하는 자리는 있습니다** — 손익과 수수료는 위 요약 띠의
           여섯째 칸과 예탁자산 탭이 예수금에서 받아 말합니다. 여기서 다시
@@ -1021,7 +1021,7 @@ function OrderErrorsList({
  *  뿐입니다. 줄마다 돈이 다르므로 금액 열 머리에는 단위를 적지 않고, 어느 돈인지는
  *  「통화」 열이 줄마다 말합니다.
  *
- *  **총합은 우리가 더하지 않습니다.** 서버가 목록에서 빼서 따로 냅니다. */
+ *  **총합은 이 앱이 더하지 않습니다.** 서버가 목록에서 빼서 따로 냅니다. */
 function RealizedPanel({
   period,
   from,
@@ -1044,7 +1044,7 @@ function RealizedPanel({
   const entry = useListOnce<ServerRealized>('overseas', 'cumulative', undefined, period, conversion)
   const again = () => retryList('overseas', 'cumulative', undefined, period, conversion)
   const total = (entry.extra?.total ?? null) as ServerRealized | null
-  /* 금액의 통화는 **답이 말한 환산 통화**를 먼저 씁니다. 답에 없으면 우리가 보낸
+  /* 금액의 통화는 **답이 말한 환산 통화**를 먼저 씁니다. 답에 없으면 이 앱이 보낸
      값입니다(안 보냈으면 서버 기본 원화). */
   const said = entry.extra?.conversionCurrency
   const amountCurrency = typeof said === 'string' && said !== '' ? said : (conversion ?? 'KRW')
@@ -1117,11 +1117,11 @@ function RealizedPanel({
             ))}
           </tbody>
           {total !== null && !byCurrency && (
-            /* **합계는 서버가 낸 줄입니다.** 우리가 더하지 않습니다 — 통화가
+            /* **합계는 서버가 낸 줄입니다.** 이 앱이 더하지 않습니다 — 통화가
                섞여 오므로 그냥 더하면 다른 돈을 한 숫자로 만듭니다.
                합계 줄은 **원화 환산으로 볼 때만** 세웁니다. 통화별로 보는 중에
                여러 통화를 합친 한 숫자가 서면 보기의 약속과 어긋납니다.
-               합계의 통화는 **우리가 물은 환산 통화**입니다 — 답의 합계 줄에 적힌
+               합계의 통화는 **이 앱이 물은 환산 통화**입니다 — 답의 합계 줄에 적힌
                통화 칸은 환산 전 통화로 와서 금액과 맞지 않습니다. */
             <tfoot>
               <RealizedRow row={total} label="원화 환산 합계" currency={amountCurrency} />
@@ -1417,10 +1417,9 @@ export function AccountScreen({
     }
 
     if (active === '예탁자산') {
-      /* **통화별 보기를 이번에 걷었습니다.** 그 화면이 그리던 통화마다의 잔고는
-         서버에 물어본 값이 아니라 화면이 들고 있던 값이었습니다. 서버에 환산
-         구분을 바꿔 다시 물어야 나오는 자리라, 물어볼 길을 붙이기 전에는
-         지어낸 값을 세우지 않습니다. 환산은 서버가 합니다. */
+      /* **통화별 보기는 두지 않습니다.** 통화마다의 잔고는 서버에 환산 구분을
+         바꿔 다시 물어야 나오는 값이라, 화면이 들고 있는 값으로 지어 세우지
+         않습니다. 환산은 서버가 합니다. */
       return <DepositPanel market={market} view={overseas ? view : undefined} />
     }
 

@@ -92,7 +92,7 @@ def business_failure(body: Any) -> tuple[str, str] | None:
     """업무 처리가 거부되었으면 (코드, 설명)을, 아니면 None 을 돌려줍니다.
 
     `msg_cd` 가 있고 비어 있지 않으면 거부로 봅니다. 정상 처리된 주문 응답에서는
-    이 항목이 빈 문자열로 왔습니다.
+    이 항목이 빈 문자열로 옵니다.
 
     조회 결과가 0건인 것(`nrec` 가 0)은 거부가 아닙니다. 「그 조건에 해당하는
     자료가 없다」는 정상 응답이므로 여기서 걸러내지 않습니다.
@@ -218,10 +218,9 @@ class TradeClient:
         )
 
     def _send(self, spec: ApiSpec, payload: dict[str, Any], environment: str) -> httpx.Response:
-        # 여기서 토큰이 없으면 새로 발급받습니다. 그 발급 요청은 아직 이
-        # 제한기를 거치지 않습니다. 인증 등급은 초당 3건이고 토큰은 시장마다
-        # 하나씩 한 시간을 쓰므로 지금 구성에서는 넘지 않지만, 인증 호출도
-        # 같은 제한기를 타게 하는 것이 남은 일입니다.
+        # 여기서 토큰이 없으면 새로 발급받습니다. 그 발급 요청은 이 제한기를
+        # 거치지 않습니다. 인증 등급은 초당 3건이고 토큰은 시장마다 하나씩 한
+        # 시간을 쓰므로 지금 구성에서는 그 제한을 넘지 않습니다.
         try:
             headers = self._session.tokens.headers(spec.market, environment)
         except AuthError as exc:

@@ -1,6 +1,6 @@
 """국내 투자자 매매동향 — 납작한 응답을 무리 목록으로.
 
-**NH선물 서버에 접속하지 않습니다.** 반입해 둔 응답과 지어낸 값으로 돕니다.
+**NH선물 서버에 접속하지 않습니다.** 저장해 둔 응답과 지어낸 값으로 돕니다.
 """
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def test_수신시각과_상품코드와_기준일을_함께_낸다():
     나온것 = investor_trend(_기록(api.QUANTITY)["response"], inq_tp=api.QUANTITY, ref_dt=기준일)
 
     assert 나온것["time"] == "09:01:30"
-    # 거래소 상품 식별자입니다. 우리 품목코드가 아닙니다.
+    # 거래소 상품 식별자입니다. 이 앱의 품목코드가 아닙니다.
     assert 나온것["instrument"] == "KRDRVFUUSD"
     assert 나온것["date"] == "2026-09-09"
 

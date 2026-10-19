@@ -206,7 +206,7 @@ def all_futures(raw: dict[str, Any], *, asked: str = "") -> dict[str, Any]:
     rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
     made = [_month(row) for row in rows]
     product = next((one["product"] for one in made if one["product"]), "") or asked.strip()
-    # **`count` 는 우리가 낸 줄 수입니다.** 원문 건수(`nrec`)를 그대로 옮기면 줄을
+    # **`count` 는 이 응답에 담은 줄 수입니다.** 원문 건수(`nrec`)를 그대로 옮기면 줄을
     # 빼거나 못 읽은 날 화면이 「7개」라고 적으면서 여섯 줄을 그립니다.
     said = _count(raw.get("nrec"))
     if said is not None and said != len(made):

@@ -1,10 +1,10 @@
-"""반입해 둔 NH선물 Open API 응답을 읽어 들입니다.
+"""저장해 둔 NH선물 Open API 응답을 읽어 들입니다.
 
 파일은 `tests/fixtures/nh/{API}/{환경}/{시장}/{기록ID}.json` 에 있고,
 `scripts/import_nh_fixtures.py` 가 만듭니다. 손으로 고치지 마세요.
 
 여기 담긴 값은 실제 응답에서 인증값과 식별자를 바꾼 것입니다. 실제 계좌나
-실제 시세가 아니며, 개발과 검토용입니다.
+실제 시세가 아니며, 개발과 시험에 씁니다.
 
 ## 저장소에 올리지 않는 폴더
 
@@ -27,7 +27,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# 반입 결과가 놓이는 자리.
+# 기록 파일이 놓이는 자리.
 FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "nh"
 
 # 저장소에 올리지 않는 자리. 실전 계좌 응답이 여기 놓입니다.
@@ -36,14 +36,14 @@ PRIVATE_ROOT = FIXTURE_ROOT.parent / "nh_private"
 # 그 폴더를 어디서 읽을지. **빈 값을 넣으면 아예 안 읽습니다.**
 PRIVATE_DIR_FLAG = "NH_REPLAY_PRIVATE_DIR"
 
-# 반입 파일 형식. 형식을 바꾸면 이 값을 올리고 반입을 다시 돌립니다.
+# 기록 파일 형식. 형식을 바꾸면 이 값을 올리고 `scripts/import_nh_fixtures.py` 를 다시 돌립니다.
 FIXTURE_FORMAT = "nh-fixture-1"
 
 INDEX_NAME = "index.json"
 
 
 class FixtureError(Exception):
-    """반입 파일을 읽을 수 없을 때 발생합니다."""
+    """기록 파일을 읽을 수 없을 때 발생합니다."""
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ class StreamFixture(Fixture):
 
     @property
     def received(self) -> tuple[StreamEvent, ...]:
-        """서버가 보내 온 메시지만. 우리가 보낸 구독 요청은 뺍니다."""
+        """서버가 보내 온 메시지만. 이 앱이 보낸 구독 요청은 뺍니다."""
         return tuple(e for e in self.events if e.direction == "received")
 
 
@@ -153,7 +153,7 @@ def _build(raw: dict[str, Any], source: Path) -> Fixture:
 
 
 class FixtureStore:
-    """반입해 둔 기록 전체."""
+    """저장해 둔 기록 전체."""
 
     def __init__(self, fixtures: list[Fixture], root: Path) -> None:
         self.root = root
@@ -161,7 +161,7 @@ class FixtureStore:
 
     @classmethod
     def load(cls, root: Path | None = None, private: Path | None = None) -> FixtureStore:
-        """반입해 둔 응답을 읽습니다.
+        """저장해 둔 응답을 읽습니다.
 
         `private` 를 주면 그 폴더의 기록도 **함께** 읽습니다. 폴더가 없으면
         조용히 넘어갑니다 — 그 폴더는 사람마다 있을 수도 없을 수도 있어서,

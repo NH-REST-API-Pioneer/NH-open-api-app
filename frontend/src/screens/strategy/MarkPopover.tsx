@@ -123,7 +123,7 @@ export function MarkPopover({ pick, onClose }: { pick: MarkPick; onClose: () => 
       {mark.fee !== undefined && (
         <p className="mark-pop-line">수수료 {moneyText(mark.fee, mark.currency)} · 계약당 설정값으로 셈</p>
       )}
-      {/* 주문을 낸 순간의 지표. 우리가 내지 않은 주문(`null`)과 칸이 없는 옛
+      {/* 주문을 낸 순간의 지표. 전략 엔진이 내지 않은 주문(`null`)과 칸이 없는 옛
           기록은 절 전체를 세우지 않습니다. 차례는 편집기 목록의 차례이고, 줄이
           많으면 이 표만 안에서 구릅니다. 묶인 표지는 가장 이른 체결의 것입니다. */}
       {rows.length > 0 && mark.snapshot && (

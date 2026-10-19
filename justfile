@@ -33,6 +33,11 @@ test:
 typecheck:
     cd frontend && npm run typecheck
 
+# 코드 검사 — 백엔드(ruff) + 프론트엔드(eslint). 설정은 pyproject.toml 의 [tool.ruff] 와 frontend/eslint.config.js
+lint:
+    uv run ruff check .
+    cd frontend && npm run lint
+
 # 프로덕션 빌드 (프론트엔드를 backend/static 으로 빌드하여 백엔드가 서빙)
 build:
     cd frontend && npm run build

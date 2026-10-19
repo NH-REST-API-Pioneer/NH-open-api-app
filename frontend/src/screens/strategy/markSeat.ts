@@ -71,7 +71,7 @@ export function mergeMarks(marks: readonly TradeMark[]): TradeMark[] {
     /* 수수료는 더합니다. 한쪽이라도 칸이 없으면 합을 알 수 없어 비웁니다. */
     held.fee = held.fee === undefined || mark.fee === undefined ? undefined : held.fee + mark.fee
     /* 당시 지표는 **가장 이른 체결 하나**의 것입니다 — 다른 체결로 대신 채우지
-       않습니다(그 체결이 옛 기록이거나 우리가 낸 주문이 아니면 절이 안 섭니다). */
+       않습니다(그 체결이 옛 기록이거나 전략 엔진이 낸 주문이 아니면 절이 안 섭니다). */
     if (mark.firstAt !== undefined && (held.firstAt === undefined || mark.firstAt < held.firstAt)) {
       held.firstAt = mark.firstAt
       held.snapshot = mark.snapshot

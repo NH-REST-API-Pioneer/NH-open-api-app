@@ -107,7 +107,7 @@ namespace NHSetup
         {
             string full = ValidateRoot(root);
             string probe = Path.Combine(full, ".nh-setup-write-" + Guid.NewGuid().ToString("N"));
-            // DeleteOnClose removes only our own newly created probe, including on failure.
+            // DeleteOnClose removes only the probe this check just created, including on failure.
             using (var stream = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
                 stream.WriteByte(0);
             return full;

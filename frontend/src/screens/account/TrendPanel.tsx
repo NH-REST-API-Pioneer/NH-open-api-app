@@ -27,12 +27,12 @@ import { MINUS, moneyIn, toneOf } from '../../lib/number'
 /* 계좌 「추이」 탭.
  *
  * **이 화면의 값은 날마다 물어 이어 붙인 것입니다.** NH선물에 날짜별 줄을 주는
- * 계좌 조회가 없어, 하루치를 날마다 받아 우리가 모읍니다 — 그래서 그림 아래에
+ * 계좌 조회가 없어, 하루치를 날마다 받아 이 앱이 모읍니다 — 그래서 그림 아래에
  * 「며칠치인가」를 늘 적습니다. 서버가 셈해 주는 값(해외 품목별 누적손익)에는
  * 그렇다고 따로 적습니다. 두 값이 만들어진 방법이 다른데 한 화면에 나란히
  * 서므로, 무엇이 어떻게 만들어진 값인지 화면이 말해야 합니다.
  *
- * **빠진 날은 잇지 않습니다.** 선을 끊고 사이를 비웁니다 — 이으면 우리가 안 받은
+ * **빠진 날은 잇지 않습니다.** 선을 끊고 사이를 비웁니다 — 이으면 이 앱이 안 받은
  * 날에 값이 있었던 것으로 읽힙니다.
  *
  * 색은 **손익에만** 씁니다 — 이익은 상승색, 손실은 하락색으로 앱의 등락색과
@@ -192,7 +192,7 @@ function scale(points: Point[], count: number, width: number, height: number, fr
     x: (slot: number) => slotX(slot, count, width),
     y: (value: number) => PAD + ((top - value) / span) * inner,
     zero: PAD + (top / span) * inner,
-    /* 그림의 위아래 끝이 아니라 **값의 최고·최저**입니다 — 끝을 적으면 우리가
+    /* 그림의 위아래 끝이 아니라 **값의 최고·최저**입니다 — 끝을 적으면 이 앱이
        여백으로 벌려 둔 수가 값인 것처럼 섭니다. */
     high: Math.max(...values),
     low: Math.min(...values),
@@ -971,7 +971,7 @@ function PlCalendar({
 /* ── 품목별 누적손익 ────────────────────────────────────── */
 
 /** 품목별 누적손익 가로 막대. **해외만** 있습니다 — 국내에는 이 값을 주는 조회가
- *  없습니다. 이것은 우리가 이어 붙인 값이 아니라 **서버가 셈한 기간 합계**라,
+ *  없습니다. 이것은 이 앱이 이어 붙인 값이 아니라 **서버가 셈한 기간 합계**라,
  *  아래 줄에 그렇다고 적습니다. */
 function ProductBars({ from, to }: { from: string; to: string }) {
   const entry = useListOnce<ServerRealized>('overseas', 'cumulative', undefined, { from, to })
@@ -1064,7 +1064,7 @@ function ProductBars({ from, to }: { from: string; to: string }) {
           </p>
         )
       )}
-      {/* 이 값만은 **우리가 이어 붙인 것이 아닙니다.** 위 그림과 만들어진 방법이
+      {/* 이 값만은 **이 앱이 이어 붙인 것이 아닙니다.** 위 그림과 만들어진 방법이
           달라 그 사실을 이 자리에 적습니다 — 합계 줄이나 안내 줄이 서면 그 줄이 이미
           서버의 합계를 말하므로 이 줄은 걷습니다. */}
       {totalValue === null && !mixed && <p className="trend-note">서버가 셈한 기간 합계</p>}

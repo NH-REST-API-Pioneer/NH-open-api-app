@@ -50,7 +50,7 @@ _NOT_DELETED = "전략을 지우지 못했습니다."
 _NOT_FOUND = "그 전략을 찾지 못했습니다."
 _ID_MISMATCH = "주소의 전략과 본문의 전략이 다릅니다."
 _LIMITS_NOT_SAVED = "손실 한도를 저장하지 못했습니다."
-#: 우리 쪽에서 일이 안 됐을 때(파일·계좌 조회 등) 화면에 적는 말. 까닭은 기록에만 남깁니다.
+#: 이 앱 쪽에서 일이 안 됐을 때(파일·계좌 조회 등) 화면에 적는 말. 까닭은 기록에만 남깁니다.
 _RUN_NOT_SAVED = "실행 상태를 저장하지 못했습니다. 잠시 뒤 다시 해 주세요."
 _NOT_RECONCILED = "계좌와 맞춰 보지 못했습니다. 잠시 뒤 다시 해 주세요."
 _NOT_STOPPED = "전체 중지를 마치지 못했습니다. 실행 목록을 확인해 주세요."
@@ -267,7 +267,7 @@ class AddRunRequest(BaseModel):
     """검증 실행 하나를 세우는 요청.
 
     설정(`draft`)을 **그대로 물고 갑니다** — 실행을 시작한 뒤에 전략을 고쳐도
-    돌고 있는 실행은 시작할 때의 설정으로 계속합니다(§1-1).
+    돌고 있는 실행은 시작할 때의 설정으로 계속합니다.
     """
 
     id: str
@@ -488,8 +488,8 @@ def add_run(ask: AddRunRequest, service: RunService = Depends(get_service)) -> d
 def read_run(run_id: str, service: RunService = Depends(get_service)) -> dict[str, Any]:
     """실행 하나의 한 벌 — 줄·체결·이벤트·잔고 곡선.
 
-    **허브가 이 한 벌을 실시간으로 보내는 것은 다음 회차입니다.** 지금은 이
-    자리로만 볼 수 있습니다.
+    **허브는 이 한 벌을 통째로 보내지 않습니다.** 방송에는 줄·체결·이벤트·열린
+    주문만 실리고, 조건 표·잔고 곡선·거래 목록(`trades`)은 이 자리로만 볼 수 있습니다.
     """
     return _acted(service.snapshot, run_id)
 
@@ -498,7 +498,7 @@ def read_run(run_id: str, service: RunService = Depends(get_service)) -> dict[st
 def stop_run(
     run_id: str, service: RunService = Depends(get_service)
 ) -> dict[str, Any]:
-    """신규 진입 중지(§7 의 `pause`). 보유의 손절·익절 감시는 그대로 돕니다."""
+    """신규 진입 중지(`pause`). 보유의 손절·익절 감시는 그대로 돕니다."""
     return _acted(service.pause, run_id, _now())
 
 
@@ -510,7 +510,7 @@ def resume_run(run_id: str, service: RunService = Depends(get_service)) -> dict[
 
 @runs_router.post("/runs/{run_id}/close")
 def close_run(run_id: str, service: RunService = Depends(get_service)) -> dict[str, Any]:
-    """선택 전략 청산(§7 의 `flatten`). 시장가 전량입니다."""
+    """선택 전략 청산(`flatten`). 시장가 전량입니다."""
     return _acted(service.flatten, run_id, _now())
 
 
@@ -690,7 +690,7 @@ def get_limits() -> LimitStore:
 
 
 class LimitsRequest(BaseModel):
-    """통화마다의 한도(`KRW`·`USD`·`HKD`… 열쇠). 앞 판의 `domestic`·`overseas` 도 받습니다.
+    """통화마다의 한도(`KRW`·`USD`·`HKD`… 열쇠). 시장 이름 열쇠 `domestic`·`overseas` 도 받습니다.
 
     아무 열쇠도 안 보내면 모의 쪽 한도는 **담긴 그대로**입니다 — 실전 한도만
     고치는 요청이 그렇습니다(`real` 도 같은 규칙입니다). 담는 규칙은

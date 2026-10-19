@@ -18,7 +18,7 @@ from backend.domestic_futureoption import domestic_trend
 from backend.nh_api.client import TradeClient
 from backend.nh_api.session import create_session
 
-# 수집해 둔 응답에 들어 있는 종목입니다. 실서버로 바꿔 부를 때도 그대로 씁니다.
+# 재생 모드의 저장 응답에 들어 있는 종목입니다. 실서버로 바꿔 부를 때도 그대로 씁니다.
 SYMBOL = "A7569000"
 DATE = "20260909"
 

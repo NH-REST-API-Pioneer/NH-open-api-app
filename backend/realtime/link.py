@@ -22,9 +22,9 @@
 초기화 단계에서도 처리합니다 — 초기화를 기다리는 동안 먼저 올 수 있습니다.
 
 **세션 유지는 이 되돌림 하나로 합니다.** 웹소켓 규격의 핑 프레임은 보내지
-않습니다 — 국내 실시간 서버에 붙으면 연결이 20초마다 끊겼는데, 그 주기가
-라이브러리가 기본으로 보내는 핑 프레임의 간격과 같아 핑을 껐습니다. 서버가 핑에
-닫는 것인지는 아래 닫힘 기록으로 확인합니다. 대신 서버가 보내는 것이 한동안
+않습니다 — 라이브러리가 기본으로 20초마다 보내는 핑 프레임을 켜 두면 국내
+실시간 연결이 같은 주기로 끊기므로 핑을 끕니다. 서버가 연결을 닫으면 닫힘
+코드와 이유를 기록에 남깁니다(`_listen`). 대신 서버가 보내는 것이 한동안
 없으면(`IDLE_TIMEOUT`) 죽은 연결로 보고 다시 붙습니다 — 서버는 세션 유지 신호를
 주기적으로 보내므로 살아 있는 연결이 그만큼 조용할 일은 없습니다.
 
@@ -34,21 +34,31 @@
 60초보다 짧게 붙어 있다 끊기면 서버가 정상 절차로 닫았더라도 짧게 끊긴 것으로
 셉니다. 60초 넘게 붙어 있었고 그 앞 10분 안에 짧게 끊긴 일이 없으면 기다리지
 않고 바로 다시 붙습니다(`Pacer`). 붙고 나면 장부에
-있는 구독을 **전부 다시 겁니다** — 서버는 우리가 무엇을 보고 있었는지
-기억하지 않습니다.
+있는 구독을 **전부 다시 겁니다** — 서버는 끊기기 전의 구독을 기억하지
+않습니다.
 
 **끊긴 동안의 값은 메워지지 않습니다.** 실시간은 지금 일어나는 것만 보내고
 지나간 것을 다시 주지 않습니다. 그래서 다시 붙으면 화면에 「조회로 다시
 채우라」고 알립니다. 이 신호가 없으면 화면은 멈춘 값을 최신인 줄 알고 그대로
 보여 줍니다.
 
-## 한 연결에 구독을 몇 개까지 걸 수 있는지는 확인되지 않았습니다
+## 서버가 거절한 구독은 「실패」로 들고 있습니다
+
+시세 사용 신청을 하지 않은 거래소의 종목처럼 서버가 받아 주지 않는 구독은
+`RT_INIT` 대신 `RT_FAIL` 같은 다른 코드로 답이 옵니다. 그 답을 어느 구독의 것인지
+(`data` 의 실시간 이름·종목, 없으면 글 안의 `[action_sym::종목]`)로 짝지어
+**그 연결에서 실패한 구독**으로 들고 있고, 바뀔 때마다 허브에 알립니다
+(`on_failure`). 허브는 그 구독을 화면에 「받지 못함」으로 답합니다.
+
+실패는 연결 하나의 것입니다. 다시 붙거나 그 구독을 다시 걸면(`refresh`) 지우고
+새로 걸어 봅니다. 그 뒤 같은 구독에 `RT_INIT` 이 오면 그때도 지웁니다.
+
+## 한 연결이 지는 구독 수는 값 하나로 정합니다
 
 명세에 「전체 실시간 구독 제한은 20개」라고만 있고, 그것이 연결 단위인지 앱
-단위인지, 한 연결에 여럿을 걸 수 있는지가 적혀 있지 않습니다. 그래서 **한
-연결이 지는 구독 수를 값 하나로** 두었습니다(`NH_STREAM_PER_CONNECTION`).
-서버에 붙어 확인한 뒤 그 값만 바꾸면 되고, 하나씩만 된다면 1 로 두면 구독마다
-연결이 하나씩 열립니다. 구조를 다시 짤 일이 없습니다.
+단위인지, 한 연결에 여럿을 걸 수 있는지는 적혀 있지 않습니다. 그래서 **한
+연결이 지는 구독 수를 값 하나로** 둡니다(`NH_STREAM_PER_CONNECTION`, 기본은
+전체 상한과 같은 20). 1 로 두면 구독마다 연결이 하나씩 열립니다.
 """
 from __future__ import annotations
 
@@ -56,6 +66,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 from urllib.parse import quote as urlquote
@@ -87,40 +98,45 @@ INIT_CODE = "INIT"
 INIT_SUCCESS = "INIT_SUCCESS"
 PINGPONG_CODE = "pingpong"
 SUBSCRIBED_CODE = "RT_INIT"
+#: 서버가 구독을 받아 주지 않았다는 답. 다른 코드의 구독 답도 같은 자리로 갑니다.
+FAILED_CODE = "RT_FAIL"
+
+# 거절 글 안에 실린 종목(`... [action_sym::BRNZ26][미신청거래소::BRN]`).
+_SYM_IN_TEXT = re.compile(r"\[action_sym::([^\]]*)\]")
 
 # 연결과 초기화를 기다리는 시간.
 OPEN_TIMEOUT = 10.0
 INIT_TIMEOUT = 10.0
 
-# 닫을 때 상대의 닫기 응답을 기다리는 시간. 우리가 끊는 자리(환경 전환·종료)에서
+# 닫을 때 상대의 닫기 응답을 기다리는 시간. 이 앱이 끊는 자리(환경 전환·종료)에서
 # 상대가 답을 안 주면 그만큼 멈추므로 짧게 둡니다 — 답이 없어도 소켓은 닫힙니다.
 CLOSE_TIMEOUT = 1.0
 
 # 웹소켓 규격의 핑 프레임을 **보내지 않습니다**(라이브러리 기본은 20초마다).
-# 국내 실시간 연결이 그 주기로 끊겨 껐고, 서버가 핑에 닫는지는 닫힘 기록으로
-# 확인 중입니다. 세션은 서버의 `pingpong` 메시지를 되돌리는 것으로 유지합니다.
+# 켜 두면 국내 실시간 연결이 그 주기로 끊깁니다. 세션은 서버의 `pingpong`
+# 메시지를 되돌리는 것으로 유지합니다.
 PING_INTERVAL = None
 
 # 서버가 보내는 것이 이만큼 없으면 죽은 연결로 보고 다시 붙습니다. 서버가 세션
 # 유지 신호를 주기적으로 보내므로, 살아 있는 연결은 시세가 없어도 이보다 자주
-# 무언가를 보냅니다. 그 주기는 확인하지 못해 넉넉히 둡니다.
+# 무언가를 보냅니다. 그 주기는 명세에 없어 넉넉히 둡니다.
 IDLE_TIMEOUT = 90.0
 
 # 다시 붙기까지 기다리는 시간(초). 최근에 짧게 끊긴 횟수가 n 이면 n 번째 값을
 # 기다립니다. 처음 붙을 때는 기다리지 않습니다. 앞쪽은 잠깐의 끊김에서 빨리
-# 돌아오도록 작게 두었습니다. 끝 값 60초가 상한으로, 서버가 연결을 계속
+# 돌아오도록 작게 둡니다. 끝 값 60초가 상한으로, 서버가 연결을 계속
 # 닫아도 다시 붙는 것(그때마다 접속키 발급 한 건)이 1분에 한 번을 넘지 않습니다.
 BACKOFF = (0.0, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
 
 # 이만큼은 붙어 있어야 「제대로 붙었다」로 봅니다. 그보다 짧게 붙었다 끊기면
 # 서버가 정상 절차(code=1000)로 닫았더라도 「짧게 끊김」으로 셉니다. 서버가
-# 몇 초~수십 초마다 연결을 닫는 경우(국내 실시간에서 20초 주기 끊김을 겪은 적이
-# 있습니다)가 이 값 아래에 들어오도록 넉넉히 1분으로 두었습니다.
+# 몇 초~수십 초마다 연결을 닫는 경우(국내 실시간은 20초 주기로 끊길 수
+# 있습니다)가 이 값 아래에 들어오도록 넉넉히 1분으로 둡니다.
 SETTLED_AFTER = 60.0
 
 # 「최근」의 범위(초). 이보다 오래된 짧은 끊김은 세지 않습니다. 상한(60초)
 # 대기를 여러 번 거쳐도 기록이 남을 만큼 길게, 그러면서 한 번 안정된 뒤 다음
-# 끊김에는 바로 다시 붙을 만큼 짧게 10분으로 두었습니다.
+# 끊김에는 바로 다시 붙을 만큼 짧게 10분으로 둡니다.
 UNSETTLED_WINDOW = 600.0
 
 CONNECTING = "connecting"
@@ -129,6 +145,9 @@ RECONNECTING = "reconnecting"
 STOPPED = "stopped"
 
 OnData = Callable[[StreamKey, dict[str, Any]], None]
+
+#: 실패한 구독 하나의 (서버 코드, 서버가 보낸 글).
+Failure = tuple[str, str]
 
 
 class OnState(Protocol):
@@ -208,7 +227,7 @@ class Pacer:
 
 
 def per_connection_limit(env: Mapping[str, str] | None = None) -> int:
-    """한 연결이 지는 구독 수. 확인되기 전까지는 전체 상한과 같게 둡니다."""
+    """한 연결이 지는 구독 수. 환경 변수가 없으면 전체 상한과 같습니다."""
     env = os.environ if env is None else env
     raw = str(env.get(PER_CONNECTION_FLAG, "")).strip()
     if not raw:
@@ -265,6 +284,7 @@ class Connection:
         settled_after: float = SETTLED_AFTER,
         clock: Callable[[], float] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        on_failure: Callable[[], None] | None = None,
     ) -> None:
         self.market = market
         self.environment = environment
@@ -283,6 +303,9 @@ class Connection:
         self._closed_by: tuple[Any, Any] = (None, None)
 
         self._feeds: dict[StreamKey, Feed] = {}
+        # 서버가 거절한 구독과 그 까닭. 이 연결이 붙어 있는 동안만 들고 있습니다.
+        self._failed: dict[StreamKey, Failure] = {}
+        self._on_failure = on_failure
         self._socket: Any = None
         self._pending: set[asyncio.Task[None]] = set()
         self._task: asyncio.Task[None] | None = None
@@ -300,6 +323,30 @@ class Connection:
     def __len__(self) -> int:
         return len(self._feeds)
 
+    @property
+    def failures(self) -> dict[StreamKey, Failure]:
+        """서버가 거절한 구독과 (코드, 글). 구독 자리 셈(`len`)에는 그대로 들어 있습니다."""
+        return dict(self._failed)
+
+    def _forget_failures(self, *keys: StreamKey) -> None:
+        """주어진 구독의 실패 기록만 지웁니다. 키가 없으면 아무것도 안 합니다.
+
+        바뀐 것이 있으면 알립니다. 전부 지우는 것은 `_forget_all_failures` 입니다.
+        """
+        removed = [key for key in keys if self._failed.pop(key, None) is not None]
+        if removed:
+            self._tell_failure()
+
+    def _forget_all_failures(self) -> None:
+        """이 연결의 실패 기록을 전부 지웁니다. 있었으면 알립니다."""
+        if self._failed:
+            self._failed.clear()
+            self._tell_failure()
+
+    def _tell_failure(self) -> None:
+        if self._on_failure is not None:
+            self._on_failure()
+
     def start(self) -> None:
         """연결을 유지하는 일을 시작합니다."""
         if self._task is None:
@@ -310,7 +357,7 @@ class Connection:
         """연결을 끊고 정리합니다.
 
         끊기 전에 구독 해제를 보냅니다. 연결이 닫히면 세션도 끝나지만, 나갈
-        때 치우고 나가는 편이 서버 쪽에 우리 자리를 남기지 않습니다.
+        때 치우고 나가는 편이 서버 쪽에 이 연결의 등록을 남기지 않습니다.
         """
         self._stopping = True
         task, self._task = self._task, None
@@ -319,7 +366,7 @@ class Connection:
             for feed in list(self._registrations().values()):
                 await _say(socket, subscribe_message(feed, action=ACTION_UNSUBSCRIBE))
             await _close_quietly(socket)
-            # 우리가 닫아도 서버의 닫기 응답과 함께 정상 닫힘(code=1000)으로
+            # 이 앱이 닫아도 서버의 닫기 응답과 함께 정상 닫힘(code=1000)으로
             # 끝나므로, 받는 쪽에서는 서버가 닫은 것과 구별되지 않습니다.
             # 그래서 닫은 사실은 여기서 남깁니다.
             logger.warning("%s 실시간 연결을 닫았습니다.", self.market)
@@ -329,6 +376,7 @@ class Connection:
                 await task
             except asyncio.CancelledError:
                 pass
+        self._forget_all_failures()
         self._set_state(STOPPED, "")
 
     @property
@@ -341,14 +389,13 @@ class Connection:
 
         같은 종목의 주간·야간(`KA`/`KC`, `KB`/`KD`)은 서버에서 한 등록으로 묶입니다
         (`feeds.paired`). 한쪽을 해제하면 남은 쪽도 값이 끊기고, 그 뒤에는 남은
-        쪽만 다시 구독해도 값이 오지 않습니다. 해제한 쪽을 다시 등록해야 돌아옵니다
-        (2026-10-12 모의 서버에서 같은 종목 체결로 네 번 반복해 확인).
+        쪽만 다시 구독해도 값이 오지 않습니다. 해제한 쪽을 다시 등록해야 돌아옵니다.
 
         그래서 한쪽만 필요해도 둘 다 등록하고, 둘 다 필요 없어질 때만 둘 다
         해제합니다. 필요 없는 쪽의 값은 받는 자리에서 버립니다(`_receive`).
         짝을 함께 등록한 것이 서버의 구독 상한(20)에 한 건으로 세어지는지 두
-        건으로 세어지는지는 명세에 없고 확인하지 못했습니다. 상한에 걸리면 서버가
-        보내는 코드를 기록에 남깁니다(`_control`).
+        건으로 세어지는지는 명세에 없습니다. 자리 셈(`len`)은 걸어 달라는 구독만
+        세고, 상한에 걸리면 서버가 보내는 코드를 기록에 남깁니다(`_control`).
         """
         made = dict(self._feeds)
         for feed in self._feeds.values():
@@ -378,6 +425,7 @@ class Connection:
             return
         before = self._registrations()
         del self._feeds[key]
+        self._forget_failures(key)
         after = self._registrations()
         for made_key, made in before.items():
             if made_key not in after:
@@ -398,6 +446,8 @@ class Connection:
         feed = self._feeds.get(key)
         if feed is None:
             return
+        # 다시 걸어 보는 것이라 앞의 실패는 지웁니다. 또 거절되면 다시 기록됩니다.
+        self._forget_failures(key)
         await self._send(subscribe_message(feed, action=ACTION_UNSUBSCRIBE))
         await self._send(subscribe_message(feed, action=ACTION_SUBSCRIBE))
         partner = paired(feed)
@@ -451,7 +501,7 @@ class Connection:
                 lasted = self._clock() - started
                 wait = self._pacer.after(now=self._clock(), lasted=lasted, failed=True)
                 if not self._stopping:
-                    # 우리가 닫는 중이면 받는 쪽이 끊김으로 빠지는 것이
+                    # 이 앱이 닫는 중이면 받는 쪽이 끊김으로 빠지는 것이
                     # 정상입니다. 그때도 「다시 붙습니다」를 남기면 종료 기록에
                     # 일어나지 않을 일이 적힙니다.
                     #
@@ -492,8 +542,10 @@ class Connection:
             # 초기화를 기다리는 사이에 걸린 구독이 여기서 한 번, 아래에서 또
             # 한 번 나가 같은 구독이 두 번 걸립니다.
             self._socket = socket
+            # 새 연결에서는 전부 새로 걸어 봅니다. 앞 연결의 실패는 지웁니다.
+            self._forget_all_failures()
             self._set_state(LIVE, "")
-            # 서버는 우리가 무엇을 보고 있었는지 기억하지 않습니다. 짝도 함께 겁니다.
+            # 서버는 끊기기 전의 구독을 기억하지 않습니다. 짝도 함께 겁니다.
             for feed in list(self._registrations().values()):
                 await self._send(subscribe_message(feed, action=ACTION_SUBSCRIBE))
             await self._listen(socket)
@@ -502,14 +554,14 @@ class Connection:
         """서버가 보내는 것을 받습니다. 닫히거나 한동안 조용하면 끝납니다.
 
         **왜 닫혔는지를 기록에 남깁니다** — 닫힘 코드와 이유가 없으면 서버가
-        끊은 것인지 우리가 놓친 것인지 가릴 수 없습니다.
+        끊은 것인지 이쪽에서 놓친 것인지 가릴 수 없습니다.
         """
         messages = aiter(socket)
         while True:
             try:
                 raw = await asyncio.wait_for(anext(messages), self._idle_timeout)
             except StopAsyncIteration:
-                # 정상 절차로 닫혔습니다. 우리가 닫은 것이면 `stop` 이, 서버가
+                # 정상 절차로 닫혔습니다. 이 앱이 닫은 것이면 `stop` 이, 서버가
                 # 닫은 것이면 붙어 있던 시간·다음 대기와 함께 `_keep` 이 남깁니다.
                 self._closed_by = (
                     getattr(socket, "close_code", None),
@@ -614,6 +666,51 @@ class Connection:
             data.get("action_sym"),
             message.get("msg"),
         )
+        if str(data.get("action") or "") != ACTION_UNSUBSCRIBE:
+            # 구독이 받아들여졌습니다. 앞서 거절된 적이 있으면 지웁니다.
+            self._forget_failures(*self._answered(message))
+
+    def _answered(self, message: dict[str, Any]) -> list[StreamKey]:
+        """구독 답이 가리키는 구독. 이 연결이 지고 있는 것만 돌려줍니다.
+
+        `data` 에 실시간 이름과 종목이 실려 오면 그것으로 찾습니다. 종목만 알면
+        (`data` 에 없고 글에만 `[action_sym::종목]` 이 있으면) 그 종목의 구독을
+        전부 가리킵니다. 둘 다 없으면 빈 목록입니다.
+        """
+        data = message.get("data")
+        data = data if isinstance(data, dict) else {}
+        code = str(data.get("action_code") or "").strip()
+        sym = str(data.get("action_sym") or "").strip()
+        if not sym:
+            said = str(message.get("message") or message.get("msg") or "")
+            found = _SYM_IN_TEXT.search(said)
+            sym = found.group(1).strip() if found else ""
+        api_id = api_id_of(self.market, code) if code else None
+        if api_id is not None:
+            key = (self.market, api_id, sym)
+            return [key] if key in self._feeds else []
+        if not sym:
+            return []
+        return [key for key in self._feeds if key[2] == sym]
+
+    def _refused(self, code: str, said: str, message: dict[str, Any]) -> None:
+        """구독이 거절되었다는 답이면 그 구독을 실패로 들고 화면에 알립니다.
+
+        해제(`D`)에 대한 답은 여기 들지 않습니다 — 그만 보는 구독입니다.
+        """
+        data = message.get("data")
+        if isinstance(data, dict) and str(data.get("action") or "") == ACTION_UNSUBSCRIBE:
+            return
+        keys = self._answered(message)
+        if not keys:
+            return
+        changed = False
+        for key in keys:
+            if self._failed.get(key) != (code, said):
+                self._failed[key] = (code, said)
+                changed = True
+        if changed:
+            self._tell_failure()
 
     def _control(self, code: str, message: dict[str, Any]) -> None:
         """자료가 아닌 제어 메시지. 오류 코드면 사전으로 읽어 기록에 남깁니다.
@@ -622,11 +719,14 @@ class Connection:
         건**이라, 창을 여럿 띄우면 합쳐서 걸립니다. 그때 서버가
         `EST06` 을 보내는데, 그 글자를 찾는 대신 **코드로** 가립니다.
 
-        지금은 알리고 기록에 남기는 데까지 합니다. 구독을 스스로 물리거나
-        차례를 미루는 일은 아직 하지 않습니다 — 실물로 본 적이 없어서입니다.
+        상한에 걸리면 기록에 남기고, 답에 어느 구독인지 실려 있으면 그 구독을
+        실패로 듭니다(`_refused`). 구독을 스스로 물리거나 차례를 미루지는 않습니다.
         """
         said = str(message.get("message") or message.get("msg") or "").strip()
         trouble = error_codes.describe(code, said)
+        # 어느 구독의 답인지 알 수 있으면 그 구독을 실패로 듭니다(첫머리 「서버가
+        # 거절한 구독」). 알 수 없으면 기록만 남깁니다.
+        self._refused(code, said, message)
 
         if code == error_codes.SUBSCRIPTION_LIMIT:
             logger.warning(

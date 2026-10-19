@@ -117,8 +117,8 @@ export function useQuote(
       code: selected.contract?.code ?? selected.product.code,
       name: selected.name,
       /* 헤더 제목입니다. **스프레드만 마스터 원문**을 세웁니다 — 두 다리를 한
-         이름에 담는 표기는 거래소가 짓는 것이고, 우리가 다시 지으면 주문 내역·
-         체결 통보에 적힌 이름과 갈립니다. 우리 말로 적은 두 만기는 제목 아래
+         이름에 담는 표기는 거래소가 짓는 것이고, 화면이 다시 지으면 주문 내역·
+         체결 통보에 적힌 이름과 갈립니다. 한국어로 적은 두 만기는 제목 아래
          한 줄로 따로 섭니다. */
       productName:
         selected.contract?.kind === 'spread' && selected.contract.masterName

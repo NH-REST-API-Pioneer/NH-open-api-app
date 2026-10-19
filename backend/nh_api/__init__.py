@@ -4,9 +4,9 @@
     client      거래 API 를 부르는 공통 자리
     errors      호출 실패를 나누는 예외
     rate_limit  호출 제한 간격
-    session     실서버로 부를지 반입해 둔 응답으로 답할지
-    fixtures    반입해 둔 응답 읽기
-    replay      반입해 둔 응답으로 답하는 전송 계층
+    session     실서버로 부를지 저장해 둔 응답으로 답할지
+    fixtures    저장해 둔 응답 읽기
+    replay      저장해 둔 응답으로 답하는 전송 계층
 
 카테고리별 API 함수(`backend/domestic_futureoption/` 등)는 이 계층 위에
 올립니다. `auth`, `master` 와 같은 공통 자리라 카테고리 파일 규칙은

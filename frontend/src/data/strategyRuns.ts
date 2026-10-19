@@ -1,7 +1,7 @@
 /* 검증·진행 화면이 다루는 실행 한 줄의 모양.
  *
  * **이름은 서버가 내는 그대로입니다.** 옮겨 적으면 한 값이 두 이름을 갖고,
- * 어느 쪽이 맞는지 답할 자리가 없어집니다. 우리 말로 바꾸는 것은 화면이
+ * 어느 쪽이 맞는지 답할 자리가 없어집니다. 한국어로 바꾸는 것은 화면이
  * 그릴 때뿐입니다.
  *
  * 값의 뜻과 단위는 여기서 정해 둡니다 — 종목 이름·자릿수·승수는 **줄에 없고**
@@ -83,14 +83,14 @@ export function accountModeOf(active: Environment | null): AccountMode | null {
 }
 
 /** 서버가 준 「지금 세울 수 있는 계좌 갈래」를 읽습니다. **가장 좁게** 읽습니다 —
- *  배열이 아니면 빈 목록이고, 모르는 값은 버립니다. 옛 서버가 이 칸을 안 주면
+ *  배열이 아니면 빈 목록이고, 모르는 값은 버립니다. 서버가 이 칸을 안 주면
  *  계좌 실행을 세우는 길이 닫힙니다. */
 export function accountModesOf(raw: unknown): AccountMode[] {
   if (!Array.isArray(raw)) return []
   return raw.filter((one): one is AccountMode => typeof one === 'string' && isAccountMode(one))
 }
 
-/** 실행이 놓인 자리. **여덟입니다**(규격 §7-1) — 화면 낱말은 서버가 `stateLabel`
+/** 실행이 놓인 자리. **여덟입니다** — 화면 낱말은 서버가 `stateLabel`
  *  로 함께 주므로 화면이 표를 또 두지 않습니다. */
 export type RunState =
   | 'armed'
@@ -125,7 +125,7 @@ export interface VerifyRun {
   sessionLabel: string
   market: string
   /** 그 실행의 손익 통화(`KRW`·`USD`·`HKD`…). **서버가 품목에서 정해 줄에 싣습니다** —
-   *  해외는 품목마다 통화가 다릅니다. 칸이 없는 옛 서버는 시장으로 읽습니다
+   *  해외는 품목마다 통화가 다릅니다. 칸이 없으면 시장으로 읽습니다
    *  (`runCurrencyOf`). */
   currency?: string
   /** 어느 장부로 도는가. `paper` 는 종이 장부라 계좌에 아무것도 안 보내고,
@@ -161,7 +161,7 @@ export interface VerifyRun {
    *  적습니다 — 낱말은 `MARGIN_BASIS` 가 옮깁니다. */
   perContractBasis: string | null
   /** 증거금 예산을 정했는데 계약당 증거금을 몰라 **서버가 예산 검사를 건너뛰는지**.
-   *  해외 선물·스프레드처럼 계약당 칸이 없는 품목입니다. 옛 서버는 안 보냅니다. */
+   *  해외 선물·스프레드처럼 계약당 칸이 없는 품목입니다. 칸이 없으면 거짓입니다. */
   budgetUnchecked?: boolean
   /** 가상 보유. **체결에서 셉니다.** 0 이면 들고 있는 것이 없습니다. */
   position: number | null
@@ -190,7 +190,7 @@ export interface VerifyRun {
   /** 종이 체결 모형의 이름. 화면이 「체결 가정」에 그대로 적습니다. */
   model: string
   /** 이 실행이 조건을 평가하는 방식(「마감」·「틱」). 실행을 시작할 때의 설정입니다.
-   *  옛 서버는 안 보냅니다. */
+   *  칸이 없으면 틱 판정이 아닌 것으로 읽습니다(`isTickRun`). */
   evalMode?: string | null
   /** 아래 넷은 **목록 줄에만** 있습니다(한 벌에는 없습니다). */
   tickSize?: number | null
@@ -201,10 +201,9 @@ export interface VerifyRun {
   /** 아직 답을 못 받은 주문 수. **계좌로 나간 것만** 셉니다 — 종이 실행에는
    *  없습니다. 0 보다 크면 보낸 것과 받은 것이 아직 안 맞는 중입니다. */
   pending?: number | null
-  /** 실행을 세운 접속 환경. 세운 뒤로 안 바뀝니다. 종이 실행은 `null` 이고,
-   *  옛 서버는 이 칸을 안 줍니다. */
+  /** 실행을 세운 접속 환경. 세운 뒤로 안 바뀝니다. 종이 실행은 `null` 입니다. */
   environment?: Environment | null
-  /** 규칙이 판정에서 참이 된 횟수(안 낸 신호 포함). 옛 서버는 안 줍니다. */
+  /** 규칙이 판정에서 참이 된 횟수(안 낸 신호 포함). 비어 올 수 있습니다. */
   signalCount?: number | null
   /** 이 실행의 체결 수. */
   fillCount?: number | null
@@ -215,12 +214,45 @@ export interface VerifyRun {
   /** 평가 손익. 보유가 있는데 마지막가를 모르면 `null`. */
   openPl?: number | null
   /** 오늘(한국 날짜) **안 낸 신호** 수 — 규칙이 참이었는데 주문을 내지 않은 봉의
-   *  수입니다. 까닭은 막힘 이벤트(`kind` 가 `blocked`)에 있습니다. 옛 서버는 안 줍니다. */
+   *  수입니다. 까닭은 막힘 이벤트(`kind` 가 `blocked`)에 있습니다. 비어 올 수 있습니다. */
   unsentToday?: number | null
   /** **값을 못 받는 중.** 앞 박자에 받은 값이 그대로 선 것이라, 줄을 흐리게
    *  두어 「지금 값이 아니다」를 말합니다. 칸이 사라지면 원래대로 돌아옵니다 —
    *  서버가 붙였다 뗐다 하는 표시라 화면이 따로 기억하지 않습니다. */
   stale?: boolean
+  /** 마지막으로 받은 매수1·매도1 호가와 잔량. 시세가 끊겼거나 아직 못 받았으면
+   *  `null` 이고, 칸이 없을 수도 있습니다. */
+  bid1?: number | null
+  ask1?: number | null
+  bid1Qty?: number | null
+  ask1Qty?: number | null
+  /** 그 호가를 받은 시각(ms). 호가가 없으면 `null` 입니다. */
+  quoteAt?: number | null
+  /** 이 실행의 증거금 예산. 예산을 정하지 않았으면 `null` 이고, 화면은 그때 실행
+   *  자금(`cash`)을 대신 적습니다. */
+  marginBudget?: number | null
+  /** 묶인 증거금 — (보유 + 열린 진입 잔량) × 계약당 증거금. 계약당 증거금을 모르면
+   *  `null` 이고 까닭은 `perContractBasis` 가 말합니다. */
+  marginUsed?: number | null
+  /** 예산에서 묶인 증거금을 뺀 값. 둘 중 하나라도 모르면 `null` 입니다. */
+  marginLeft?: number | null
+  /** 지금 가격으로 신호가 나면 나갈 주문. `buy`·`sell` 은 그 방향의 진입 주문이고,
+   *  `exit` 는 보유를 청산 규칙으로 닫는 주문입니다(보유가 없으면 `null`). 가격을
+   *  셈하지 못한 칸은 `null` 입니다. 손절·익절·사용자 청산은 시장가 전량이라 `exit`
+   *  와 다릅니다. */
+  expectedOrder?: {
+    buy?: ExpectedOrder | null
+    sell?: ExpectedOrder | null
+    exit?: (ExpectedOrder & { side: 'buy' | 'sell' }) | null
+  } | null
+}
+
+/** 신호가 나면 나갈 주문 하나. 시장가·STOP-M 은 주문가격이 `null` 이고, STOP 이
+ *  아니면 스탑가격이 `null` 입니다. */
+export interface ExpectedOrder {
+  orderType: string
+  price: number | null
+  stopPrice: number | null
 }
 
 /** 종이 체결 한 줄. **값도 시각도 절대값입니다** — 「몇 봉 전」으로 두면 봉
@@ -252,7 +284,7 @@ export interface VerifyFill {
    *  아닙니다. 옛 기록에는 칸이 없습니다. */
   fee?: number
   /** 그 주문을 낸 순간의 당시 지표. **셋이 다른 말입니다** — 칸이 없으면 옛 기록,
-   *  `null` 이면 우리가 내지 않은 주문, 값이 있으면 그 봉과 그 버전 규칙이 쓰는
+   *  `null` 이면 전략 엔진이 내지 않은 주문, 값이 있으면 그 봉과 그 버전 규칙이 쓰는
    *  값들입니다(준비 전이면 값이 `null`). */
   snapshot?: FillSnapshot | null
   /** 가상 장부의 체결임. 계좌 체결과 한 표에 섞이지 않게 줄이 들고 다닙니다. */
@@ -269,7 +301,7 @@ export interface FillSnapshot extends TickMark {
   values: Record<string, number | null>
 }
 
-/** 틱 판정에서 난 줄에 서버가 붙이는 표지. 봉 마감 판정이거나 옛 서버면 칸이
+/** 틱 판정에서 난 줄에 서버가 붙이는 표지. 봉 마감 판정이면 칸이
  *  없습니다.
  *  - `partialBar`: 아직 안 끝난 봉으로 판정했는지
  *  - `judgedAt`: 판정한 순간(ms)
@@ -308,7 +340,7 @@ export function eventKey(one: VerifyEvent): string {
  *  - `margin` — 거래소가 정한 계약당 개시증거금. 확정값입니다.
  *  - `premium-now` — 옵션 매수라 프리미엄 × 승수로 **지금 값에서 잰 것**입니다.
  *    틱마다 바뀌므로 확정값처럼 적으면 안 됩니다.
- *  - `sell-unknown` — 옵션 매도는 거래소가 셈하는 값이라 우리가 못 냅니다.
+ *  - `sell-unknown` — 옵션 매도는 거래소가 셈하는 값이라 이 앱이 셈하지 못합니다.
  *  - `mixed` — 매수·매도가 섞여 하나의 계약당 값을 낼 수 없습니다.
  *
  *  **모르는 코드는 빈 말입니다.** 서버가 새 근거를 내기 시작했을 때 화면이
@@ -421,11 +453,14 @@ const REASON_WORD: Record<string, string> = {
   flatten: '사용자 청산',
   /* 세션 끝 몇 분 전에 보유를 닫은 청산입니다. */
   'session-end': '세션 끝 정리',
+  /* 보유 중 반대 방향 진입 규칙이 참이 되어 낸 청산입니다. 용도 칸이 「청산 · 반대
+     신호」로 서므로 「청산」을 다시 붙이지 않습니다(추적과 같은 짝). */
+  opposite: '반대 신호',
 }
 
 /** 그 코드가 가리키는 말. **모르는 코드는 빈 글자입니다** — 서버와 화면이
  *  주고받는 열쇠는 화면에 세울 말이 아닙니다. 「청산 · exit」처럼 서면 읽는
- *  사람이 그 낱말의 뜻을 우리 코드에서 찾아야 합니다. 까닭이 안 서면 갈래
+ *  사람이 그 낱말의 뜻을 코드에서 찾아야 합니다. 까닭이 안 서면 갈래
  *  낱말(「청산」)만 남고, 그것은 이미 참말입니다. */
 export function reasonWord(code: string): string {
   return REASON_WORD[(code ?? '').trim()] ?? ''
@@ -474,9 +509,9 @@ export interface VerifyEvent extends TickMark {
   kind: string
   text: string
   /** 사건의 코드. 막힘 이벤트는 까닭(`daily-loss`·`margin-unknown` …), 상태 이벤트는
-   *  그 일(`account-loss`·`reconcile-resume`)입니다. 옛 서버·옛 기록에는 없습니다. */
+   *  그 일(`account-loss`·`reconcile-resume`)입니다. 옛 기록에는 없습니다. */
   reason?: string | null
-  /** 막힘 이벤트의 까닭 글. 옛 서버·옛 기록에는 없습니다. */
+  /** 막힘 이벤트의 까닭 글. 옛 기록에는 없습니다. */
   why?: string | null
 }
 
@@ -528,7 +563,7 @@ export interface VerifySnapshot {
   /** 지금 열려 있는 가상 주문. **덮어쓰는 값**입니다. */
   openOrders: VerifyOrder[]
   /** 마지막으로 판정한 봉의 조건 표. **서버가 판정에 쓴 값 그대로**이고 화면은
-   *  다시 셈하지 않습니다. 첫 판정 전·재시작 뒤·옛 서버는 `null` 이거나 없습니다.
+   *  다시 셈하지 않습니다. 첫 판정 전·재시작 뒤에는 `null` 이거나 없습니다.
    *  허브 방송에는 실리지 않아 실행 한 벌을 받을 때만 옵니다. */
   conditions?: RunConditions | null
 }
@@ -541,7 +576,7 @@ export interface ConditionLine {
   op: string
   right: string
   rightKind: string
-  /** 왼쪽 값의 풀린 매개변수. 매개변수가 없는 값이면 `null` 이고, 옛 서버는 칸이 없습니다. */
+  /** 왼쪽 값의 풀린 매개변수. 매개변수가 없는 값이면 `null` 이고, 칸이 없을 수도 있습니다. */
   leftParams?: Record<string, number> | null
   /** 오른쪽이 값일 때 그 값의 풀린 매개변수. */
   rightParams?: Record<string, number> | null
@@ -601,9 +636,9 @@ export interface RunConditions {
 /** 「안 낸 신호」 글의 머리 — 지금 서버가 막힘 이벤트에 적는 꼴입니다. */
 export const UNSENT_HEAD = '조건이 참이었지만 주문을 내지 않았습니다 — '
 
-/** 옛 기록·옛 서버의 머리. 이 머리로 적힌 줄은 `legacyUnsentWhy` 한 자리에서만 읽습니다. */
+/** 옛 기록의 머리. 이 머리로 적힌 줄은 `legacyUnsentWhy` 한 자리에서만 읽습니다. */
 const LEGACY_UNSENT_HEAD = '미발사 — '
-/** 옛 기록에서 하루 손실 한도로 안 낸 까닭(옛 서버 문장). */
+/** 옛 기록에서 하루 손실 한도로 안 낸 까닭. */
 const LEGACY_DAILY_LOSS = '하루 손실 한도에 닿았습니다'
 
 /** 옛 머리로 적힌 막힘 줄의 까닭. 옛 줄이 아니면 `null` 입니다. **옛 글자 규칙은 이
@@ -635,8 +670,8 @@ export function unsentText(event: Pick<VerifyEvent, 'kind' | 'text'>): string {
   return legacy === null ? event.text : `${UNSENT_HEAD}${legacy}`
 }
 
-/** 하루 손실 한도로 안 낸 것인지. 까닭 코드가 있으면 그것(`daily-loss`), 없으면(옛 서버·
- *  옛 기록) 옛 글자 규칙입니다. */
+/** 하루 손실 한도로 안 낸 것인지. 까닭 코드가 있으면 그것(`daily-loss`), 없으면(옛
+ *  기록) 옛 글자 규칙입니다. */
 export function isDailyLossBlock(event: VerifyEvent): boolean {
   if (!isUnsent(event)) return false
   if (event.reason !== undefined && event.reason !== null) return event.reason === 'daily-loss'
@@ -711,11 +746,12 @@ export const CONFIRM_TEXT: Record<string, { order: string; holding: string }> = 
 /** 평가 방식 「틱」. 서버가 실행 줄과 표지에 싣는 글자 그대로입니다. */
 export const TICK_EVAL = '틱'
 
-/** 규칙이 낸 주문의 까닭 — 진입 신호와 청산 규칙. 손절·익절·추적 청산·세션 끝
- *  정리·사용자 청산은 규칙 판정이 아니라 표지를 달지 않습니다. */
-const RULE_REASONS = ['signal', 'exit']
+/** 규칙이 낸 주문의 까닭 — 진입 신호, 청산 규칙, 반대 방향 진입 규칙으로 낸 청산.
+ *  손절·익절·추적 청산·세션 끝 정리·사용자 청산은 규칙 판정이 아니라 표지를 달지
+ *  않습니다. */
+const RULE_REASONS = ['signal', 'exit', 'opposite']
 
-/** 틱으로 평가하는 실행인지. 칸이 없는 옛 서버는 아닌 것으로 읽습니다. */
+/** 틱으로 평가하는 실행인지. 칸이 없으면 아닌 것으로 읽습니다. */
 export function isTickRun(run: Pick<VerifyRun, 'evalMode'> | null | undefined): boolean {
   return run?.evalMode === TICK_EVAL
 }

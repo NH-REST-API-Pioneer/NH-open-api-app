@@ -1,8 +1,8 @@
 /** 서버가 낸 계좌 줄을 화면이 그리는 줄로.
  *
- *  **서버 값과 우리가 채운 값을 가르는 자리입니다.** 자료층은 서버 모양 그대로
+ *  **서버 값과 화면이 채운 값을 가르는 자리입니다.** 자료층은 서버 모양 그대로
  *  담고, 여기서만 마스터를 얹습니다. 한 곳에 모아 두면 값이 이상할 때 「서버가
- *  그랬나 우리가 그랬나」를 한 자리에서 봅니다.
+ *  그랬나 화면이 그랬나」를 한 자리에서 봅니다.
  *
  *  **마스터에서 채우는 것은 시장마다 다릅니다.**
  *
@@ -96,21 +96,19 @@ function expiryOf(code: string, given: string | null | undefined) {
 /** 해외 손익률.
  *
  *  **응답에 없어 화면이 셈합니다.** 국내는 서버가 줍니다 — 해외만 이 길입니다.
- *  **화면이 값을 만드는 자리를 하나만 두기로 하고 남겨 둔 예외**이고, 백엔드도
- *  「화면이 평균가와 현재가로 셈한다」고 응답 설명에 적어 두었습니다
- *  (`overseas_account.py` 의 `positions()`).
+ *  **계좌 줄은 서버 값을 그대로 쓰고 화면이 값을 만들지 않는다는 규칙의 예외**이고,
+ *  서버가 값을 주지 않는 줄에만 셈합니다. 백엔드의 응답 설명에도 「화면이
+ *  평균가와 현재가로 셈한다」고 적혀 있습니다(`overseas_account.py` 의
+ *  `positions()`).
  *
  *  셈해도 되는 까닭은 **답이 하나로 정해지기 때문**입니다 — 평균가와 현재가가
- *  있으면 우리가 고를 여지가 없습니다. 환율처럼 우리가 고르는 값이 끼면 그건
+ *  있으면 화면이 고를 여지가 없습니다. 환율처럼 화면이 골라야 하는 값이 끼면 그건
  *  셈이 아니라 지어내는 것이라, 그 자리는 서버가 답할 때까지 비워 둡니다.
  *
  *  **평균가가 없거나 0 이면 셈하지 않습니다** — 나눌 수 없는 자리라 「—」입니다.
  *  값이 0 인 것과 「셈할 수 없다」는 다른 말입니다.
  *
- *  국내 서버 값과 셈법이 같은지는 **아직 못 견줬습니다** — 기록에 든 유일한
- *  줄이 평균가와 현재가가 같아 어느 셈법으로도 0 이 나옵니다. 평가손익이 0 이
- *  아닌 기록이 들어오는 날 **국내 종가로 셈한 값과 국내 서버 값**을 견줍니다
- *  (해외 현재가와 견주면 차이가 셈법 탓인지 기준 시점 탓인지 안 갈립니다).
+ *  **서버가 수익률을 주면 그 값을 그대로 씁니다**(국내).
  */
 function percentOf(row: ServerPosition): number | null {
   if (row.plPct !== null && row.plPct !== undefined) return row.plPct
@@ -168,7 +166,7 @@ export function toOrder(row: ServerOrder, overseas: boolean): AccountOrder {
     source: row.source ?? '',
     /** 서버가 준 대로 옮깁니다. 안 주는 동안에는 `undefined` 로 남습니다. */
     productKind: row.productKind,
-    /** **우리 프로그램으로 낸 주문만 고칠 수 있습니다.** 아니면 정정 단추 자리에
+    /** **이 프로그램으로 낸 주문만 고칠 수 있습니다.** 아니면 정정 단추 자리에
      *  이것이 섭니다 — 못 고치는 주문에 폼을 열어 주면 값을 다 채운 뒤에야 못
      *  낸다는 것을 알게 됩니다.
      *
@@ -222,7 +220,7 @@ function isFilled(row: ServerOrder): boolean {
 function progressOf(row: ServerOrder): OrderProgress {
   if (row.status === 'rejected') return 'rejected'
   if (row.status === 'auto-cancelled') return 'auto-cancelled'
-  /* 우리가 방금 낸 주문의 접수 답입니다. 조회·알림이 덮으면 그때 상태가
+  /* 이 화면이 방금 낸 주문의 접수 답입니다. 조회·알림이 덮으면 그때 상태가
      바뀝니다 — 그때까지는 체결 수량을 모르는 줄입니다. */
   if (row.status === 'accepted') return 'accepted'
   if (row.status === 'cancelled') return 'cancelled'
@@ -271,7 +269,7 @@ export function toTradeRow(row: ServerOrder): TradeRow {
       quantity: row.quantity ?? null,
       filled: row.filled ?? null,
       source: row.source ?? '',
-      /* **우리 프로그램으로 낸 주문만 참입니다.** 서버가 이 칸을 안 주면
+      /* **이 프로그램으로 낸 주문만 참입니다.** 서버가 이 칸을 안 주면
          거짓으로 둡니다 — 못 고치는 주문에 폼을 열어 주는 쪽이 더 나쁩니다. */
       editable: row.editable === true,
     },

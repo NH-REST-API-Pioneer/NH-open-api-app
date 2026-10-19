@@ -112,8 +112,8 @@ class ReadState:
         것은 받습니다** — 옮겨 둔 자리가 그때마다 달라, 안 받으면 지난번에
         남긴 파일을 알려 주게 됩니다.
         """
-        # **읽을 때마다 다시 봅니다.** 다른 앱의 파일을 치우고 우리 것을 쓰면
-        # 그다음 읽기는 우리 파일이고, 알림도 함께 놓여야 합니다.
+        # **읽을 때마다 다시 봅니다.** 다른 앱의 파일을 치우고 이 앱의 것을 쓰면
+        # 그다음 읽기는 이 앱의 파일이고, 알림도 함께 놓여야 합니다.
         self.other_app = ""
         if self.status == BROKEN and status == MISSING:
             return
@@ -130,7 +130,7 @@ class ReadState:
         return "치우지 못해 그 자리에 그대로 있습니다"
 
     def wrote(self) -> None:
-        """성공적으로 썼습니다 — 알림을 놓습니다."""
+        """파일을 다 쓴 뒤에 부릅니다 — 알림을 놓습니다."""
         self.status = OK
         self.moved_to = ""
         self.removed = False
@@ -147,8 +147,8 @@ def from_other_app(body: Any, mine: str, *, state: ReadState | None = None) -> b
     실행이나 잔고를 실제 서버 쪽이 이어받으면, 화면은 지금 무엇이 도는지
     잘못 말합니다.
 
-    **표지가 없는 파일은 우리 것으로 봅니다** — 앞 판이 담은 파일에는 이 칸이
-    없습니다.
+    **표지가 없는 파일은 이 앱의 것으로 봅니다** — 표지 칸이 생기기 전에 쓴
+    파일에는 이 칸이 없습니다.
     """
     if not isinstance(body, dict):
         return False

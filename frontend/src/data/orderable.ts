@@ -21,8 +21,8 @@ import { ORDER_TYPES, needsPriceFor, needsStopFor } from './strategyRules'
  *
  *  `quantity` 는 신규와 청산을 합한 수이고 `newQuantity`(신규)·`closeQuantity`(청산)
  *  가 따로 옵니다. 셋의 관계(합 = 신규 + 청산인지, 청산가능이 보유와 같은지)는
- *  포지션을 든 채 실서버에 물어 확인하기 전이라, 화면은 합을 그 이름으로 보이고
- *  둘은 상태에만 담아 둡니다. */
+ *  명세에 적혀 있지 않아, 화면은 합을 그 이름(「신규·청산 합」)으로 보이고
+ *  신규·청산 둘은 상태에만 담아 둡니다. */
 export interface OrderableReply {
   code: string
   market: 'domestic' | 'overseas'
@@ -50,11 +50,19 @@ export type OrderableState =
       status: 'ready'
       /** 신규·청산 합. 화면에 서는 값입니다. */
       quantity: number | null
-      /** 신규 가능·청산 가능. 관계가 확인되면 폼 모드에 맞는 쪽이 섭니다. */
+      /** 신규 가능·청산 가능. 화면에는 서지 않고 상태에만 담습니다. */
       newQuantity: number | null
       closeQuantity: number | null
     }
-  | { status: 'failed'; failure: OrderableFailure }
+  | {
+      status: 'failed'
+      failure: OrderableFailure
+      /** 서버가 보낸 거절 문장. 서버가 문장을 안 보냈으면 없습니다 — 화면이 사유를
+       *  지어내지 않고 일반 문구를 세웁니다. */
+      text?: string
+      /** NH선물 오류 코드(`x-nh-error-code` 머리). 코드 없는 거절이면 없습니다. */
+      code?: string
+    }
 
 export const ORDERABLE_IDLE: OrderableState = { status: 'idle' }
 
@@ -179,8 +187,19 @@ export async function askOrderable(ask: OrderableAsk): Promise<OrderableState> {
     if (!accepts(response, since)) return { status: 'idle' }
     if (!response.ok) {
       /* 거절(502)은 다시 눌러도 같은 답이 옵니다. 나머지는 다시 불러 볼
-         만합니다 — 어느 쪽인지로 「다시」 단추가 서고 안 서고가 갈립니다. */
-      return { status: 'failed', failure: response.status === 502 ? 'rejected' : 'retry' }
+         만합니다 — 어느 쪽인지로 「다시」 단추가 서고 안 서고가 갈립니다.
+         서버가 보낸 문장과 오류 코드를 함께 담습니다. 문장이 없으면 담지 않습니다 —
+         사유를 지어내면 사용자가 그것을 서버의 말로 읽습니다. */
+      const said = (await response.json().catch(() => null)) as { detail?: unknown } | null
+      if (!accepts(response, since)) return { status: 'idle' }
+      const text = typeof said?.detail === 'string' ? said.detail.trim() : ''
+      const code = (response.headers.get('x-nh-error-code') ?? '').trim()
+      return {
+        status: 'failed',
+        failure: response.status === 502 ? 'rejected' : 'retry',
+        ...(text ? { text } : {}),
+        ...(code ? { code } : {}),
+      }
     }
     const reply = (await response.json()) as OrderableReply
     /* **다른 종목의 답이면 버립니다.** 누르고 나서 종목을 바꾸면 앞 종목의

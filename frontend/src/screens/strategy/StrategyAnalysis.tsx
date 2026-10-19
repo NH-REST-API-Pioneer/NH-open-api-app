@@ -436,7 +436,7 @@ export function StrategyAnalysis() {
         />
         <Metric
           title="최대 낙폭"
-          /* 수준값이라 본문색이고 **빼기 부호도 없습니다**(규격 §9). 낙폭은
+          /* 수준값이라 본문색이고 **빼기 부호도 없습니다**. 낙폭은
              크기이지 방향이 아니라, 부호를 붙이면 파랑·하락과 짝지어 읽힙니다.
              목록 상세의 낙폭과 같은 표기입니다. */
           value={
@@ -1120,7 +1120,7 @@ function Compare({
   )
 }
 
-/* 손익비·Profit Factor·연속손실. 모두 거래 목록에서 냅니다(원본 §10). */
+/* 손익비·Profit Factor·연속손실. 모두 거래 목록에서 냅니다. */
 function Detail({ trades }: { trades: Trade[] }) {
   const gains = trades.filter((trade) => trade.net > 0).map((trade) => trade.net)
   const losses = trades.filter((trade) => trade.net < 0).map((trade) => -trade.net)
@@ -1241,7 +1241,7 @@ function PeriodSide({
   )
 }
 
-/* 비용·체결 품질 — 기준을 값과 함께 적습니다(원본 §10).
+/* 비용·체결 품질 — 기준을 값과 함께 적습니다.
  *
  * **거래가 있으면 늘 표를 세웁니다.** 체결률·거절률·증거금 사용률은 서버가
  * 적은 글자를 그대로 씁니다(`QualityReply`). 빈 값은 세 갈래로 가릅니다:

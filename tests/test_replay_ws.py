@@ -192,7 +192,7 @@ def test_반입해_둔_실제_기록으로도_나온다():
 
 
 def test_반입해_둔_실제_기록에서_종목이_갈린다():
-    """검토에서 나온 자리. 옵션을 구독했는데 달러선물 기록이 나오면 안 된다."""
+    """옵션을 구독했는데 달러선물 기록이 나오면 안 된다."""
     실제 = FixtureStore.load()
     달러선물 = find_stream(실제, "KA", environment="real", action_sym="A7569000")
     옵션 = find_stream(실제, "KA", environment="real", action_sym="B0169A34")

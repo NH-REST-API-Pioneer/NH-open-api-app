@@ -15,7 +15,7 @@
  *  휴장 얼굴을 지어내지 않습니다.
  *
  *  **세션이 바뀌어도 주문 폼을 비우지 않습니다.** 주간과 야간은 같은 계좌입니다
- *  (환경은 다른 계좌라 비웠습니다 — `data/environment.ts`).
+ *  (환경이 바뀌면 다른 계좌라 비웁니다 — `data/environment.ts`).
  */
 import { kstClock, kstDay, kstParts } from '../lib/kst'
 import { useEffect, useSyncExternalStore } from 'react'

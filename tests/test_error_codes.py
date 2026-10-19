@@ -13,12 +13,20 @@ from backend.nh_api import error_codes
 def test_정의서의_코드를_다_담았다():
     """시스템 59·주문 102 — 중복 코드 둘은 먼저 나온 문구로 한 번씩입니다.
 
-    시스템 쪽에는 정의서에 없는 `EGW053`(모의투자에서 부를 수 없는 API) 하나가
-    더 있습니다 — 실제 응답으로 받은 코드입니다.
+    시스템 쪽에는 정의서에 없는 `EGW053`(모의투자에서 부를 수 없는 API) 하나가,
+    주문 쪽에는 `5016`·`5033`(해외 주문가능수량 조회의 거절) 둘이 더 있습니다 —
+    실제 응답으로 받은 코드입니다.
     """
     assert len(error_codes.SYSTEM_MESSAGES) == 59 + 1
     assert "EGW053" in error_codes.SYSTEM_MESSAGES
-    assert len(error_codes.ORDER_MESSAGES) == 102
+    assert len(error_codes.ORDER_MESSAGES) == 102 + 2
+    assert {"5016", "5033"} <= set(error_codes.ORDER_MESSAGES)
+
+
+def test_조회_거절_코드_둘의_예비_문구와_갈래():
+    assert error_codes.message_of("5016") == "종목 및 품목 정보가 없습니다."
+    assert error_codes.message_of("5033") == "주문할 수 없는 계좌입니다. 계좌 상태를 확인해 주세요."
+    assert error_codes.kind_of("5016") == error_codes.kind_of("5033") == error_codes.OTHER
 
 
 def test_문구는_정의서_그대로다():
@@ -108,7 +116,7 @@ def test_오류코드가_없으면_실패가_아니다():
 
 
 def test_문구_칸_이름을_차례로_본다():
-    """어느 이름으로 오는지 실물로 확인하지 못한 자리입니다."""
+    """문구 칸의 이름이 정해져 있지 않아 후보 이름을 차례로 봅니다."""
     for 칸 in error_codes.ERROR_MESSAGE_FIELDS:
         답 = error_codes.failure_of({"errorCode": "EGW034", "": "", 칸: "그 자리 문구"})
         assert 답["message"] == "그 자리 문구", 칸

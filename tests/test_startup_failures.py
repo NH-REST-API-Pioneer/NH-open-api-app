@@ -129,7 +129,7 @@ def test_다시_걸어_볼지는_더_좁게_가린다():
     ):
         assert unreachable(도중에) and not cannot_connect(도중에)
 
-    # 우리 예외가 감싼 것도 원인 사슬로 봅니다.
+    # 이 앱의 예외가 감싼 것도 원인 사슬로 봅니다.
     감싼것 = TransportError("overseas_price", "끊김")
     감싼것.__cause__ = _닿지못함()
     assert cannot_connect(감싼것)

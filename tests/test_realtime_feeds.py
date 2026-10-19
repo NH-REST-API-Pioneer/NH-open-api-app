@@ -1,4 +1,4 @@
-"""실시간 메시지가 화면 모양으로 바뀌는지 — 반입해 둔 실제 메시지로 확인합니다."""
+"""실시간 메시지가 화면 모양으로 바뀌는지 — 저장해 둔 실제 메시지로 확인합니다."""
 from __future__ import annotations
 
 import pytest
@@ -16,7 +16,7 @@ def store():
 
 
 def bodies(store, api_id: str) -> list[dict]:
-    """반입해 둔 기록에서 자료 메시지 본문만 꺼냅니다."""
+    """저장해 둔 기록에서 자료 메시지 본문만 꺼냅니다."""
     made = []
     for fixture in store.streams:
         if fixture.api_id != api_id:
@@ -207,7 +207,7 @@ def test_국내_체결의_순간은_받은_날짜에_시각을_붙인_것이다(
     trade = feeds.trade_of(body, context="domestic-day", received=received)
 
     assert trade["timestamp"] == quotes.timestamp("20260909", body["exch_tm"])
-    # 봉 열쇠(분의 시작)는 체결 시각의 분과 같습니다 — 반입해 둔 체결 전부.
+    # 봉 열쇠(분의 시작)는 체결 시각의 분과 같습니다 — 저장해 둔 체결 전부.
     for b in bodies(store, "KA"):
         made = feeds.trade_of(b, context="domestic-day", received=received)
         if made is None:
@@ -329,7 +329,7 @@ def test_해외_호가는_다섯_단계까지만_읽는다(store):
 def test_해외_호가의_시각은_한국시각_칸에서_온다(store):
     """`exch_tm` 은 거래소 현지 시각이라 한국시각 `ko_exec_tm` 을 씁니다."""
     body = bodies(store, "FB")[0]
-    # 반입해 둔 기록은 CME 현지 19:17, 한국 09:17 입니다.
+    # 저장해 둔 기록은 CME 현지 19:17, 한국 09:17 입니다.
     assert body["exch_tm"] == "191730"
     assert body["ko_exec_tm"] == "091730"
 
@@ -404,7 +404,7 @@ def test_체결된_주문에_체결가와_시각이_담긴다(store):
 
 
 def test_체결_알림만_체결번호를_싣는다(store):
-    """반입해 둔 알림에서 **접수 줄은 `0000000000`**, 체결 줄만 실제 번호입니다.
+    """저장해 둔 알림에서 **접수 줄은 `0000000000`**, 체결 줄만 실제 번호입니다.
 
     0 을 번호로 담으면 접수 알림들이 서로 같은 번호를 갖게 되어, 체결을 가리려고
     둔 칸이 오히려 줄을 뭉칩니다.
@@ -429,7 +429,7 @@ def test_가격조건은_국내와_해외의_뜻이_다르다():
 
 
 def 알림(**덮어쓰기):
-    """우리 매체로 낸, 잔량 남은, 접수 상태의 주문 알림 하나."""
+    """이 앱의 매체로 낸, 잔량 남은, 접수 상태의 주문 알림 하나."""
     몸 = {"med_div": "R", "ord_sts": "1", "ord_qty": "3", "rem_ord_qty": "3"}
     몸.update(덮어쓰기)
     return feeds.order_event(몸, context="domestic-day")
@@ -465,8 +465,8 @@ def test_알림도_잔량을_모르면_못_고친다():
 
 #: 같은 주문을 두 길로 받았을 때. (매체, 상태, 잔량, 고칠 수 있나)
 #:
-#: **앞의 둘이 화면에서 목록 값을 덮던 자리입니다** — 실시간이 참, 주문내역이
-#: 거짓이라 알림이 닿는 순간 끝난 주문에 정정 단추가 다시 섰습니다.
+#: **앞의 둘이 화면에서 목록 값을 덮는 자리입니다** — 실시간이 참, 주문내역이
+#: 거짓이면 알림이 닿는 순간 끝난 주문에 정정 단추가 다시 섭니다.
 같은주문 = [
     ("R", "6", "0", False),
     ("R", "1", None, False),

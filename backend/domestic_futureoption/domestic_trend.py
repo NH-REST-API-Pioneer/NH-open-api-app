@@ -7,7 +7,7 @@
 그 풀이가 화면마다 조금씩 달라집니다. 그래서 여기서 **목록으로 세웁니다.**
 
 무리를 합치지 않습니다. 「기관」처럼 여럿을 더한 값은 이 응답에 없고, 무엇을
-더해야 그것이 되는지 명세가 말하지 않습니다. 우리가 합쳐 내면 그 합계의 근거를
+더해야 그것이 되는지 명세가 말하지 않습니다. 여기서 합쳐 내면 그 합계의 근거를
 밝힐 수 없으므로 **온 대로 열하나를 내고 고르는 일은 화면이 합니다.**
 
 **수량과 금액은 다른 조회입니다.** 같은 품목·같은 날이라도 `inq_tp` 에 따라
@@ -72,11 +72,11 @@ _FIELDS: tuple[tuple[str, str], ...] = (
 _RATE_FIELDS = frozenset({"buyPct", "sellPct"})
 
 #: **보험만 순매수 칸 이름이 뒤집혀 있습니다** — 열 무리는 `…_net_buy` 인데
-#: 보험은 `ins_buy_net` 입니다. 명세도 그렇게 적혀 있고 반입해 둔 응답도 그렇습니다.
+#: 보험은 `ins_buy_net` 입니다. 명세도 실제 응답도 그렇습니다.
 #:
 #: **대소문자도 어긋납니다.** 3차 명세는 보험 칸을 `Ins_buy` 처럼 대문자로
-#: 적었는데 실제로 오는 것은 소문자입니다. 우리는 최신 번호의 명세를 기준으로
-#: 삼으므로, 그것을 들고 코드와 대조하는 사람이 걸리는 자리입니다.
+#: 적었는데 실제로 오는 것은 소문자입니다. 명세를 들고 코드와 대조할 때 걸리는
+#: 자리입니다.
 _ODD_FIELDS: dict[tuple[str, str], str] = {("ins", "netBuy"): "ins_buy_net"}
 
 
@@ -94,7 +94,7 @@ def investor_trend(raw: dict[str, Any], *, inq_tp: str, ref_dt: str) -> dict[str
     made = [one for one in (_group(body, prefix, name) for prefix, name in INVESTOR_GROUPS) if one]
     return {
         "time": market_values.clock(body.get("tm")),
-        # 거래소가 쓰는 상품 식별자입니다(`KRDRVFUUSD`). 우리 품목코드가 아닙니다.
+        # 거래소가 쓰는 상품 식별자입니다(`KRDRVFUUSD`). 종목 마스터의 품목코드가 아닙니다.
         "instrument": str(body.get("inst_cd") or "").strip() or None,
         "unit": UNITS.get(str(inq_tp or "").strip()),
         "date": market_values.date(ref_dt),

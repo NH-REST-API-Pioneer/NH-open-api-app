@@ -239,7 +239,7 @@ def test_분봉이_오래된_것부터_온다(client):
 
 
 def test_일봉은_저장해_둔_자료로는_0개로_나온다(client):
-    """봉이 실제로 있는데 **날짜 칸이 가려진 채로** 반입되었다.
+    """봉이 실제로 있는데 **날짜 칸이 가려진 채로** 저장되어 있다.
 
     수집기가 연속조회 키를 가명으로 바꿀 때, 그 키와 글자가 같았던 봉의 날짜까지
     함께 덮였다. NH선물이 이상한 값을 보낸 것이 아니고 실서버로 부르면 날짜가
@@ -286,19 +286,64 @@ def test_주소에_시장_칸이_있다():
     [
         (TransportError("domestic_price", "시간이 초과되었습니다"), 504),
         (HttpError("domestic_price", 400, {"errorMessage": "'A7569000' 종목 없음"}), 502),
-        (BusinessError("domestic_price", "40010", "거부되었습니다", {}), 502),
     ],
     indirect=["터지는"],
 )
 def test_실패는_화면용_문구로_온다(터지는, 기대):
-    """NH선물이 보낸 문구를 그대로 내보내면 우리가 보낸 값이 되비친다."""
+    """코드 없는 실패는 화면용 문구만 냅니다. 서버 문구에 실린 요청 값이 되비치지 않습니다."""
     응답 = 터지는.post("/api/domestic/price", json={"sym": SYMBOL})
 
     assert 응답.status_code == 기대
     detail = 응답.json()["detail"]
     assert "A7569000" not in detail
-    assert "40010" not in detail
     assert detail
+    assert "x-nh-error-code" not in 응답.headers
+
+
+@pytest.mark.parametrize(
+    "터지는",
+    [BusinessError("domestic_price", "40010", "거부되었습니다", {})],
+    indirect=True,
+)
+def test_코드가_있는_시세_거절은_코드와_원문을_싣는다(터지는):
+    응답 = 터지는.post("/api/domestic/price", json={"sym": SYMBOL})
+
+    assert 응답.status_code == 502
+    assert 응답.json()["detail"] == "시세 조회가 거절되었습니다 — 40010 거부되었습니다"
+    assert 응답.headers["x-nh-error-code"] == "40010"
+    assert 응답.headers["x-nh-error-kind"] == "other"
+
+
+@pytest.mark.parametrize(
+    "터지는",
+    [BusinessError("domestic_orderable-quantity", "5033", "[주문불가계좌] 계좌입니다. 계좌번호를 확인하세요.", {})],
+    indirect=True,
+)
+def test_코드가_있는_계좌_조회_거절은_계좌_문장에_코드와_원문을_싣는다(터지는):
+    응답 = 터지는.post(
+        "/api/domestic/orderable-quantity",
+        json={"sym": SYMBOL, "side": "buy", "ord_pric": "405.25"},
+    )
+
+    assert 응답.status_code == 502
+    assert 응답.json()["detail"] == "계좌 조회가 거절되었습니다 — 5033 [주문불가계좌] 계좌입니다. 계좌번호를 확인하세요."
+    assert (응답.headers["x-nh-error-code"], 응답.headers["x-nh-error-kind"]) == ("5033", "other")
+
+
+@pytest.mark.parametrize(
+    "터지는",
+    [HttpError("domestic_orderable-quantity", 400, {"errorMessage": "잘못된 요청"})],
+    indirect=True,
+)
+def test_코드가_없는_계좌_조회_거절은_기존_문구_그대로다(터지는):
+    응답 = 터지는.post(
+        "/api/domestic/orderable-quantity",
+        json={"sym": SYMBOL, "side": "buy", "ord_pric": "405.25"},
+    )
+
+    assert 응답.status_code == 502
+    assert 응답.json()["detail"] == domestic_routes._ACCOUNT_REJECTED
+    assert "x-nh-error-code" not in 응답.headers
 
 
 def test_실서버로_나가지_않는다(client):
@@ -722,7 +767,7 @@ def test_신규_접수_답이_미체결_표_한_줄이다(주문, monkeypatch):
     assert (몸["fillConditionCode"], 몸["fillCondition"]) == ("1", "FAS")
     assert 몸["price"] == 405.25
     assert (몸["orderKind"], 몸["context"]) == ("new", "domestic-day")
-    # 우리가 낸 주문이라 화면에서 고칠 수 있습니다.
+    # 이 앱이 낸 주문이라 화면에서 고칠 수 있습니다.
     assert (몸["sourceCode"], 몸["source"], 몸["editable"]) == ("R", "REST API", True)
     # 접수 시각은 서버의 한국시간입니다 — 응답에 그 칸이 없습니다.
     assert 몸["acceptedAt"] == "2026-09-17T10:04:56+09:00"

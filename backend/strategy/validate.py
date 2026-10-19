@@ -122,6 +122,34 @@ _EMPTY_STEP = "조건이 없는 단계가 있습니다 — 조건을 넣거나 �
 _UNFILLED_COND = "안 채운 조건 줄이 있습니다"
 _WITHIN_BARS = "다음 단계 유효기간은 1봉 이상으로 적습니다"
 _JOIN = "단계 잇기는 「모두 충족」·「하나라도 충족」 가운데 하나입니다"
+#: 보유 중에 **반대 방향 진입 규칙**이 참이 됐을 때 할 일(`aux.oppositeSignal`).
+#:
+#:     ignore   진입하지 않고 「안 낸 신호」로 남깁니다
+#:     exit     보유 전량을 닫습니다. 반대 방향으로는 들어가지 않습니다
+#:     reverse  보유 전량을 닫고, 다 닫히면 반대 방향으로 진입합니다
+#:
+#: 칸이 없거나 모르는 값이면 `ignore` 입니다 — 이 칸이 생기기 전에 담은 설정은
+#: 동작이 그대로입니다.
+OPPOSITE_SIGNAL_IGNORE = "ignore"
+OPPOSITE_SIGNAL_EXIT = "exit"
+OPPOSITE_SIGNAL_REVERSE = "reverse"
+OPPOSITE_SIGNALS: tuple[str, ...] = (
+    OPPOSITE_SIGNAL_IGNORE,
+    OPPOSITE_SIGNAL_EXIT,
+    OPPOSITE_SIGNAL_REVERSE,
+)
+_OPPOSITE_SIGNAL = "보유 중 반대 신호는 「무시」·「청산」·「반전」 가운데 하나입니다"
+
+
+def opposite_signal(aux: Any) -> str:
+    """설정의 「보유 중 반대 신호」. 칸이 없거나 모르는 값이면 `ignore` 입니다."""
+    if not isinstance(aux, dict):
+        return OPPOSITE_SIGNAL_IGNORE
+    value = aux.get("oppositeSignal")
+    value = value.strip() if isinstance(value, str) else ""
+    return value if value in OPPOSITE_SIGNALS else OPPOSITE_SIGNAL_IGNORE
+
+
 #: 켜고 끄는 칸. 칸이 없으면 끈 것이고, 적었다면 참·거짓이어야 합니다.
 _SWITCHES: tuple[str, ...] = ("addWhileOpen", "sessionEndFlat")
 _SWITCH = "켜기·끄기로만 적습니다"
@@ -289,11 +317,13 @@ def blocked(found: list[dict[str, str]]) -> bool:
 
 
 def normalized(version: dict[str, Any], draft: dict[str, Any] | None) -> dict[str, Any] | None:
-    """담기 전에 다듬습니다. **알리지 않고 조용히 맞추는 두 자리입니다.**
+    """담기 전에 다듬습니다. **알리지 않고 조용히 맞추는 자리입니다.**
 
     평가 모드는 「마감」·「틱」 둘이고, 그 밖의 값이면 마감으로 읽습니다.
     체결조건은 국내 주문에만 있는 칸이라 해외 버전에서는 비웁니다 — 화면이
     세우지 않는 칸이 남아 있으면 주문을 낼 때 국내 규격이 해외로 따라갑니다.
+    「보유 중 반대 신호」는 앞뒤 빈칸을 덜어 냅니다. 모르는 값은 담기 검사가
+    막습니다(`_check_choices`).
     """
     if not isinstance(draft, dict):
         return draft
@@ -303,7 +333,10 @@ def normalized(version: dict[str, Any], draft: dict[str, Any] | None) -> dict[st
     aux = made.get("aux")
     market = str(version.get("market") or "")
     if isinstance(aux, dict) and market == OVERSEAS and aux.get("fillCond"):
-        made["aux"] = {**aux, "fillCond": ""}
+        aux = made["aux"] = {**aux, "fillCond": ""}
+    opposite = aux.get("oppositeSignal") if isinstance(aux, dict) else None
+    if isinstance(opposite, str) and opposite != opposite.strip():
+        made["aux"] = {**aux, "oppositeSignal": opposite.strip()}
     return made
 
 
@@ -437,6 +470,12 @@ def _check_choices(aux: dict[str, Any], market: str, found: list[dict[str, str]]
         _add(found, "aux.orderType", ERROR, paper.unsupported_why(order_type))
     if market in SESSIONS and str(aux.get("session") or "").strip() not in SESSIONS[market]:
         _add(found, "aux.session", ERROR, _SESSION)
+    # 비워 두면 「무시」입니다. 적었다면 셋 가운데 하나여야 합니다.
+    opposite = aux.get("oppositeSignal")
+    if not _blank(opposite) and (
+        not isinstance(opposite, str) or opposite.strip() not in OPPOSITE_SIGNALS
+    ):
+        _add(found, "aux.oppositeSignal", ERROR, _OPPOSITE_SIGNAL)
 
     # 값을 받는 주문유형이면 기준이 있어야 값을 만들 수 있습니다. 값을 안 받는
     # 주문유형이면 비워 둬도 되지만, 적었다면 아는 값이어야 합니다.

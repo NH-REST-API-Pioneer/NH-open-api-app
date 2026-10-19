@@ -1,9 +1,9 @@
-"""실서버로 부를지, 반입해 둔 응답으로 답할지 정합니다.
+"""실서버로 부를지, 저장해 둔 응답으로 답할지 정합니다.
 
 기본은 실서버입니다. 환경변수 `NH_REPLAY` 를 켜면 재생 모드로 뜹니다.
 
     NH_REPLAY=1                 재생 모드로 실행
-    NH_REPLAY_DIR=<폴더>        반입해 둔 응답을 다른 곳에서 읽기 (선택)
+    NH_REPLAY_DIR=<폴더>        저장해 둔 응답을 다른 곳에서 읽기 (선택)
 
 설정 파일이 아니라 환경변수인 이유가 있습니다. 재생 모드는 실행할 때 켜고
 끄는 개발용 스위치라, 설정 파일에 적어 두면 껐다고 생각하고 켜 둔 채로
@@ -58,7 +58,7 @@ def current_mode(env: Mapping[str, str] | None = None) -> str:
 
 
 def fixture_root(env: Mapping[str, str] | None = None) -> Path | None:
-    """반입해 둔 응답을 읽을 폴더. 지정하지 않았으면 기본 자리를 씁니다."""
+    """저장해 둔 응답을 읽을 폴더. 지정하지 않았으면 기본 자리를 씁니다."""
     env = os.environ if env is None else env
     raw = str(env.get(REPLAY_DIR, "")).strip()
     return Path(raw) if raw else None

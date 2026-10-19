@@ -7,7 +7,7 @@ import { Modal } from '../../app/Modal'
  * 그래서 창을 화면 밖으로 빼서 두 자리가 함께 씁니다.
  *
  * 버리는 것은 **설정 초안뿐**입니다 — 검증·진행의 실행과 보낸 요청은 그대로
- * 둡니다(원본 §2).
+ * 둡니다.
  */
 
 export function LeaveGuard({ onStay, onLeave }: { onStay: () => void; onLeave: () => void }) {

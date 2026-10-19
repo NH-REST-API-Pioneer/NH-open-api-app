@@ -111,8 +111,8 @@ export interface Instrument {
   name: string
 }
 
-/* 국내 옵션의 콜풋 코드. **원문 값이고 뜻은 마스터가 정합니다** —
- * 체인 응답의 종목명과 대조해 확인했습니다(3 → 「… C …」, 4 → 「… P …」). */
+/* 국내 옵션의 콜풋 코드. **원문 값이고 뜻은 마스터가 정합니다** — 체인 응답의
+ * 종목명에서 3 은 「… C …」, 4 는 「… P …」입니다. */
 const PUT = '4'
 
 /* ── 만기 표기 ─────────────────────────────────────────── */
@@ -143,8 +143,8 @@ export function expiryText(expiry: string): string {
 
 /** 만기 셀렉트에 서는 한 줄. **부르는 쪽이 완성해서 넘깁니다.**
  *
- *  잔존일수가 있는 시장과 없는 시장이 있어, 헤더가 「값이 없으면 어떻게 할지」를
- *  알아야 하는 구조였습니다. 여기서 문장을 끝내면 헤더는 시장을 몰라도 됩니다 —
+ *  잔존일수가 있는 시장과 없는 시장이 있습니다. 여기서 문장을 끝내 두면 헤더가
+ *  「값이 없으면 어떻게 할지」를 몰라도 되고 시장도 몰라도 됩니다 —
  *  **자리를 만들지 않는 것과 자리를 비우는 것은 다릅니다.** */
 export function expiryOption(item: ContractRef): { code: string; label: string } {
   return {
@@ -253,7 +253,7 @@ function toProduct(row: MasterProduct): Product {
     exchangeCode: row.market === 'overseas' && row.ExchName ? String(row.ExchName) : null,
     exchangeNo: row.market === 'overseas' && row.exch ? String(row.exch) : null,
     group: groupOfProduct(row),
-    /* 색인이 정해 실어 줍니다. 예전 판본의 색인에는 없던 값이라, 없으면 월물로
+    /* 색인이 정해 실어 줍니다. 색인에 이 칸이 없으면 월물로
        봅니다 — 날짜를 못 받은 채 날 단위로 부르면 빈 자리가 생깁니다. */
     expiryUnit: row.expiry_unit === 'day' ? 'day' : 'month',
     groupOrder: axisOrder(
@@ -293,12 +293,12 @@ function numberOrNull(value: string | undefined): number | null {
  * **가까운 만기를 앞에 둡니다.** 국내 원문이 가까운 쪽부터 적혀 있어, 해외를
  * 마스터 필드 순서대로 붙이면 두 시장이 반대 차례가 됩니다 — 오가는 사람이
  * 어느 쪽이 근월인지 매번 다시 봐야 합니다. 국내 이름은 원문이라 못 바꾸고
- * **해외 이름은 우리가 짓는 것**이라, 고칠 수 있는 쪽을 고칩니다. 어느 필드가
+ * **해외 이름은 이 앱이 짓는 것**이라, 고칠 수 있는 쪽을 고칩니다. 어느 필드가
  * 가까운 쪽인지는 재지 않고 **두 값을 견줘서** 정합니다. */
 function spreadLabel(row: MasterContract, market: Market): string {
   const legs = legsOf(row)
   if (legs) return `${expiryLabel(legs.near)} – ${expiryLabel(legs.far)}`
-  /* 색인이 다리를 안 주는 판본에서는 예전처럼 짓습니다. */
+  /* 색인이 다리를 안 주면 원문 이름과 만기 칸으로 짓습니다. */
   if (market === 'domestic') return String(row.name_kor ?? '')
   const far = String(row.yymm1 ?? '')
   if (far === '') return expiryLabel(row.expiry)
@@ -379,8 +379,7 @@ function refOf(row: MasterContract, market: Market): ContractRef {
   const code = String(row.code ?? row.series ?? '')
   /* 잔존일수는 국내 마스터가 종목마다 실어 줍니다. **스프레드 줄에도 값이
      들어 있고 그대로 세웁니다** — 두 다리 중 어느 쪽 기준인지는 마스터가
-     말해 주지 않아 확인 전이지만, 마스터가 준 값을 우리가 고쳐 적지는
-     않습니다. */
+     말해 주지 않지만, 마스터가 준 값을 화면이 고쳐 적지는 않습니다. */
   const days = market === 'domestic' ? Number(row.rem_cnt) : Number.NaN
   return {
     code,
@@ -549,7 +548,7 @@ function build(source: MasterIndex): Built {
   }
 
   /* 검색이 보는 글자를 미리 이어 둡니다. 품목 이름과 코드에 더해 **마스터가
-     실어 준 종목 이름 원문**까지 넣습니다 — 화면에는 우리가 지은 이름이 서지만,
+     실어 준 종목 이름 원문**까지 넣습니다 — 화면에는 이 앱이 지은 이름이 서지만,
      마스터에 적힌 대로 친 사람도 찾을 수 있어야 합니다. */
   const search = new Map<Product, string>()
   for (const [key, product] of products) {
@@ -667,7 +666,7 @@ export function resolve(code: string): Instrument | null {
       kind: 'option',
       contract: {
         code,
-        /* 이름과 잔존일수는 그 품목의 만기 목록이 이미 지어 두었습니다 — 신원표는
+        /* 이름과 잔존일수는 그 품목의 만기 목록이 이미 짓습니다 — 신원표는
            만기를 8자리로만 주므로, 여기서 지으면 월물이 「26년 9월 10일」이 됩니다. */
         label: expiryRef('domestic', product, option.expiry)?.label ?? expiryLabel(option.expiry),
         masterName: '',
@@ -739,7 +738,7 @@ export const PENDING_TEXT = {
 
 /** 축이 덜 정해진 옵션인가 — **아직 계약이 아닌 코드**인가입니다.
  *
- *  이 상태의 코드(`품목:만기`)는 **우리 자료구조이지 거래소의 것이 아닙니다.** 코드가
+ *  이 상태의 코드(`품목:만기`)는 **이 앱의 자료구조이지 거래소의 것이 아닙니다.** 코드가
  *  서는 자리(최근 본·검색·카탈로그)는 코드 대신 「행사가 선택」을 보이고, 헤더는 값
  *  칸이라 「—」를 세웁니다 — 둘 다 정해지면 진짜 종목코드가 생깁니다. **이 코드로는
  *  조회를 내지 않습니다**: 서버가 모르는 종목이라 거절로 돌아옵니다.

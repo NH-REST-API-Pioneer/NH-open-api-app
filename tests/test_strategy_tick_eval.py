@@ -878,7 +878,7 @@ def test_열린_주문_줄에는_틱_표지를_싣고_마감_주문_줄은_모�
     (마감줄,) = [one for one in 마감.open_orders if one["intent"] == "entry"]
     assert set(마감줄) == _주문_줄_칸, "봉 마감 주문은 줄 모양이 그대로입니다."
 
-    틱._snap.pop(틱줄["orderId"])  # 묶음이 없는 주문(우리가 묶지 않은 주문)
+    틱._snap.pop(틱줄["orderId"])  # 묶음이 없는 주문(앱이 묶지 않은 주문)
     (묶음없는줄,) = [one for one in 틱.open_orders if one["orderId"] == 틱줄["orderId"]]
     assert set(묶음없는줄) == _주문_줄_칸
 

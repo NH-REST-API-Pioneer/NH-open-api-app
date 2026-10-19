@@ -12,8 +12,8 @@
     runs.py             검증 실행 — 상태 기계·가상 장부·안전 검사
     engine.py           실행 하나를 돌리는 루프
     journal.py          거래·체결·이벤트를 한 줄씩 덧붙이는 기록
-    limits.py           계좌 전체 손실 한도 (시장마다 하나)
-    service.py          실행을 세우고 다루는 자리 (§8 안전 세트)
+    limits.py           계좌 전체 손실 한도 (통화마다 하나)
+    service.py          실행을 세우고 다루는 자리
     pump.py             허브와 실행 사이 — 시세를 넣고 상태를 방송
     strategy_routes.py  `/api/strategy/versions…`
 

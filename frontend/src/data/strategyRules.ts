@@ -60,10 +60,6 @@ export interface Operand {
   legacy?: boolean
 }
 
-/** 편집기가 고를 수 있는 값들.
- *
- * 지금은 지표 계산이 없어 이 목록이 화면의 전부입니다. 계산이 붙으면 여기에
- * 더하고 화면은 그대로입니다 — 셀렉트가 이 배열을 그대로 세웁니다. */
 /* 값 넷은 **교차도 받습니다** — 「종가가 밴드 하단을 하향 돌파」처럼 값과 지표가
    엇갈리는 조건이 실제로 쓰이고, 엔진도 그 짝을 받습니다. 목록에서 빼 두면
    저장된 조건을 화면이 못 그리거나 고치는 순간 다른 조건이 됩니다. */
@@ -75,6 +71,8 @@ const WHOLE_OPS = ['gte', 'lte', 'gt', 'lt', 'eq']
 /** 오실레이터(RSI·MACD 선·신호·스토캐스틱)가 받는 여섯 — 넷에 같은 지표끼리의 교차를 더합니다. */
 const OSCILLATOR_OPS = ['crossUp', 'crossDown', 'gte', 'lte', 'gt', 'lt']
 
+/** 편집기가 고를 수 있는 값들. 셀렉트에 서는 목록과 차례는 `PICK_ORDER`·
+ *  `PICK_OPERANDS` 가 정합니다. */
 export const OPERANDS: Operand[] = [
   { id: 'close', category: '가격', label: '종가', word: '종가', ops: PRICE_OPS },
   { id: 'open', category: '가격', label: '시가', word: '시가', ops: PRICE_OPS },
@@ -240,7 +238,7 @@ export function fullLabelOf(id: string): string | undefined {
 
 /* ── 연산자 ──────────────────────────────────────────── */
 
-/** 값 칸이 무엇을 받는가. **연산자가 정하고, 넷은 둘 다 받습니다**(규격 §9 ⑥) —
+/** 값 칸이 무엇을 받는가. **연산자가 정하고, 넷은 둘 다 받습니다** —
  *  「종가가 이전 봉 고가를 초과」도, 「종가가 430 초과」도 조건이 됩니다.
  *  교차는 견줄 선이 있어야 뜻이 서서 수를 안 받습니다. */
 export type RightKind = 'operand' | 'number'
@@ -543,7 +541,7 @@ function withOperandParams(cond: Cond): Cond {
   return made
 }
 
-/* ── 임시 규칙 ───────────────────────────────────────── */
+/* ── 새 조건·단계 ────────────────────────────────────── */
 
 /** 새 조건 한 줄. 값이 비어 있어 오류로 셉니다 — 고르라는 뜻입니다. */
 export function blankCond(seed: number): Cond {
@@ -598,11 +596,47 @@ export interface Aux {
   maxHold: string
   session: string
   addWhileOpen: boolean
+  /** 보유 중에 반대 방향 진입 규칙이 참이 되면 어떻게 하는지(`OppositeSignal`). 칸이 없거나
+   *  모르는 값이면 서버가 「무시」로 읽습니다. */
+  oppositeSignal: OppositeSignal
   dailyLoss: string
   marginBudget: string
   /** 연속 손실 한도 — 그 거래일에 손실 거래가 이만큼 이어지면 새 진입을 막습니다.
    *  **비어 있으면 쓰지 않습니다.** */
   lossStreak: string
+}
+
+/** 보유 중 반대 방향 진입 신호를 다루는 방법. 서버가 받는 값과 같은 id 입니다.
+ *  - 무시: 반대 방향 진입 규칙이 참이어도 주문을 내지 않습니다
+ *  - 청산: 보유를 청산 규칙의 주문 유형으로 닫고 새로 들어가지 않습니다
+ *  - 반전: 보유를 닫고, 전량 체결되면 반대 방향으로 들어갑니다 */
+export type OppositeSignal = 'ignore' | 'exit' | 'reverse'
+
+export const OPPOSITE_SIGNALS: { id: OppositeSignal; label: string; note: string }[] = [
+  { id: 'ignore', label: '무시', note: '반대 방향 진입 규칙이 참이어도 주문을 내지 않습니다' },
+  {
+    id: 'exit',
+    label: '청산',
+    note: '반대 방향 진입 규칙이 참이면 보유를 청산 규칙의 주문 유형으로 닫습니다. 새로 들어가지 않습니다',
+  },
+  { id: 'reverse', label: '반전', note: '보유를 닫고 전량 체결되면 반대 방향으로 들어갑니다' },
+]
+
+/** 저장된 값을 고를 수 있는 값으로. 모르는 값이나 빈 값은 서버와 같이 「무시」입니다. */
+export function oppositeSignalOf(value: unknown): OppositeSignal {
+  return OPPOSITE_SIGNALS.find((one) => one.id === value)?.id ?? 'ignore'
+}
+
+/** 그 값의 이름(무시·청산·반전). */
+export function oppositeSignalLabel(value: unknown): string {
+  const id = oppositeSignalOf(value)
+  return OPPOSITE_SIGNALS.find((one) => one.id === id)?.label ?? ''
+}
+
+/** 그 값의 뜻 한 문장. 설정 줄 아래에 섭니다. */
+export function oppositeSignalNote(value: unknown): string {
+  const id = oppositeSignalOf(value)
+  return OPPOSITE_SIGNALS.find((one) => one.id === id)?.note ?? ''
 }
 
 /** 주문유형은 시장이 정합니다. **주문 화면과 같은 목록**입니다 — 전략이 내는
@@ -753,9 +787,9 @@ export const EVAL_MODES = ['마감', '틱']
 
 /** 버전 하나가 처음 여는 조건의 갈래.
  *
- *  **임시 자료라 버전마다 조건을 적어 둘 수 없어 갈래로 적습니다.** 저장이
- *  붙으면 이 칸은 사라지고 저장된 조건이 그 자리에 옵니다 — 그때까지는 목록의
- *  요약 한 줄과 설정 화면이 서로 다른 전략을 말하지 않도록 여기서 맞춥니다. */
+ *  **설정이 아직 저장되지 않은 버전은 이 갈래로 조건을 엽니다.** 저장된 설정이
+ *  있으면 그 조건이 섭니다. 목록의 요약 한 줄과 설정 화면이 서로 다른 전략을
+ *  말하지 않도록 여기서 맞춥니다. */
 export type SeedKind = 'empty' | 'trend' | 'revert' | 'gap'
 
 /** 화면이 처음 세우는 규칙. **갈래마다 다릅니다** — 새로 만든 전략은 빈 채로
@@ -930,6 +964,9 @@ export function seedDraft(
       maxHold: '1',
       session: sessionsFor(seed.market)[0],
       addWhileOpen: false,
+      /* 새 전략은 반대 신호에 보유를 닫습니다. 저장된 옛 전략은 칸이 없어 「무시」로
+         읽습니다(`withNewFields`) — 그 전략이 하던 동작 그대로입니다. */
+      oppositeSignal: 'exit',
       dailyLoss: String(seed.dailyLoss),
       marginBudget: String(seed.marginBudget),
       lossStreak: '',
@@ -988,6 +1025,8 @@ export function withNewFields(draft: SettingsDraft): SettingsDraft {
       entryEnd: aux.entryEnd ?? '',
       reentryWaitBars: aux.reentryWaitBars ?? '',
       maxEntriesPerDay: aux.maxEntriesPerDay ?? '',
+      /* 칸이 없거나 모르는 값이면 「무시」 — 서버가 읽는 뜻과 같습니다. */
+      oppositeSignal: oppositeSignalOf(aux.oppositeSignal),
     },
   }
 }

@@ -1,6 +1,6 @@
 """해외 품목별세부정보 — 가공·이어받기·하루 캐시·라우트.
 
-**어떤 시험도 NH선물 서버에 붙지 않습니다.** 반입해 둔 응답(재생 세션)이나
+**어떤 시험도 NH선물 서버에 붙지 않습니다.** 저장해 둔 응답(재생 세션)이나
 지어낸 답을 내는 호출부로 돕니다.
 """
 from __future__ import annotations
@@ -274,7 +274,7 @@ def test_받지_못하면_실패가_그대로_올라온다():
 
 @pytest.fixture
 def 품목client(monkeypatch):
-    """반입해 둔 진짜 기록으로 도는 라우트. 서비스는 시험마다 새것입니다."""
+    """저장해 둔 진짜 기록으로 도는 라우트. 서비스는 시험마다 새것입니다."""
     monkeypatch.setattr(overseas_product_service, "service", ProductService())
     session = create_session(replay=True)
     app.dependency_overrides[get_client] = lambda: TradeClient(session)
@@ -312,7 +312,7 @@ def test_라우트도_하루_한_번만_받고_force_로_다시_받는다(품목
 
 
 def _저장소(*기록들: dict[str, Any]) -> FixtureStore:
-    """지어낸 저장소. **빈 저장소는 반입해 둔 기록으로 되돌아가므로** 한 건은 둡니다."""
+    """지어낸 저장소. **빈 저장소는 저장소의 기록으로 되돌아가므로** 한 건은 둡니다."""
     만든것 = [
         _build(
             {

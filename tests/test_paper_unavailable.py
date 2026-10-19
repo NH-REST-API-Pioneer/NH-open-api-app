@@ -107,24 +107,26 @@ def test_야간_옵션_체인도_첫_쪽에서_막히면_다음_쪽을_안_부�
 
 
 @pytest.mark.parametrize("주소, 몸, 끝", 조회들, ids=["국내_야간_현재가", "해외_현재가"])
-def test_다른_게이트웨이_거절은_지금과_같다(세우기, 주소, 몸, 끝):
+def test_다른_게이트웨이_거절은_코드와_갈래를_헤더로_단다(세우기, 주소, 몸, 끝):
     앱, _ = 세우기(200, 다른_게이트웨이)
 
     응답 = 앱.post(주소, json=몸)
 
     assert 응답.status_code == 502
     assert 응답.json()["detail"] != PAPER_UNAVAILABLE_DETAIL
-    assert ERROR_KIND_HEADER not in 응답.headers
-    assert ERROR_CODE_HEADER not in 응답.headers
+    # 모의 막힘이 아니라 그 코드의 갈래로 답합니다(`orders.lookup_refusal`).
+    assert (응답.headers[ERROR_KIND_HEADER], 응답.headers[ERROR_CODE_HEADER]) == ("retry", "EGW019")
+    assert 응답.json()["detail"].endswith("— EGW019 잠시 후 다시 시도해주세요.")
 
 
-def test_업무_거부도_지금과_같다(세우기):
+def test_업무_거부도_코드와_갈래를_헤더로_단다(세우기):
     앱, _ = 세우기(200, {"errorCode": "50013", "errorMessage": "조회할 내역이 없습니다."})
 
     응답 = 앱.post("/api/domestic/price-night", json={"sym": "A016C000"})
 
     assert 응답.status_code == 502
-    assert ERROR_KIND_HEADER not in 응답.headers
+    assert 응답.headers[ERROR_KIND_HEADER] != "paper-unavailable"
+    assert 응답.json()["detail"] == "시세 조회가 거절되었습니다 — 50013 조회할 내역이 없습니다."
 
 
 # ── 주문 ─────────────────────────────────────────────────

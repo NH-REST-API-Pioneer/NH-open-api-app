@@ -9,8 +9,8 @@
  * 이고 0 과 다릅니다(0 은 서버가 받지 않습니다). 한도에 닿으면 서버가 그 축·그
  * 통화로 셈하는 실행을 모두 멈춥니다.
  *
- * 앞 판 서버는 시장마다(`domestic` = 원, `overseas` = 달러) 하나였습니다. 그 이름만
- * 온 답은 원·달러 칸으로 읽습니다. 저장은 **그 축의 통화 전부를 함께** 보냅니다 —
+ * 답이 시장 이름(`domestic` = 원, `overseas` = 달러)으로 오면 원·달러 칸으로
+ * 읽습니다. 저장은 **그 축의 통화 전부를 함께** 보냅니다 —
  * 서버는 그 축에서 안 보낸 통화를 「안 건 것」으로 지웁니다. 다른 축은 안 보내면
  * 그대로 둡니다.
  */
@@ -20,7 +20,7 @@ import { tookStore, type StoreState } from './strategyStore'
 /** 늘 칸이 있는 통화 — 국내(원)와 해외 기본(달러). */
 export const BASE_CURRENCIES = ['KRW', 'USD'] as const
 
-/** 앞 판의 시장 이름 → 그 통화. */
+/** 시장 이름으로 온 한도 → 그 통화. */
 const LEGACY: Record<string, string> = { domestic: 'KRW', overseas: 'USD' }
 
 /** 통화마다의 하루 손실 한도. `null` 은 안 걸었음입니다. */

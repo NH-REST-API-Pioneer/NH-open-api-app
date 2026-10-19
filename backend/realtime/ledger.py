@@ -107,7 +107,7 @@ class Ledger:
                 self._tick += 1
 
     def release(self, client: str) -> None:
-        """이 화면이 나갔습니다. 그 몫을 통째로 버립니다."""
+        """이 화면이 나갈 때 부릅니다. 그 몫을 통째로 버립니다."""
         self._wishes.pop(client, None)
 
     def watchers(self, key: StreamKey) -> int:

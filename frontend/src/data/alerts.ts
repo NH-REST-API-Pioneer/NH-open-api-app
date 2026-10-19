@@ -86,7 +86,7 @@ export const DEFAULT_ALERTS: AlertSettings = {
 }
 
 /** 담긴 값을 읽습니다. **모양이 틀린 칸은 기본값으로** 읽습니다 — 손으로 고친
- *  파일이나 옛 판의 값 하나 때문에 알림 전체가 꺼지면 안 됩니다. 모르는 종류의
+ *  파일이나 이전 버전이 남긴 값 하나 때문에 알림 전체가 꺼지면 안 됩니다. 모르는 종류의
  *  키는 버립니다. */
 export function readAlerts(raw: unknown): AlertSettings {
   const box = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}

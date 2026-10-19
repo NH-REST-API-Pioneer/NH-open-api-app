@@ -25,7 +25,7 @@ from backend.nh_api.errors import TransportError
 #:
 #: `httpx.TransportError` 가 이름 풀이·연결 거부·시간 초과·연결 끊김을 모두 품는
 #: 윗자리입니다(`ConnectError`·`ConnectTimeout`·`ReadTimeout` 따위). 종목 마스터는
-#: 이 예외를 그대로 만나고, 거래 API 호출부는 그것을 우리 `TransportError` 로
+#: 이 예외를 그대로 만나고, 거래 API 호출부는 그것을 이 앱의 `TransportError` 로
 #: 바꿔 냅니다.
 _UNREACHABLE = (httpx.TransportError, TransportError)
 

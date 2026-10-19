@@ -77,6 +77,9 @@ import {
   RULE_LABEL,
   sessionKeyOf,
   sessionsFor,
+  OPPOSITE_SIGNALS,
+  oppositeSignalLabel,
+  oppositeSignalNote,
   type Aux,
   type Cond,
   type Operand,
@@ -818,7 +821,7 @@ export function StrategySettings({
       ? OPERATORS.filter((item) => left.ops.includes(item.id) || (item.id === cond.op && !!op))
       : []
     /* 값 칸이 지금 무엇을 받고 있는가. 넷(초과·미만·이상·이하)은 값과 수를 다
-       받으므로 조건 줄이 그 갈래를 들고 다닙니다(규격 §9 ⑥). */
+       받으므로 조건 줄이 그 갈래를 들고 다닙니다. */
     const kind = op ? rightKindOf(op, cond) : 'operand'
     const kinds = op ? rightKindsOf(op, cond.left) : []
     /* 값 갈래의 오른쪽 목록은 **왼쪽이 정합니다** — 호가는 다른 쪽 호가만,
@@ -1357,7 +1360,7 @@ export function StrategySettings({
           <label className="set-field set-version">
             <span className="set-field-label">버전</span>
             {/* `disabled` 를 안 씁니다 — 초점이 건너뛰면 옆에 달아 둔 이유를
-                읽을 길이 없습니다(규격 §5). 고를 것이 하나라 값은 안 바뀝니다. */}
+                읽을 길이 없습니다. 고를 것이 하나라 값은 안 바뀝니다. */}
             <select
               className="control"
               value={version.version}
@@ -1648,7 +1651,7 @@ export function StrategySettings({
           </div>
 
           {/* 이 줄은 이제 **세는 말만** 답니다 — 켜고 끄는 것은 탭의 배지가
-              맡았습니다(같은 일을 두 자리에 두면 어느 쪽이 참인지 묻게 됩니다). */}
+              맡습니다(같은 일을 두 자리에 두면 어느 쪽이 참인지 묻게 됩니다). */}
           <div className="set-rule-bar">
             <span className="set-count">
               조건 {used} / {MAX_CONDS}
@@ -2043,6 +2046,7 @@ export function StrategySettings({
               entryWindowText(draft.aux.entryStart, draft.aux.entryEnd),
               Number(draft.aux.reentryWaitBars.trim()) > 0 ? `대기 ${draft.aux.reentryWaitBars.trim()}봉` : '',
               draft.aux.addWhileOpen ? '추가 진입 함' : '보유/미체결 중 추가 진입 안 함',
+              `반대 신호 ${oppositeSignalLabel(draft.aux.oppositeSignal)}`,
             ]
               .filter((one) => one !== '')
               .join(' · '),
@@ -2095,6 +2099,21 @@ export function StrategySettings({
                 />
                 보유 · 미체결 중에도 추가 진입
               </label>
+              {/* 보유 중에 반대 방향 진입 규칙이 참이 되면 어떻게 할지. 고른 값의 뜻을
+                  바로 아래에 한 문장으로 적습니다. */}
+              {field(
+                '보유 중 반대 진입 신호',
+                select(
+                  oppositeSignalLabel(draft.aux.oppositeSignal),
+                  OPPOSITE_SIGNALS.map((one) => one.label),
+                  (v) =>
+                    setAux({
+                      oppositeSignal: OPPOSITE_SIGNALS.find((one) => one.label === v)?.id ?? 'ignore',
+                    }),
+                  '보유 중 반대 진입 신호',
+                ),
+              )}
+              <p className="set-hint">{oppositeSignalNote(draft.aux.oppositeSignal)}</p>
             </>,
           )}
 

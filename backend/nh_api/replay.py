@@ -1,6 +1,6 @@
-"""NH선물 서버에 접속하지 않고, 반입해 둔 응답으로 대신 답합니다.
+"""NH선물 서버에 접속하지 않고, 저장해 둔 응답으로 대신 답합니다.
 
-회사망 밖에서 화면을 띄우고 처리 코드를 고칠 때 씁니다. 기본은 실서버이고,
+NH선물 서버 없이 화면을 띄우고 처리 코드를 고칠 때 씁니다. 기본은 실서버이고,
 `NH_REPLAY=1` 로 켭니다.
 
 주의할 점이 셋 있습니다.
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # 일어나도 밖으로 나가지 않고, 환경을 주소로 구분할 수 있습니다.
 REPLAY_HOSTS = {"paper": "paper.replay.invalid", "real": "real.replay.invalid"}
 
-# 만들어 낸 인증값. 실제 값처럼 보이지 않도록 일부러 이렇게 적었습니다.
+# 만들어 낸 인증값. 실제 값처럼 보이지 않도록 일부러 이런 글자를 씁니다.
 SYNTHETIC_TOKEN = "REPLAY-SYNTHETIC-TOKEN-NOT-ISSUED-BY-NH"
 SYNTHETIC_WEBSOCKET_KEY = "REPLAY-SYNTHETIC-WEBSOCKET-KEY-NOT-ISSUED-BY-NH"
 
@@ -62,7 +62,7 @@ MATCH_EXACT = "exact"
 MATCH_API = "api"
 MATCH_CROSS_ENVIRONMENT = "cross-environment"
 MATCH_SYNTHETIC = "synthetic"
-# 고르는 인자가 같은 기록이 없어 빈 응답으로 답했습니다.
+# 고르는 인자가 같은 기록이 없어 빈 응답으로 답한 경우.
 MATCH_EMPTY = "empty"
 
 # 빈 응답의 본문. 실제 0건 응답이 이 모양입니다 — 배열 칸(`Occurs1`)이 아예 없고
@@ -123,7 +123,7 @@ WILDCARDS: dict[str, str] = {
     "prd_cd": "",  # 해외 검색구분
     "prd_nm": "",  # 해외 품목명(검색구분이 공백이면 안 봄)
     "sett_cd": "",  # 해외 결제구분
-    "und_sym": "",  # 해외 미결제만기 기초종목(기록은 아직 없음)
+    "und_sym": "",  # 해외 미결제만기 기초종목
 }
 
 # 대신 답할 때, 그 기록이 **요청한 종목의 것인지**.
@@ -158,8 +158,8 @@ ORDER_PATHS: frozenset[tuple[str, str]] = frozenset(
 
 # 방금 부른 조회가 무엇으로 답한 것인지.
 #
-# 이 표시는 원래 httpx 응답 헤더에만 붙어서, 카테고리 함수가 본문만 꺼내 가면
-# **화면은 자기가 보는 값이 대신 답한 것인지 알 수 없었습니다.** 라우트가
+# 이 표시는 httpx 응답 헤더에만 붙으므로, 카테고리 함수가 본문만 꺼내 가면
+# **화면은 자기가 보는 값이 대신 답한 것인지 알 수 없습니다.** 라우트가
 # 응답을 만들 때 여기서 읽어 화면 쪽 헤더로 옮깁니다.
 #
 # 요청마다 갈리는 값이라 `ContextVar` 에 둡니다. 요청 하나가 한 작업 안에서
@@ -220,11 +220,11 @@ def environment_of(host: str) -> str | None:
 
 
 class ReplayMiss(httpx.TransportError):
-    """재생할 응답을 찾지 못했습니다."""
+    """재생할 응답을 찾지 못한 경우입니다."""
 
 
 class ReplayTransport(httpx.MockTransport):
-    """반입해 둔 응답으로 답하는 전송 계층."""
+    """저장해 둔 응답으로 답하는 전송 계층."""
 
     def __init__(self, store: FixtureStore) -> None:
         super().__init__(self.handle)
@@ -430,8 +430,9 @@ def selects_same(request: Any, recorded: Any, path: str = "") -> bool:
     """이 요청이 그 기록을 골라도 되는지 — 고르는 인자가 같거나 요청 쪽이 전체.
 
     **양쪽에 다 있는 칸만 견줍니다.** 한쪽에만 있는 칸은 값이 다른 것이 아니라
-    견줄 수 없는 것이라, 그것 때문에 후보에서 빼지 않습니다 — 수집기와 라우트가
-    싣는 칸이 조금 다를 수 있고, 여기서 막으려는 것은 「같은 칸에 다른 값」입니다.
+    견줄 수 없는 것이라, 그것 때문에 후보에서 빼지 않습니다 — 기록을 만든 요청과
+    이 앱의 요청은 싣는 칸이 조금 다를 수 있고, 여기서 막으려는 것은 「같은 칸에
+    다른 값」입니다.
     """
     asked = selecting(request, path)
     kept = selecting(recorded, path)

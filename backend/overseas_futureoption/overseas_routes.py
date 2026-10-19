@@ -4,12 +4,18 @@
 원문이 아니라 **화면이 쓰는 모양**입니다 — 무엇을 어떻게 바꾸는지는
 `overseas_account.py` 첫머리에 있습니다.
 
-**오류는 우리 문구로 냅니다.** NH선물 서버가 보낸 문구를 그대로 내보내면
-우리가 보낸 값이 되비쳐 브라우저의 네트워크 탭에 남습니다. 원문은 서버
-기록에만 남기고, 화면에는 무엇을 못 했는지만 알립니다.
+**오류는 화면용 문구로 냅니다.** 화면에는 무엇을 못 했는지를 알립니다.
+NH선물이 오류 코드를 주면 그 코드와 서버 문구를 문장에 함께 싣습니다
+(`orders.lookup_refusal`). 코드가 없는 실패는 서버 문구를 기록에만 남깁니다 —
+요청에 실어 보낸 값이 되비쳐 브라우저의 네트워크 탭에 남지 않게 하려는 것입니다.
+
+예외가 둘 있습니다. 모의투자에서 제공하지 않는 조회(`EGW053`)와 시세 사용 신청이
+필요한 거래소(`ETR010`)는 서버 문구 대신 정해진 문장을 내고, 까닭을 헤더
+`x-nh-error-kind` 로 답니다(`orders.paper_refusal`·`orders.quote_subscription_refusal`).
 
     504  응답을 받지 못했습니다 (연결 실패·시간 초과)
     502  NH선물이 요청을 거절했거나 업무 처리가 거부되었습니다
+    503  시장의 참고 자료를 받을 인증 정보가 어느 환경에도 없습니다
 """
 from __future__ import annotations
 
@@ -262,7 +268,7 @@ def read_chart_history(
     """분봉 한 **영업일**. 이어받기 키로 뒤로 걸으며 모읍니다.
 
     **날짜로는 과거를 못 부릅니다** — 해외 분봉은 날짜 인자를 안 보고 늘 가장
-    최근 쪽을 냅니다. 까닭과 실측은 `overseas_history.py` 첫머리에 있습니다.
+    최근 쪽을 냅니다. 까닭과 예는 `overseas_history.py` 첫머리에 있습니다.
 
     영업일은 줄마다 실려 옵니다(`occurs1_glb_biz_dt`). 거래소별 시간표가 없어도
     되는 자리입니다 — 모으는 영업일보다 **오랜 줄이 나오면** 그 영업일은 다
@@ -444,8 +450,8 @@ def read_chart_minute(
 ) -> dict[str, Any]:
     """해외 차트(분). 봉은 오래된 것부터 옵니다.
 
-    **응답의 종목 칸이 비어 옵니다** — 반입해 둔 기록 넷이 모두 그렇습니다.
-    그래서 `code` 는 부를 때 쓴 종목코드로 채워집니다.
+    **응답의 종목 칸이 비어 옵니다.** 그래서 `code` 는 부를 때 쓴 종목코드로
+    채워집니다.
     """
     raw = _call(
         lambda: api.chart_minute(
@@ -961,8 +967,8 @@ def read_product_detail(
 
 #: 종목 하나의 품목 값을 못 채운 까닭. **화면이 그대로 적습니다.** **국내와 같은
 #: 문구입니다** — 두 시장의 같은 자리가 다른 말을 하면 화면이 시장마다 다르게
-#: 적어야 합니다. 우리가 받아 오는 자료의 이름을 쓰지 않는 까닭은 국내 쪽
-#: (`domestic_routes.py`)에 적어 두었습니다.
+#: 적어야 합니다. 코드가 받아 오는 자료의 이름을 쓰지 않는 까닭은 국내 쪽
+#: (`domestic_routes.py`)에 있습니다.
 _NO_MASTER = "종목 목록을 아직 받지 못했습니다"
 _NO_SYMBOL = "종목 목록에서 이 종목을 찾지 못했습니다"
 _NO_PRODUCT = "이 종목이 속한 품목을 품목정보에서 찾지 못했습니다"
@@ -970,7 +976,7 @@ _TABLE_FAILED = "품목정보를 받지 못했습니다. 잠시 뒤 다시 시�
 _NO_KEYS = "해외 인증 정보가 없어 품목정보를 받지 못했습니다. 설정에서 해외 App Key 를 넣어 주세요."
 
 #: `why` 문장 → 갈래 코드. 국내와 같은 코드를 씁니다 — 까닭은 국내 쪽
-#: (`domestic_routes.py` 의 `_WHY_CODES`)에 적어 두었습니다.
+#: (`domestic_routes.py` 의 `_WHY_CODES`)에 있습니다.
 _WHY_CODES: dict[str, str] = {
     _NO_MASTER: "no_master",
     _NO_SYMBOL: "no_symbol",
@@ -992,8 +998,8 @@ class ProductInfoRequest(BaseModel):
 
     **모르는 칸은 받지 않습니다**(`extra="forbid"`). 이 조회는 거르는 인자가
     종목 하나뿐이라, 딸려 온 칸은 부르는 쪽이 **다른 조회와 헷갈린 것**입니다 —
-    조용히 버리면 「인자가 안 먹는다」로 보입니다(품목 표를 종목으로 물었던 일이
-    그랬습니다).
+    조용히 버리면 「인자가 안 먹는다」로 보입니다(품목 표를 종목으로 묻는 경우가
+    그렇습니다).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1014,8 +1020,8 @@ def read_product_info(
 
     **호가단위와 틱값은 안 냅니다.** 종목 마스터가 그 둘을 주고(`tsiz`·`tval`)
     화면이 이미 거기서 읽습니다 — 같은 값을 두 곳에서 내면 어긋나는 날 어느
-    쪽이 맞는지 못 가립니다. 계약단위도 **틱값 ÷ 호가단위**로 나오지만(반입해
-    둔 다섯 품목에서 확인) 표에 직접 있는 값을 냅니다. 셈해서 내면 그 나눗셈이
+    쪽이 맞는지 못 가립니다. 계약단위도 **틱값 ÷ 호가단위**로 나오지만 표에 직접
+    있는 값을 냅니다. 셈해서 내면 그 나눗셈이
     맞는지 늘 함께 믿어야 합니다.
 
     못 채우면 값이 비고 `why` 가 까닭을 말합니다 — 「마스터에 없다」와 「표를
@@ -1111,8 +1117,7 @@ def read_product_expiry(
     가 빈 목록입니다. `remainingDaysLimit` 는 실제로 보낸 잔존일 기준입니다.
 
     **실전 서버에서 받습니다.** 만기일은 시장의 값이라 거래시간표와 같은 규칙을
-    따릅니다 — 거래시간표에서는 모의 서버 값이 실전과 다른 것을 확인했고, 만기일이
-    두 서버에서 다른지는 따로 확인하지 않았습니다. 해외 실전 인증 정보가 없을 때만
+    따릅니다 — 거래시간표는 모의 서버 값이 실전과 다릅니다. 해외 실전 인증 정보가 없을 때만
     모의 서버에서 받고, 어느 쪽에서 받았는지는 `environment` 에 적습니다.
     `x-nh-environment` 헤더는 화면에서 고른 환경입니다(`backend.nh_api.reference`).
     """
@@ -1138,7 +1143,7 @@ def read_product_expiry(
 # ── 주문·정정·취소 ──────────────────────────────────────────
 #
 # **해외는 셋이 API 하나입니다** — `qt_div_cd` 로 가릅니다. 국내는 주간·야간까지
-# 여섯으로 나뉘어 있어 라우트도 셋으로 나눠 두었습니다.
+# 여섯으로 나뉘어 있어 라우트도 셋으로 나눕니다.
 #
 # 거절이 `err_cd`·`err_msg` 로 옵니다. 공통 판정(`msg_cd`)이 못 잡는 자리라
 # 여기서 직접 봅니다.
@@ -1280,7 +1285,7 @@ def place_order(
     # **주문번호가 비어 오면 접수라고 답하지 않습니다.** 번호 없는 줄은 뒤이어
     # 오는 알림·조회가 덮을 수가 없어, 화면에 영영 남습니다. 국내와 같은 자리입니다.
     if not str(raw.get("ord_no") or "").strip():
-        # 원문을 통째로 남기지 않습니다 — 우리가 보낸 값이 되비쳐 올 수 있습니다.
+        # 원문을 통째로 남기지 않습니다 — 요청에 실어 보낸 값이 되비쳐 올 수 있습니다.
         logger.warning("접수 답에 주문번호가 없습니다. 받은 칸: %s", sorted(raw))
         raise HTTPException(
             status_code=504,
@@ -1331,7 +1336,11 @@ def _outcome(
 def _call(
     action, response: Response | None = None, *, kind: str = "account"
 ) -> dict[str, Any]:
-    """부르고, 실패는 화면용 문구로 바꿉니다. 원문은 기록에만 남깁니다.
+    """부르고, 실패는 화면용 문구로 바꿉니다.
+
+    거절에 NH선물의 오류 코드가 실려 오면 문장에 코드와 원문을 함께 싣고 헤더로도
+    답니다(`orders.lookup_refusal`). 코드가 없는 실패는 화면용 문구만 내고 원문은
+    기록에 남깁니다.
 
     저장본으로 돌 때는 무엇으로 답했는지를 응답 헤더에 실어 보냅니다 —
     국내 라우트와 같은 규칙입니다. `kind` 는 무슨 조회인지(`_FAILURES` 의 열쇠)이고
@@ -1355,14 +1364,14 @@ def _call(
         if orders.quote_subscription(exc):
             # 그 거래소는 시세 사용 신청이 먼저입니다. 무엇을 하면 되는지 알립니다.
             raise orders.quote_subscription_refusal(exc) from exc
-        raise HTTPException(status_code=502, detail=rejected) from exc
+        raise orders.lookup_refusal(exc, what, rejected) from exc
     except NHApiError as exc:
         if paper_unavailable(exc):
             # 모의투자에서는 NH선물이 이 조회를 제공하지 않습니다(`EGW053`).
             logger.info("해외 %s 는 모의투자에서 부를 수 없습니다: %s", what, exc)
             raise orders.paper_refusal(exc) from exc
         logger.warning("해외 %s 응답을 다루지 못했습니다: %s", what, exc)
-        raise HTTPException(status_code=502, detail=rejected) from exc
+        raise orders.lookup_refusal(exc, what, rejected) from exc
     finally:
         _stamp(response)
 

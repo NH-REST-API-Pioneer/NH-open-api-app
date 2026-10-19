@@ -4,6 +4,7 @@ import {
   fill,
   needsPriceFor,
   needsStopFor,
+  oppositeSignalOf,
   operandOf,
   operandWord,
   operatorOf,
@@ -15,6 +16,7 @@ import {
   LEVEL_OPS,
   TAIL,
   type Aux,
+  type OppositeSignal,
   type RightForm,
   type Cond,
   type Rule,
@@ -288,6 +290,13 @@ function blank(value: string): boolean {
   return value.trim() === ''
 }
 
+/** 보유 중 반대 진입 신호를 다루는 방법의 요약 문장. */
+const OPPOSITE_SENTENCE: Record<OppositeSignal, string> = {
+  ignore: '보유 중 반대 진입 신호는 무시합니다.',
+  exit: '보유 중 반대 진입 신호가 걸리면 보유를 닫습니다.',
+  reverse: '보유 중 반대 진입 신호가 걸리면 보유를 닫고 반대 방향으로 들어갑니다.',
+}
+
 export function summarizeAux(
   aux: Aux,
   market: 'domestic' | 'overseas',
@@ -372,6 +381,8 @@ export function summarizeAux(
     `${aux.session}에만 돌고, 보유·미체결이 있으면 추가로 진입` +
       `${aux.addWhileOpen ? '합니다' : '하지 않습니다'}.`,
   )
+  /* 보유 중 반대 진입 신호. 고르는 값뿐이라 빌 일이 없고, 칸이 없는 설정은 「무시」로 읽습니다. */
+  lines.push(OPPOSITE_SENTENCE[oppositeSignalOf(aux.oppositeSignal)])
   /* 신규 진입 시간. 비어 있으면 세션 전체라 적지 않습니다. 못 받는 시각이면 문장을 빼고
      이름을 모읍니다. */
   const windowText = entryWindowText(aux.entryStart ?? '', aux.entryEnd ?? '')

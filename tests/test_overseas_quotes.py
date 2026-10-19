@@ -1,7 +1,7 @@
 """해외 시세 응답이 화면 모양으로 바뀌는지.
 
 **저장소에 해외 시세 기록이 있습니다**(현재가·호가·분봉·일봉). 계좌 쪽과 달리
-여기서는 반입해 둔 실제 응답으로 봅니다 — 값이 아니라 **모양과 규칙**을 봅니다.
+여기서는 저장해 둔 실제 응답으로 봅니다 — 값이 아니라 **모양과 규칙**을 봅니다.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from backend.overseas_futureoption import overseas_quotes
 
 
 def 반입본(api: str) -> list[dict]:
-    """그 API 로 반입해 둔 응답 전부."""
+    """그 API 로 저장해 둔 응답 전부."""
     return [
         json.loads(경로.read_text(encoding="utf-8"))["response"]
         for 경로 in sorted((FIXTURE_ROOT / api).rglob("*.json"))
@@ -239,7 +239,7 @@ def test_봉_시각은_한국_시간으로_보인다():
     관계만으로는 시간대를 못 가립니다(현지 시간이어도 16~17시가 비고 17시에
     바뀝니다). 그래서 그 경계가 **한국의 아침 자리**에 있는지도 함께 봅니다.
 
-    **실호출로 확인한 것이 아닙니다.** 자세한 까닭은 `overseas_quotes.py` 첫머리에.
+    경계 시각은 기록 안의 관계로만 가립니다. 자세한 까닭은 `overseas_quotes.py` 첫머리에.
     """
     큰것 = [응답 for 응답 in 반입본("overseas_chart-minute") if len(응답.get("Occurs1") or []) > 50]
     assert 큰것, "줄이 넉넉한 기록이 있어야 이 시험이 뜻을 가집니다."

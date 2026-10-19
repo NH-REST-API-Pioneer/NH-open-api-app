@@ -7,11 +7,11 @@
 해외는 `err_cd`·`err_msg` 로 실려 옵니다. 이름이 달라 한 자리에서 판정하지
 못하므로 시장마다 자기 칸을 읽고, 화면에는 **같은 모양**으로 냅니다.
 
-**거부 사유만은 서버 문구를 그대로 냅니다.** 다른 라우트는 NH선물이 보낸
-문구를 우리 문구로 바꿔서 냅니다 — 우리가 보낸 값이 되비쳐 브라우저 기록에
-남기 때문입니다. 그런데 주문 거부는 「무엇을 고쳐야 다시 낼 수 있는지」가
-그 문구에 들어 있고, 주문오류내역이 이미 같은 문구를 화면에 내고 있습니다.
-한 화면에서 같은 사실을 두 낱말로 부르지 않으려고 여기서도 원문을 씁니다.
+**거부 사유는 서버 문구를 그대로 냅니다.** 주문 거부는 「무엇을 고쳐야 다시
+낼 수 있는지」가 그 문구에 들어 있고, 주문오류내역이 이미 같은 문구를 화면에
+내고 있습니다. 한 화면에서 같은 사실을 두 낱말로 부르지 않으려고 원문을 씁니다.
+조회가 거절됐을 때도 NH선물이 코드를 주면 코드와 원문을 문장에 싣습니다
+(`lookup_refusal`).
 
 **거부는 실패가 아니라 답입니다.** 주문이 거절된 것은 서버 고장이 아니라
 화면이 폼 자리에 적어야 하는 결과이므로 200 으로 내고 `accepted` 로 가릅니다.
@@ -45,7 +45,9 @@ from backend.nh_api.errors import (
     ERROR_CODE_HEADER,
     ERROR_KIND_HEADER,
     PAPER_UNAVAILABLE_DETAIL,
+    BusinessError,
     GatewayError,
+    HttpError,
 )
 
 # 원주문번호 자리 수. 명세가 앞자리를 0 으로 채운 열 자리를 요구합니다
@@ -71,8 +73,6 @@ REJECTED = "주문을 내지 못했습니다. 잠시 뒤 다시 시도해 주세
 # 것은 **접수 답이 돌아온 자리**여서입니다 — 답 자체를 못 받은 쪽은 다른 문장입니다. 번호 없는 접수를 화면에 얹으면 실시간
 # 알림과 이어 붙지 않는 줄이 목록에 남습니다. 그래서 「무엇이라 했는지 모른다」
 # 쪽(504)으로 내고, 화면은 주문내역을 다시 조회해 확인합니다.
-#
-# **실물로 본 적은 없습니다** — 반입해 둔 주문 응답 둘은 번호가 채워져 있습니다.
 NO_ORDER_NUMBER = (
     "주문은 나갔는데 주문번호를 받지 못했습니다. 주문체결상세에서 확인해 주세요."
 )
@@ -82,7 +82,7 @@ def order_no(text: Any) -> str:
     """원주문번호를 명세 자리 수에 맞춥니다.
 
     이미 열 자리면 그대로입니다. 열 자리보다 길면 **자르지 않고 그대로**
-    보냅니다 — 우리가 모르는 규칙으로 번호가 길어졌을 때 앞뒤를 잘라 보내면
+    보냅니다 — 알려지지 않은 규칙으로 번호가 길어졌을 때 앞뒤를 잘라 보내면
     엉뚱한 주문을 건드릴 수 있습니다. 그 판단은 서버가 하게 둡니다.
     """
     body = str(text or "").strip()
@@ -210,9 +210,9 @@ def accepted(
     """접수된 주문 하나. 두 시장이 같은 낱말을 씁니다.
 
     **국내 응답에는 종목도 수량도 없습니다**(주문번호와 메시지 세 칸뿐).
-    그래서 종목·방향·수량은 **우리가 보낸 값을 되비쳐** 담습니다. 주소가 시장을
-    정하는 것과 같은 자리입니다 — 서버가 안 준 값을 지어내는 것이 아니라,
-    우리가 방금 무엇을 보냈는지 적어 두는 것입니다.
+    그래서 종목·방향·수량은 **요청에 실어 보낸 값을 되비쳐** 담습니다. 주소가
+    시장을 정하는 것과 같은 자리입니다 — 서버가 안 준 값을 지어내는 것이 아니라,
+    방금 무엇을 보냈는지 적는 것입니다.
 
     화면이 주문 결과를 목록 위에 얹을 때 쓰는 이름은 주문내역·실시간 알림과
     같습니다(`id`·`code`·`side`).
@@ -241,8 +241,8 @@ def failed(code: str) -> bool:
     """그 코드가 **거절**을 뜻하는지. 비었거나 **전부 0 이면 아닙니다.**
 
     **정상 답에도 코드가 실려 옵니다.** 해외 주문은 접수됐을 때 `err_cd` 로
-    `00000`(「주문이 정상처리 되었습니다.」)을 보냅니다 — 모의 계좌로 신규·정정·
-    취소를 내 보고 확인했습니다(2026-09-23). 「코드가 있으면 거절」로 읽으면
+    `00000`(「주문이 정상처리 되었습니다.」)을 보냅니다 — 신규·정정·취소 모두
+    그렇습니다. 「코드가 있으면 거절」로 읽으면
     **계좌에 들어간 주문을 거절이라고 답하게 됩니다.**
 
     자리 수를 안 세는 것은, 같은 뜻을 `0`·`0000` 처럼 다른 길이로 보내는 날
@@ -327,3 +327,45 @@ def quote_subscription_refusal(exc: BaseException) -> HTTPException:
         },
     )
 
+
+def lookup_refusal(exc: BaseException, what: str, fallback: str) -> HTTPException:
+    """**조회**가 거절됐을 때의 답(502). NH선물이 코드를 줬으면 코드와 문구를 싣습니다.
+
+    문장은 `{what} 조회가 거절되었습니다 — {코드} {문구}` 입니다. 문구 차례는
+    **원문 → 사전의 예비 문구 → 코드만**입니다(`error_codes.describe`). 코드를
+    함께 내는 것은 같은 거절을 문의하거나 찾아볼 때 쓰는 열쇠가 코드이기
+    때문입니다. 헤더 `x-nh-error-code`·`x-nh-error-kind` 에도 같은 코드와 갈래를
+    답니다 — 모의투자에서 막힌 조회의 답과 같은 꼴입니다.
+
+    **코드가 없으면 `fallback` 문장 그대로입니다.** 무엇이 막혔는지 모르는 채로
+    지어내지 않습니다.
+    """
+    code, said = _refusal_of(exc)
+    if not code:
+        return HTTPException(status_code=502, detail=fallback)
+    message = error_codes.describe(code, said)["message"]
+    detail = f"{what} 조회가 거절되었습니다 — {code} {message}".rstrip()
+    return HTTPException(
+        status_code=502,
+        detail=detail,
+        headers={
+            ERROR_KIND_HEADER: str(getattr(exc, "kind", "") or "") or error_codes.kind_of(code),
+            ERROR_CODE_HEADER: code,
+        },
+    )
+
+
+def _refusal_of(exc: BaseException) -> tuple[str, str]:
+    """거절에 실려 온 (코드, 서버 문구). 없으면 빈 글자입니다.
+
+    업무 거부·게이트웨이 거절은 코드와 문구를 칸으로 들고 옵니다. HTTP 오류는
+    응답 본문의 `errorCode`·`errorMessage` 를 봅니다.
+    """
+    if isinstance(exc, (BusinessError, GatewayError)):
+        return str(exc.code or "").strip(), str(exc.detail or "").strip()
+    if isinstance(exc, HttpError):
+        found = error_codes.failure_of(exc.body)
+        if found is not None:
+            return found["code"], found["message"]
+        return "", ""
+    return str(getattr(exc, "code", "") or "").strip(), str(getattr(exc, "detail", "") or "").strip()

@@ -36,7 +36,7 @@ class NHApiError(Exception):
 
 
 class TransportError(NHApiError):
-    """응답을 받지 못했습니다.
+    """응답을 받지 못한 경우입니다.
 
     **시간 초과는 실패와 다릅니다.** 주문을 보내고 시간이 초과되면 접수 여부를
     알 수 없으므로, 같은 주문을 다시 보내기 전에 주문내역으로 확인해야 합니다.
@@ -44,7 +44,7 @@ class TransportError(NHApiError):
 
 
 class HttpError(NHApiError):
-    """HTTP 오류 응답을 받았습니다.
+    """HTTP 오류 응답을 받은 경우입니다.
 
     본문은 `errorTime`, `errorMessage`, `errorStatus`, `errorPath` 네 항목으로
     옵니다. 서버가 보낸 설명을 그대로 `body` 에 남깁니다.
@@ -63,7 +63,7 @@ class HttpError(NHApiError):
 
 
 class BusinessError(NHApiError):
-    """업무 처리가 거부되었습니다.
+    """업무 처리가 거부된 경우입니다.
 
     **HTTP 상태와 상관없습니다.** 200 으로 오면서 본문에 거부 사유가 담기는
     자리가 있습니다. 주문 계열의 `msg_cd`·`err_cd` 와, 숫자로 된 `errorCode`
@@ -95,7 +95,7 @@ def paper_unavailable(exc: BaseException) -> bool:
 
 
 class GatewayError(NHApiError):
-    """게이트웨이·실시간 접속 쪽이 거절했습니다(`EG`·`EGW`·`EST` 코드).
+    """게이트웨이·실시간 접속 쪽이 거절한 경우입니다(`EG`·`EGW`·`EST` 코드).
 
     **업무 거부와 다른 자리입니다.** 업무 거부는 「서버가 보고 안 된다고 한
     것」이라 주문 화면이 「거절되었습니다」로 적어도 맞지만, 이쪽은 **요청이

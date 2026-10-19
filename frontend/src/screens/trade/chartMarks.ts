@@ -29,7 +29,7 @@ export interface TradeMark {
   id: string
   kind: MarkKind
   /** 이 표가 앉을 봉의 시각. 주문·신호 시각이 아니라 **체결이 실제로 붙은
-   *  봉**입니다(원본 §8). */
+   *  봉**입니다. */
   time: number
   /** 체결 하나면 그 값, 여럿이 묶였으면 **수량 가중평균**입니다(`mergeMarks`). */
   price: number
@@ -57,7 +57,7 @@ export interface TradeMark {
   /** 체결이 난 시각(ms). 묶인 표지에서 **가장 이른 체결**을 가리는 데 씁니다. */
   firstAt?: number
   /** 그 체결(묶이면 가장 이른 체결)의 당시 지표. 칸이 없으면 옛 기록, `null` 이면
-   *  우리가 내지 않은 주문입니다 — 둘 다 상세에 그 절을 세우지 않습니다. */
+   *  전략 엔진이 내지 않은 주문입니다 — 둘 다 상세에 그 절을 세우지 않습니다. */
   snapshot?: FillSnapshot | null
   /** 수수료(묶이면 합). 묶인 체결 가운데 하나라도 칸이 없으면 모르는 값입니다. */
   fee?: number
@@ -234,7 +234,7 @@ export function ensureMarkOverlay(): void {
       const color = token(mark.side === 'buy' ? '--up' : '--down')
       /* **체결만 속을 채웁니다.** 신호·주문은 「그럴 뻔했다」이지 「그랬다」가
          아니라, 같은 모양으로 그리면 켜는 순간 사지도 않은 자리가 산 자리와
-         구별되지 않습니다(원본 §8). 속이 빈 것은 아직 값이 아니라는 뜻입니다. */
+         구별되지 않습니다. 속이 빈 것은 아직 값이 아니라는 뜻입니다. */
       const done = mark.kind === 'fill'
       const figures: OverlayFigure[] = []
       /* 표면색 링을 한 겹 깔아 봉에서 떼어 냅니다. **채운 표에도 답니다** —

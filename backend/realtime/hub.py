@@ -29,13 +29,24 @@
     {"type": "quote", "context", "sym", "patch": {...}, "trades": [...]}
     {"type": "book",  "context", "sym", "asks": [...], "bids": [...], "time", "expectedPrice"?}
     {"type": "orders", "market", "events": [...]}
-    {"type": "subscriptions", "granted": [...], "rejected": [...]}
+    {"type": "subscriptions", "granted": [...], "rejected": [...], "failed": [...]}
     {"type": "status", "market", "state", "detail", "refill"?, "sym"?}
     {"type": "environment", "active": "paper" | "real"}
     {"type": "session", "market": "domestic", "state", "session", "since", "until", "nextOpen"}
 
 `patch` 는 **`Quote` 전체가 아니라 실시간이 말할 수 있는 항목만**입니다. 화면은
 받은 항목만 갈아 끼웁니다. 자세한 것은 `feeds` 첫머리에 있습니다.
+
+`subscriptions` 는 화면이 선언한 구독을 **그 화면이 보낸 모양 그대로** 나눠 답합니다.
+`granted` 는 걸려서 값이 올 구독, `rejected` 는 값이 오지 않을 구독입니다 — 스무
+자리가 모자라 밀린 것과 서버가 거절한 것이 둘 다 여기 듭니다. 서버가 거절한 것은
+`failed` 에도 까닭과 함께 한 번 더 실립니다.
+
+    "failed": [{"context": "overseas", "kind": "quote", "sym": "BRNZ26",
+                "code": "RT_FAIL", "message": "해당 종목은 시세사용신청 후 ..."}]
+
+`code` 와 `message` 는 서버가 보낸 그대로입니다. 거절이 생기거나 풀릴 때(다시
+붙어 새로 걸 때 등) 붙어 있는 화면에 `subscriptions` 를 다시 보냅니다.
 
 `status` 의 `state` 는 `connecting` · `live` · `reconnecting` · `stopped` 이고,
 저장본으로 돌 때는 `replay-finished` · `replay-empty` 가 더 옵니다. 그 둘은
@@ -198,6 +209,14 @@ class MarketGroup:
         self._links.append(link)
         return link
 
+    @property
+    def failures(self) -> dict[StreamKey, tuple[str, str]]:
+        """이 계좌의 연결들이 서버에게 거절당한 구독과 (코드, 글)."""
+        made: dict[StreamKey, tuple[str, str]] = {}
+        for link in self._links:
+            made.update(getattr(link, "failures", {}))
+        return made
+
     async def refresh(self, key: StreamKey) -> None:
         """이 구독을 들고 있는 연결에서 해제했다가 다시 겁니다(`Connection.refresh`)."""
         for link in self._links:
@@ -291,7 +310,7 @@ class Hub:
     # ── 화면 ────────────────────────────────────────────────
 
     def attach(self, name: str) -> Client:
-        """화면 하나가 붙었습니다.
+        """화면 하나가 붙을 때 부릅니다.
 
         연결이 서 있는 시장마다 **지금 상태**를 먼저 알립니다. 다른 화면이 마지막으로
         받은 상태와 같습니다 — 다시 붙는 중인 시장을 「받는 중」으로 알리면 새 화면만
@@ -317,7 +336,7 @@ class Hub:
         return client
 
     async def detach(self, name: str) -> None:
-        """화면 하나가 나갔습니다. 그 몫의 구독을 놓습니다."""
+        """화면 하나가 나갈 때 부릅니다. 그 몫의 구독을 놓습니다."""
         self._clients.pop(name, None)
         self._ledger.release(name)
         await self._reconcile()
@@ -371,13 +390,21 @@ class Hub:
         해제와 구독 사이에 잠깐 값을 못 받습니다(`Connection.refresh`).
         """
         async with self._lock:
-            for feed in feeds:
-                key = stream_key(feed)
-                if key not in self._subscribed:
-                    continue
-                group = self._groups.get(feed.market)
-                if group is not None:
-                    await group.refresh(key)
+            before = self._failures()
+            await self._refresh_locked(feeds)
+            # 다시 걸며 지운 실패가 있으면 알립니다 — 이 동안 `_on_failure` 는 답하지 않습니다.
+            if self._failures() != before:
+                self._answer(self._subscribed)
+
+    async def _refresh_locked(self, feeds: list[Feed]) -> None:
+        """`refresh` 의 몸. **`_lock` 을 쥔 채로만** 부릅니다."""
+        for feed in feeds:
+            key = stream_key(feed)
+            if key not in self._subscribed:
+                continue
+            group = self._groups.get(feed.market)
+            if group is not None:
+                await group.refresh(key)
 
     # ── 안쪽 ────────────────────────────────────────────────
 
@@ -449,17 +476,50 @@ class Hub:
         주문 알림을 각각 선언하면 NH선물 쪽에서는 하나로 모이는데, 대표 하나만
         방송하면 야간 화면은 자기가 보낸 것이 받아들여진 목록에도 밀린 목록에도
         없는 답을 받습니다. 남의 화면이 밀린 것까지 섞여 옵니다.
+
+        서버가 거절한 구독은 걸려 있어도 값이 오지 않으므로 `rejected` 에 두고,
+        까닭은 `failed` 에 붙입니다.
         """
+        failures = self._failures()
         for client in self._clients.values():
-            granted = [feed for feed in client.feeds if stream_key(feed) in live]
-            rejected = [feed for feed in client.feeds if stream_key(feed) not in live]
+            granted = [
+                feed
+                for feed in client.feeds
+                if stream_key(feed) in live and stream_key(feed) not in failures
+            ]
+            rejected = [feed for feed in client.feeds if feed not in granted]
+            failed = []
+            for feed in client.feeds:
+                failure = failures.get(stream_key(feed))
+                if failure is not None:
+                    code, message = failure
+                    failed.append({**feed.as_dict(), "code": code, "message": message})
             client.send(
                 {
                     "type": "subscriptions",
                     "granted": [feed.as_dict() for feed in granted],
                     "rejected": [feed.as_dict() for feed in rejected],
+                    "failed": failed,
                 }
             )
+
+    def _failures(self) -> dict[StreamKey, tuple[str, str]]:
+        """모든 계좌의 연결이 서버에게 거절당한 구독과 (코드, 글)."""
+        made: dict[StreamKey, tuple[str, str]] = {}
+        for group in self._groups.values():
+            made.update(group.failures)
+        return made
+
+    def _on_failure(self) -> None:
+        """연결이 거절된 구독을 새로 알았거나 지웠을 때 부릅니다. 화면에 다시 답합니다.
+
+        **구독을 맞추는 중(`_lock` 을 쥔 동안)에는 답하지 않습니다.** 그 사이의
+        구독 목록은 아직 새 선언이 반영되기 전이라, 여기서 답하면 막 올린 구독이
+        「밀림」으로 나갑니다. 맞추는 쪽이 끝에 지금의 실패를 실어 한 번 답합니다.
+        """
+        if self._lock.locked():
+            return
+        self._answer(self._subscribed)
 
     def _group(self, market: str) -> MarketGroup:
         session = self.session
@@ -500,6 +560,7 @@ class Hub:
                 on_state=self._on_state,
                 gate=self._gate,
                 connect=self._connect,
+                on_failure=self._on_failure,
             )
 
         return MarketGroup(market, capacity=capacity, make_link=make_live)
@@ -541,14 +602,14 @@ class Hub:
         """지금까지 화면이 붙은 횟수. 다시 붙은 것도 셉니다.
 
         바뀐 것이 있을 때만 방송하는 쪽(`strategy.pump`)이 이 값이 늘었으면
-        같은 내용이라도 한 번 더 보냅니다 — 새 화면은 앞 방송을 받지 못했습니다.
+        같은 내용이라도 한 번 더 보냅니다 — 새 화면은 앞 방송을 받지 않았기 때문입니다.
         """
         return self._attached
 
     def publish(self, payload: dict[str, Any]) -> None:
         """백엔드 안에서 만든 것을 붙어 있는 화면 전부에 보냅니다.
 
-        NH선물에서 온 값이 아니라 **우리가 만든 것**을 내보내는 자리입니다 —
+        NH선물에서 온 값이 아니라 **백엔드가 만든 것**을 내보내는 자리입니다 —
         전략 실행 상태처럼 구독과 짝이 없는 것이 여기로 갑니다. 구독으로 오는
         값은 `_on_data` 를 거치므로 이 자리를 쓰지 않습니다.
         """
@@ -626,7 +687,7 @@ def session_notice(now: datetime) -> tuple[dict[str, Any], float]:
     공통 표의 경계 하나로 재면 소수 쪽 품목의 경계에서 시계가 안 울려, 그
     품목을 보던 화면은 다음 경계까지 옛 세션으로 남습니다.
 
-    `until` 은 지금처럼 **공통 표 기준**입니다. `nextEdge` 와 다를 수 있고,
+    `until` 은 **공통 표 기준**입니다. `nextEdge` 와 다를 수 있고,
     다른 것이 정상입니다 — 하나는 「이 시계의 세션이 끝나는 때」, 하나는 「어느
     품목이든 다음으로 뭔가 바뀌는 때」입니다.
     """

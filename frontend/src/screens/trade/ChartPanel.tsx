@@ -38,7 +38,7 @@ const PERIODS: Span[] = ['day', 'minute']
 /* 도구 줄에 단추로 나오는 지표. 나머지는 설정에서 켭니다. */
 const QUICK_INDICATORS = ['MA', 'BOLL', 'VOL', 'MACD', 'RSI']
 
-/* 그리기 도구. 이름은 라이브러리의 오버레이 이름이고, 사각형만 우리가 등록합니다. */
+/* 그리기 도구. 이름은 라이브러리의 오버레이 이름이고, 사각형만 이 앱이 등록합니다. */
 const DRAW_TOOLS = [
   { name: 'segment', label: '추세선', icon: '╱' },
   { name: 'horizontalStraightLine', label: '수평선', icon: '─' },
@@ -101,7 +101,7 @@ export function ChartPanel({
   /* 지표 설정. 사용자가 고른 것이라 다음에 열어도 그대로입니다. */
   const [storedSettings, storeSettings] = useUiState<unknown>(SETTINGS_KEY, null)
   const [settings, setSettings] = useState<IndicatorSettings>(() => {
-    /* 예전 버전은 이동평균 기간만 따로 남겼습니다. 새 설정이 없을 때만 그 값을
+    /* 옛 형식의 저장값에는 이동평균 기간만 따로 있습니다. 새 설정이 없을 때만 그 값을
        가져옵니다 — 사용자가 고른 기간이 업데이트로 사라지면 안 됩니다. */
     const base = normalizeSettings(storedSettings)
     if (storedSettings === null) {

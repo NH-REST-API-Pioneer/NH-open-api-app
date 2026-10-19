@@ -210,14 +210,14 @@ function overseasBodyOf(
   return { body }
 }
 
-/** 서버가 낸 문장. 없으면 우리 문장을 쓰지 않고 상태 코드만 말합니다 — 사유를
+/** 서버가 낸 문장. 없으면 화면이 지은 문장을 쓰지 않고 상태 코드만 말합니다 — 사유를
  *  지어내면 사용자가 그것을 서버의 말로 읽습니다. */
 function reasonOf(body: unknown, status: number): string {
   const said = body as { reason?: unknown; detail?: unknown; message?: unknown } | null
   /* **요청 값 검사(422)** 는 검사 목록으로 옵니다. 첫 항목의 문장만 한 줄로 씁니다.
-     우리 검사기의 한국어 문장에는 검사 도구가 「Value error, 」를 앞에 붙이므로 떼고,
+     백엔드 검사기의 한국어 문장에는 검사 도구가 「Value error, 」를 앞에 붙이므로 떼고,
      한글이 한 자라도 있으면 그대로 둡니다. 영어뿐인 문장(형식 검사)은 서버의 말처럼
-     세우지 않고 우리 문장으로 대신합니다. */
+     세우지 않고 화면의 문장으로 대신합니다. */
   if (status === 422 && Array.isArray(said?.detail)) {
     const first = (said.detail[0] ?? null) as { msg?: unknown } | null
     const msg = typeof first?.msg === 'string' ? first.msg.replace(/^Value error,\s*/, '').trim() : ''

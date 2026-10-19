@@ -18,6 +18,7 @@ import {
   loadRuns,
   patchRun,
   reconcileRuns,
+  refreshConditions,
   savedOf,
   seedFromSelection,
   snapshotOf,
@@ -72,6 +73,8 @@ import { overseasCurrencies, useTimetable } from '../../data/session'
 import { useEnvironment, type Environment } from '../../data/environment'
 import { EnvSplitNote, RUN_KIND_LABEL, RunKindBadge, envSplit } from './runKind'
 import { PICK_HINT, RunStats, runNameOf, targetLine, targetsOf } from './runStats'
+import { ConditionTable } from './ConditionTable'
+import { RunStatusCard } from './RunStatusCard'
 
 /* 전략 진행 — 연결 계좌로 거래하는 화면.
  *
@@ -143,7 +146,8 @@ const ORDER_NO_FITS = 645
  *  (84 → 112, `run-col-time.is-tick`). */
 const ORDER_NO_FITS_TICK = 673
 
-const BOTTOM_TABS = ['최근 체결', '미체결', '이벤트'] as const
+/* 「조건」은 검증 탭과 같은 표입니다 — 마지막 판정 봉에서 규칙마다 무엇을 기다리는지. */
+const BOTTOM_TABS = ['최근 체결', '미체결', '이벤트', '조건'] as const
 type BottomTab = (typeof BOTTOM_TABS)[number]
 
 /** 아래 표의 한 줄. **체결과 미체결이 한 꼴로 섭니다** — 줄에 어떤 칸이 있나로
@@ -183,7 +187,7 @@ const NOTE_DWELL = 6000
 /* 대조 결과 한 줄. 수는 **서버 답의 수**입니다 — 맞춰 본 실행과 그 가운데
    어긋난 실행. 어긋난 실행이 있으면 「일치」 대신 두 수를 함께 적습니다 —
    「n개 일치」만 적으면 확인이 필요한 실행이 있어도 다 맞은 것으로 읽힙니다.
-   답에 수가 없으면(옛 서버) 맞춰 봤다는 것만 적습니다. */
+   답에 수가 없으면 맞춰 봤다는 것만 적습니다. */
 function reconciledText(count: ReconcileCount | null): string {
   const head = '계좌와 대조했습니다'
   if (count === null) return head
@@ -206,7 +210,7 @@ type Confirm = {
 export function StrategyRun() {
   /* 실행·체크·보는 실행은 **화면 밖**에 있습니다. 보낸 요청(「취소 요청」·
      「확인 필요」)이 탭을 옮겼다는 이유로 사라지면, 화면이 아직 안 끝난 일을
-     없던 일로 말하게 됩니다(원본 §2·§7).
+     없던 일로 말하게 됩니다.
      여러 실행에 한 번에 거는 동작이 있어 **다중 선택**입니다. 고르는 것(체크)과
      보는 것(줄 몸 누름)을 따로 둡니다 — 검증 화면도 같은 두 겹입니다. */
   const store = useStrategyState()
@@ -421,6 +425,23 @@ export function StrategyRun() {
     void loadRunSnapshot(shown?.id ?? '')
   }, [shown?.id])
 
+  /* 조건 표는 **허브 방송에 없습니다** — 보는 실행의 판정 봉이 바뀌면 그 실행의 표만
+     한 번 다시 받습니다(봉당 한 번, 검증 탭과 같은 길). 받는 중이면 겹쳐 내지 않고
+     다음 봉에 받습니다. */
+  const conditionsFlying = useRef(false)
+  const seenBar = useRef<{ id: string; bars: number | null } | null>(null)
+  useEffect(() => {
+    if (!shown) return
+    const seen = seenBar.current
+    seenBar.current = { id: shown.id, bars: shown.bars }
+    if (!seen || seen.id !== shown.id || seen.bars === shown.bars) return
+    if (conditionsFlying.current) return
+    conditionsFlying.current = true
+    void refreshConditions(shown.id).finally(() => {
+      conditionsFlying.current = false
+    })
+  }, [shown?.id, shown?.bars])
+
   /* 아래 표의 행. **한 벌이 들고 온 값 그대로**입니다 — 표가 값을 따로
      세우면 같은 체결에 두 값이 생깁니다. */
   const rows = useMemo<VerifyFill[]>(
@@ -523,7 +544,7 @@ export function StrategyRun() {
 
   /* 이 요청이 건드리지 않는 줄. **서버가 400 으로 막는 자리와 같습니다** —
      「확인 필요」와 「대사 중」은 사용자가 손을 써야 넘어가는 상태라, 새 요청을
-     보냈다고 사라지면 화면이 「끝난 일」로 말하게 됩니다(규격 §7). 「확인 필요」
+     보냈다고 사라지면 화면이 「끝난 일」로 말하게 됩니다. 「확인 필요」
      줄의 「실행 종료」만은 예외입니다(`skipWhy`). */
   const blocks = (run: VerifyRun) => run.state === 'attention' || run.state === 'reconciling'
 
@@ -906,7 +927,7 @@ export function StrategyRun() {
               </b>
             </span>
             {/* 서버가 받은 STOP 과 앱이 보고 있는 손절은 다릅니다 — 앱이 꺼지면
-                뒤엣것은 멈춥니다(원본 §7). 그래서 「앱 감시」를 함께 적습니다. */}
+                뒤엣것은 멈춥니다. 그래서 「앱 감시」를 함께 적습니다. */}
             <span className="run-bar-item run-watch">
               <b>{watchLine(watch)}</b> · 앱 감시
               {/* 이어진 손실과 그 한도. 규칙대로 도는 중이라 중립 글자입니다. */}
@@ -942,6 +963,18 @@ export function StrategyRun() {
             </p>
           )}
 
+          {/* 지금 상태 — 자금·가격·신호가 나면 나갈 주문. 값은 실행 줄이 실어 온 그대로입니다.
+              「확인 필요」 띠보다 아래입니다 — 손을 써야 하는 일이 먼저 보여야 합니다. */}
+          {shown && (
+            <RunStatusCard
+              run={shown}
+              aux={watch}
+              rules={savedOf(shown.version)?.rules}
+              decimals={decimals}
+              currency={runCurrency(shown)}
+            />
+          )}
+
           <div className="run-bottom">
             <div className="tabs tabs-inline run-bottom-tabs">
               {BOTTOM_TABS.map((item) => (
@@ -958,7 +991,9 @@ export function StrategyRun() {
             </div>
 
             <div className="table-scroll run-table" ref={tableBoxRef}>
-              {bottom === '이벤트' ? (
+              {bottom === '조건' ? (
+                <ConditionTable conditions={snapshot?.conditions} decimals={decimals} tick={tickRun} />
+              ) : bottom === '이벤트' ? (
                 <table className="data-table rows-base">
                   <colgroup>
                     <col className={`run-col-time${tickRun ? ' is-tick' : ''}`} />
@@ -1070,7 +1105,7 @@ export function StrategyRun() {
                         </td>
                         {/* 체결은 채워진 수량, 미체결은 **남은 수량**입니다 —
                             낸 수량을 적으면 부분체결이 안 줄어든 것처럼 보입니다.
-                            어느 쪽인지는 위에서 탭이 정해 두었습니다. */}
+                            어느 쪽인지는 위에서 탭이 정합니다. */}
                         <td>{one.amount}</td>
                       </tr>
                     ))}
@@ -1130,7 +1165,7 @@ export function StrategyRun() {
               있어도 거짓입니다. 그래서 세는 것은 **요청이 실제로 나가는 건수**
               이고, 빠지는 줄은 목록에 두되 왜 빠지는지를 그 줄에 답니다.
               「확인 필요」는 사용자가 손을 써야 넘어가는 상태라 이 요청이
-              건드리지 않습니다(원본 §7). */}
+              건드리지 않습니다. */}
           {/* 괄호는 둘입니다 — **목록에 선 것 중 안 나가는 수**(제외)와 **이미
               중지되어 목록에 서지도 않은 수**. 둘 다 0 이면 적지 않고, 뒤엣것은
               「전체」에서만 생깁니다.
@@ -1181,7 +1216,7 @@ export function StrategyRun() {
               그만두기
             </button>
             {/* 나갈 요청이 하나도 없으면 누를 것이 없습니다 — 눌러서 아무 일도
-                안 나는 단추를 두지 않습니다(규격 §3). */}
+                안 나는 단추를 두지 않습니다. */}
             <button
               type="button"
               className="btn btn-heavy"
@@ -1422,7 +1457,7 @@ function LimitsForm({
 }
 
 /* 거래 추가 — 마지막에 **모의/실전 계좌·실제 계약·수량·청산 감시 방식**을
- * 다시 보여 주고 시작합니다(원본 §7).
+ * 다시 보여 주고 시작합니다.
  *
  * 계좌는 읽기만 합니다. 계좌번호·비밀번호를 새로 받는 자리를 만들지 않고
  * 설정에 있는 것을 씁니다. */
@@ -1706,7 +1741,7 @@ function RunAddForm({
         </select>,
       )}
       {/* 종목은 **품목이 정하고 월물만 고릅니다.** 품목 칸을 여기 두면 전략이
-          말하는 종목과 다른 종목으로 도는 실행이 생깁니다(규격 §1-1). */}
+          말하는 종목과 다른 종목으로 도는 실행이 생깁니다. */}
       {field('종목', <span className="run-add-fixed">{instrument || '—'}</span>)}
       {field(
         '월물',

@@ -47,7 +47,7 @@ export function targetLine(count: number): string {
  *  손익은 실현 + 평가이고, 둘 중 하나라도 모르면 손익 조각이 「—」입니다. 칸이 없는 옛
  *  서버면 그 조각은 「—」입니다. 끝난 실행에도 섭니다. */
 export function RunStats({ run, currency }: { run: VerifyRun; currency: string }) {
-  /* 칸이 없는 옛 서버(`undefined`)와 값을 모르는 서버(`null`)는 둘 다 「—」입니다.
+  /* 칸이 없는 답(`undefined`)과 값을 모른다는 답(`null`)은 둘 다 「—」입니다.
      0 은 센 값이라 「0」으로 적습니다. */
   const count = (value: number | null | undefined) => (value == null ? '—' : value.toLocaleString('ko-KR'))
   const realized = run.realizedPl

@@ -36,8 +36,8 @@ import type {
  * 한 벌만 두고 화면이 그것을 읽습니다.
  *
  * **전략 목록과 설정은 서버에 남습니다.** 새로고침하면 서버에서 다시 받아
- * 오므로 고쳐 둔 것이 그대로 섭니다. 검증·진행 실행은 아직 채우는 쪽이 없어
- * 빈 목록으로 시작합니다 — 지어낸 실행을 세우지 않습니다.
+ * 오므로 고쳐 둔 것이 그대로 섭니다. 검증·진행 실행은 빈 목록으로 시작해 서버의
+ * 답으로 채웁니다 — 지어낸 실행을 세우지 않습니다.
  */
 
 export const STRATEGY_TABS = ['전략 목록', '전략 설정', '전략 검증', '전략 진행', '전략 분석'] as const
@@ -66,7 +66,7 @@ export interface SaveProblem {
 export interface SaveResult {
   /** 저장됐는지. 경고만 있으면 참입니다. */
   ok: boolean
-  /** 서버가 준 한 줄. 못 보냈으면 우리가 지은 한 줄입니다. */
+  /** 서버가 준 한 줄. 못 보냈으면 화면이 지은 한 줄입니다. */
   message: string
   problems: SaveProblem[]
   /** 막힌 일의 이름(「저장」 대신 설 말). 없으면 「저장」입니다. */
@@ -460,7 +460,7 @@ export async function saveVersion(id: string): Promise<SaveResult> {
   let result: SaveResult
   /* 서버가 담은 설정. 서버는 보낸 설정을 **정리해서** 담습니다(해외 전략의 체결조건을
      비우는 것처럼) — 보낸 사본을 저장값으로 두면 화면의 저장값이 서버와 갈립니다.
-     답에 없으면(옛 서버) 보낸 것입니다. */
+     답에 없으면 보낸 것입니다. */
   let stored: SettingsDraft = settings
   try {
     const answer = await fetch(`${ROUTE}/${encodeURIComponent(id)}`, {
@@ -741,7 +741,7 @@ export interface AddRunAsk {
  *
  *  짚은 칸이 있으면 **그 문장이 먼저**입니다 — 머리말(「검증 실행을 시작하지
  *  못했습니다」)은 무엇이 막았는지 말하지 않습니다. 실행 라우트는 첫 까닭
- *  하나만 세웁니다(규격 §7 「화면에는 첫 까닭 하나만」). */
+ *  하나만 세웁니다(「화면에는 첫 까닭 하나만」 규칙). */
 export async function whyOf(answer: Response): Promise<string> {
   const body = await answer.json().catch(() => null)
   const found = problemsOf(body)
@@ -864,7 +864,7 @@ async function reloadSnapshots(only?: (run: VerifyRun) => boolean): Promise<void
 }
 
 /** 검증 실행 하나를 세웁니다. **막히면 까닭을 그대로 돌려줍니다** — 서버가
- *  시작 검사를 하고(§9), 화면은 그 문장을 패널에 세웁니다. */
+ *  시작 검사를 하고, 화면은 그 문장을 패널에 세웁니다. */
 export async function addRun(ask: AddRunAsk): Promise<boolean> {
   patchVerify({ addWhy: null })
   try {

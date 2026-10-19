@@ -64,7 +64,7 @@ class Coalescer:
             self._orders[key] = (feed, events)
 
     def drop(self, key: StreamKey) -> None:
-        """이 구독을 그만두었습니다. 아직 안 보낸 것도 버립니다.
+        """이 구독을 그만둘 때 부릅니다. 아직 안 보낸 것도 버립니다.
 
         주문/체결 알림은 버리지 않습니다 — 화면이 그만 보겠다고 한 것과 체결이
         일어나지 않은 것은 다릅니다.

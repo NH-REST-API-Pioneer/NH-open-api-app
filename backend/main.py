@@ -123,7 +123,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         task.cancel()
         hours.cancel()
         # 실시간 연결을 먼저 닫습니다. 구독 해제를 보내고 나가야 서버 쪽에
-        # 우리 자리가 남지 않습니다.
+        # 이 앱의 구독이 남지 않습니다.
         await realtime_hub.reset()
         # 열어 둔 접속을 닫습니다. 데스크톱 앱은 백엔드를 스레드로 띄우므로
         # 프로세스가 끝나기 전에 여기서 정리해 두는 편이 깔끔합니다.
@@ -226,8 +226,8 @@ class MarketCredentials(BaseModel):
     """한 시장의 인증 정보 중 **사용자가 실제로 고친 항목만** 담습니다.
 
     빠진 항목은 「안 바꿈」이라 설정 파일의 값이 그대로 남습니다. 화면이 가린
-    값을 되돌려 보내 실제 값을 덮어쓰는 일이 생기지 않도록, 애초에 안 보내는
-    쪽으로 만들었습니다.
+    값을 되돌려 보내 실제 값을 덮어쓰는 일이 생기지 않도록, 애초에 안 보내게
+    합니다.
     """
 
     app_key: str | None = None
@@ -384,7 +384,7 @@ async def _switch_environment(target: str) -> None:
 
     바꾸는 동안 주문 라우트는 주문을 받지 않습니다(`orders.refusal`).
 
-    **돌고 있는 전략 실행이 있으면 아예 바꾸지 않습니다**(결정 13) — 까닭은
+    **돌고 있는 전략 실행이 있으면 아예 바꾸지 않습니다** — 까닭은
     `backend/strategy/service.py` 의 `running()` 에.
     """
     if not nh_runtime.begin_switch():
@@ -393,7 +393,7 @@ async def _switch_environment(target: str) -> None:
         if target == nh_runtime.active_environment():
             return
 
-        # 돌고 있는 전략 실행이 있으면 바꾸지 않습니다(결정 13). 모의와 실전은
+        # 돌고 있는 전략 실행이 있으면 바꾸지 않습니다. 모의와 실전은
         # 다른 계좌라 환경이 바뀌면 시세도 장부도 다른 것이 되는데, 판정 중인
         # 실행은 그 경계를 모른 채 이어 갑니다.
         busy = await asyncio.to_thread(strategy_service.service.running)
@@ -628,8 +628,8 @@ def _check_credentials(updates: dict) -> list[dict[str, object]]:
     닿는 것입니다. 접속 자리를 만들 수 없으면(인증 정보가 하나도 없음) 확인할 것이
     없습니다.
 
-    실패 사유는 우리가 만든 문구만 내보냅니다. NH선물 서버의 원본 응답을 그대로
-    넘기면 그 안에 우리가 보낸 값이 되비쳐 올 수 있고, 그러면 브라우저의
+    실패 사유는 이 앱이 만든 문구만 내보냅니다. NH선물 서버의 원본 응답을 그대로
+    넘기면 그 안에 이 앱이 보낸 값이 되비쳐 올 수 있고, 그러면 브라우저의
     네트워크 탭과 콘솔에 인증 정보가 남습니다.
     """
     try:

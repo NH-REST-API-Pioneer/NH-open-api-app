@@ -140,7 +140,7 @@ EXIT_STATES = frozenset({ENTERING, HOLDING, PAUSED})
 #: 손절·익절을 **틱마다 보는** 상태. 청산 주문이 나가 있으면 그 주문이 곧 감시입니다.
 WATCH_STATES = frozenset({HOLDING, PAUSED})
 
-#: **어떤 요청도 내지 않는 상태**(§7-2·§7-3). 확인이 필요한 실행에는 사용자가
+#: **어떤 요청도 내지 않는 상태**. 확인이 필요한 실행에는 사용자가
 #: 「확인」을 누를 때까지, 대사 중인 실행에는 계좌와 맞춰 볼 때까지 주문도
 #: 취소도 나가지 않습니다 — 계좌와 장부가 맞는지 모르는 채로 보내는 요청은
 #: 어긋난 자리를 하나 더 만듭니다.
@@ -223,7 +223,7 @@ KEEP_STATES = (ARMED, HOLDING, ENTERING, EXITING, PAUSED)
 #: 지울 수 있는 상태. 그 밖은 막고 까닭을 냅니다.
 DELETABLE = (ENDED,)
 
-# ── 안전 세트 (§8) ───────────────────────────────────────
+# ── 안전 세트 ─────────────────────────────────────────────
 
 #: 실행 하나가 거래일에 낼 수 있는 의도 수. 막힌 것은 세지 않습니다.
 DAILY_INTENTS = 20
@@ -298,7 +298,7 @@ def budget_unchecked(run: "Run") -> bool:
     판정은 그때그때 계약당 값을 보고 합니다 — 값이 생기면 곧바로 검사로
     돌아갑니다. 옵션은 여기 들지 않습니다: 산 옵션은 프리미엄으로 셀 수 있고,
     판 옵션은 모르는 채로 막습니다. 국내는 품목별세부정보에 칸이 있어, 값이
-    없으면 표를 아직 못 받은 것이라 지금처럼 막습니다.
+    없으면 표를 아직 못 받은 것이라 막습니다.
     """
     return run.market == OVERSEAS and run.kind != OPTION and run.margin is None
 
@@ -311,6 +311,20 @@ def budget_skipped(run: "Run", side: str) -> bool:
     매도는 건너뛰지 않고 모르는 채로 막습니다.
     """
     return budget_unchecked(run) or (run.market == OVERSEAS and run.kind == OPTION and side == SELL)
+
+
+def margin_used(
+    ledger: "Ledger", open_entry: int, each: float | None, *, adding: int = 0
+) -> float | None:
+    """묶이는 돈 — (보유 + 열린 진입 주문의 남은 수량 + `adding`) × 계약당 값.
+
+    진입 검사는 낼 주문의 수량까지 넣어(`adding`) 예산과 견주고, 실행 줄은 지금
+    묶인 돈(`adding` 없이)을 냅니다. 두 자리가 이 함수 하나로 셉니다. 계약당
+    값(`each`, `per_contract`)을 모르면 `None` 입니다.
+    """
+    if each is None:
+        return None
+    return (ledger.position.size + max(int(open_entry), 0) + max(int(adding), 0)) * each
 
 
 def per_contract(run: "Run", side: str, signal: float | None) -> float | None:
@@ -378,7 +392,7 @@ class Ledger:
     방향은 덜어 내며 남는 수량은 평균가를 물려받습니다. 저장한 포지션과 체결
     목록이 어긋나는 날 어느 쪽이 맞는지 고를 수 없게 되는 것을 막습니다.
 
-    원가 배분은 **평균가**뿐입니다(결정 11). FIFO 는 이월입니다.
+    원가 배분은 **평균가**뿐입니다. FIFO 는 쓰지 않습니다.
     """
 
     multiplier: float = 1.0
@@ -393,8 +407,8 @@ class Ledger:
     def add(self, fill: dict[str, Any]) -> dict[str, Any] | None:
         """체결 하나를 넣습니다. **거래 하나가 닫히면** 그 거래를 냅니다.
 
-        거래는 **포지션 0 에서 시작해 다시 0 이 될 때까지 한 덩어리**입니다
-        (§1-2). 나눠 들어가고 나눠 나온 것을 한 줄로 셉니다 — 마지막 청산
+        거래는 **포지션 0 에서 시작해 다시 0 이 될 때까지 한 덩어리**입니다.
+        나눠 들어가고 나눠 나온 것을 한 줄로 셉니다 — 마지막 청산
         한 조각만 적으면 승률과 평균 손익이 그 조각의 것이 됩니다.
         """
         quantity = int(fill.get("quantity") or 0)
@@ -535,7 +549,7 @@ class Run:
     currency: str = ""
     #: 세울 때 품목의 통화를 찾지 못한 해외 실행인지. 그런 실행의 손익은 어느 통화의
     #: 계좌 손실 한도 합계에도 넣지 않습니다(달러로 더하면 다른 통화 손익이 섞입니다).
-    #: 이 칸이 없던 때 담아 둔 해외 실행은 거짓으로 읽혀 지금처럼 달러로 셉니다.
+    #: 이 칸이 없는 해외 실행 줄은 거짓으로 읽혀 달러로 셉니다.
     currency_unknown: bool = False
     #: 계좌 갈래가 선 환경(`paper`·`real`). **세운 뒤 바뀌지 않습니다** — 주문·취소·
     #: 계좌 조회가 모두 이 값으로 나갑니다. 종이 실행은 빈 값입니다.
@@ -598,7 +612,7 @@ class Run:
         return made
 
     def keep_after_reconcile(self, *, held: bool, open_entry: bool, open_exit: bool) -> str:
-        """재접속 뒤 대사가 맞았습니다. 대사에 들기 직전 상태로 돌아갑니다.
+        """재접속 뒤 대사가 맞았을 때. 대사에 들기 직전 상태로 돌아갑니다.
 
         **주문이 나가 있던 상태는 대사 도중의 체결·취소를 반영해 다시 정합니다** —
         평소 상태표와 같은 결과입니다. 진입 주문 중이었는데 보유가 생겼으면(부분
@@ -644,12 +658,12 @@ class Run:
         self.streak_base = len(ledger.trades)
 
     def count_intent(self) -> None:
-        """의도 하나를 셉니다. 막힌 의도는 세지 않습니다(§8).""" 
+        """의도 하나를 셉니다. 막힌 의도는 세지 않습니다.""" 
         self.intents_today += 1
 
 
 def day_profit(run: Run, ledger: Ledger, last_price: float | None) -> float:
-    """그 실행의 **거래일** 손익. 실현 + 평가 − 수수료입니다(§8).
+    """그 실행의 **거래일** 손익. 실현 + 평가 − 수수료입니다.
 
     실행을 시작한 뒤의 누적이 아니라 하루치입니다 — 한도는 날마다 다시 섭니다.
     """
@@ -733,9 +747,9 @@ def entry_block(
     # (`budget_skipped`). 화면이 그 근거(`perContractBasis`)를 보고 안내합니다.
     if run.margin_budget is not None and not budget_skipped(run, side):
         each = per_contract(run, side, signal if signal is not None else last_price)
-        if each is None:
+        wanted = margin_used(ledger, open_entry, each, adding=run.qty)
+        if wanted is None:
             return WHY_MARGIN_UNKNOWN
-        wanted = (holding.size + open_entry + run.qty) * each
         if wanted > run.margin_budget:
             return WHY_BUDGET
     return None
@@ -744,7 +758,7 @@ def entry_block(
 #: 계약 승수를 모를 때의 말. 계좌 실행은 이 까닭으로 세우지 않습니다.
 WHY_MULTIPLIER_UNKNOWN = "계약 승수를 몰라 손익을 셀 수 없습니다"
 
-#: 통화 칸이 없던 때의 실행이 쓴 통화. 그때 해외는 달러로 셌습니다.
+#: 통화 칸이 없는 실행 줄의 통화. 그런 줄의 해외 손익은 달러입니다.
 LEGACY_CURRENCY: dict[str, str] = {"domestic": "KRW", "overseas": "USD"}
 
 
@@ -880,7 +894,7 @@ def _restored(state: str, mode: str = PAPER) -> str:
     """담긴 상태로 다시 세울 때의 상태.
 
     앱을 껐다 켜면 시세도 장부도 이어지지 않으므로, 돌던 종이 실행은 어느
-    상태였든 중지로 내려놓습니다(결정 12) — 자동 재개는 없습니다. 끝난 실행은
+    상태였든 중지로 내려놓습니다 — 자동 재개는 없습니다. 끝난 실행은
     다릅니다. 더 할 것이 없어 이어 갈 것도 없고, 중지로 세우면 목록에서 「끝」이
     아니라 「멈춰 있음」으로 보입니다.
 
@@ -892,7 +906,7 @@ def _restored(state: str, mode: str = PAPER) -> str:
     남은 것이 있으면 끝내기 전에 알려야 합니다. 그 전략을 계속 돌리려면 실행을
     새로 세우고 다시 승인하면 됩니다.
 
-    **모드를 모르는 줄은 종이로 봅니다** — 앞 판이 담은 줄에는 칸이 없습니다.
+    **모드를 모르는 줄은 종이로 봅니다** — 모드 칸이 없는 줄이 그렇습니다.
     """
     if state == ENDED:
         return ENDED
@@ -907,7 +921,7 @@ class RunStore:
     수 있는 값이 아닙니다. 담아 두면 화면에는 성적이 남는데 그 성적이 어느
     구간의 것인지 말할 수 없게 됩니다.
 
-    **돌던 종이 실행은 다시 읽으면 `paused` 입니다**(결정 12). 자동 재개가 없는
+    **돌던 종이 실행은 다시 읽으면 `paused` 입니다**. 자동 재개가 없는
     것은, 꺼져 있던 동안 손절 감시가 없었기 때문입니다 — 사용자가 지금 값을 보고
     이어 갈지 정해야 합니다. **계좌 갈래 실행은 대사로 서고 그 뒤 끝납니다** — 까닭은
     `_restored` 에.
@@ -959,12 +973,11 @@ class RunStore:
             if not isinstance(row, dict):
                 continue
             kept = {key: row[key] for key in _SAVED if key in row}
-            # 앞 판이 담은 줄에는 상태도 모드도 없습니다 — 그때는 종이 실행의
-            # 중지로 섭니다.
+            # 상태도 모드도 없는 줄은 종이 실행의 중지로 섭니다.
             kept["state"] = _restored(
                 str(kept.get("state") or ""), str(kept.get("mode") or PAPER)
             )
-            # 환경 칸이 생기기 전의 모의 실행은 모의 계좌에서 섰습니다.
+            # 환경 칸이 없는 모의 실행은 모의 계좌에서 선 것으로 봅니다.
             if kept.get("mode") == SIM and not kept.get("environment"):
                 kept["environment"] = ENVIRONMENT_OF[SIM]
             try:

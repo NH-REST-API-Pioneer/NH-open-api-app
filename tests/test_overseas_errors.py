@@ -14,7 +14,7 @@ from backend.overseas_futureoption.overseas_account import (
     order_errors,
 )
 
-# 지어낸 종목코드입니다. 실제 종목과 겹치지 않게 골랐습니다.
+# 지어낸 종목코드입니다. 실제 종목과 겹치지 않는 값입니다.
 지어낸종목 = "ZZZZ26"
 
 
@@ -134,7 +134,7 @@ def test_진법_코드를_그대로_낸다():
 
 
 def test_주문오류가_비어_올_수_있다():
-    """반입해 둔 기록이 그렇습니다 — `Occurs1` 칸 자체가 안 옵니다."""
+    """저장해 둔 기록이 그렇습니다 — `Occurs1` 칸 자체가 안 옵니다."""
     for 빈것 in ({"nrec": "0000", "nxt_key": ""}, {"Occurs1": []}, {}):
         답 = order_errors(빈것)
         assert 답["errors"] == []
@@ -184,7 +184,7 @@ def test_총합_줄은_목록에서_빼서_따로_낸다():
 
 
 def test_총합_표시가_다르면_그냥_줄로_둔다():
-    """실물로 확인 못 한 자리입니다. 지어내서 빼 버리면 값이 사라집니다."""
+    """명세에 없는 총합 표시는 총합으로 보지 않습니다. 지어내서 빼 버리면 값이 사라집니다."""
     답 = cumulative_pl({"Occurs1": [손익줄(occurs1_prd_cd="합계")]})
 
     assert 답["total"] is None

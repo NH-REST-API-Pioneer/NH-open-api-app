@@ -170,13 +170,13 @@ class FixtureStore:
         root = Path(root or FIXTURE_ROOT)
         if not root.is_dir():
             raise FixtureError(
-                f"반입해 둔 응답이 없습니다: {root}\n"
-                "scripts/import_nh_fixtures.py 로 먼저 반입해 주세요."
+                f"저장해 둔 응답이 없습니다: {root}\n"
+                "scripts/import_nh_fixtures.py 로 먼저 만들어 주세요."
             )
 
         fixtures = _read_dir(root)
         if not fixtures:
-            raise FixtureError(f"반입해 둔 응답이 한 건도 없습니다: {root}")
+            raise FixtureError(f"저장해 둔 응답이 한 건도 없습니다: {root}")
 
         if private is not None and Path(private).is_dir():
             fixtures.extend(_read_dir(Path(private)))

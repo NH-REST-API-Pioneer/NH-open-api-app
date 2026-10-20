@@ -1,0 +1,502 @@
+/* 일반주문 주문 폼(OrderForm)만 쓰는 스타일입니다. 공용 규칙은 trade.css 에 있고, TradeScreen.tsx 가 trade.css 바로 뒤에 불러옵니다. */
+
+.order-subject {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+  padding-left: 10px;
+  border-left: 4px solid var(--target);
+}
+
+.order-subject-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.order-subject-name {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.order-subject-quote {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-label);
+}
+
+/* 아직 종목이 아닐 때 값 자리에 서는 말. 값이 아니라 남은 할 일이라 흐림색
+ * 입니다 — 차트 배지가 값을 빼고 남은 축을 말하는 것과 같은 자리·같은 급. */
+.order-subject-pending {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 실행 단추의 종목 이름. 동작 이름 아래에 작게 섭니다. */
+.order-submit {
+  flex-direction: column;
+  gap: 0;
+  line-height: 1.15;
+}
+
+.order-submit-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.9;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 주문 폼은 이 폭 아래로 줄어들면 못 쓰는 화면이 됩니다.
+ * 최소 창 크기를 정한 계산(호가 200 + 사이 16 + 주문 280)의 한 축입니다.
+ *
+ * 위 여백은 12 입니다 — 첫 줄인 32px 매수·매도 세그먼트가 구분선에 닿으면
+ * 선이 세그먼트의 위 테두리처럼 보입니다. */
+.order-form {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 280px;
+  min-height: 0;
+  padding: 12px 20px 16px 24px;
+}
+
+/* 입력 칸만 스크롤합니다. 실행 버튼은 스크롤 밖에 있어 낮은 창에서도
+ * 밀려나지 않습니다.
+ *
+ * 남는 높이를 받지 않습니다 — 받으면 실행 버튼이 카드 바닥으로 내려가
+ * 가능수량 조회와 떨어집니다. 줄어들기만 합니다. */
+.order-fields {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+/* 고른 쪽 색으로 물드는 세로 띠. 옅어서 혼자로는 단서가 못 되므로
+ * 세그먼트의 선택 상태가 주 단서이고 이 띠는 보강입니다.
+ *
+ * 폼은 카드 머리 아래에서 시작하므로 이 띠도 구분선 밑에서 시작합니다.
+ * 머리까지 올라가서는 안 됩니다 — 이 화면은 매수와 매도가 대등해서, 카드
+ * 머리가 한쪽 방향색을 띠면 넷 중 하나만 편이 있는 것처럼 보입니다.
+ *
+ * 모서리를 여기서 깎지 않습니다. 위는 각져야 맞고(선 바로 아래), 아래는
+ * 카드가 대신 깎아 줍니다 — `.card-form` 이 넘침을 자르므로 카드의 12px
+ * 곡선에 정확히 잘립니다. 여기에 12 를 적으면 띠 폭이 6(청산은 4)이라
+ * 브라우저가 곡률을 그만큼 줄여, 카드보다 완만한 곡선이 아래 왼쪽 모서리에서
+ * 카드 안쪽으로 물러납니다. */
+.order-form::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+}
+
+.order-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+}
+
+/* 고른 쪽이 그 방향색으로 채워집니다. 아래 실행 버튼도 같은 색이라
+ * 한 묶음으로 읽힙니다. 반대쪽에 색이 남아 있으면 자기가 무엇을 골랐는지
+ * 헷갈립니다. */
+.order-side .seg-buy[aria-pressed='true'] {
+  background: var(--up);
+  color: #ffffff;
+}
+
+.order-side .seg-sell[aria-pressed='true'] {
+  background: var(--down);
+  color: #ffffff;
+}
+
+/* 그 방향의 최우선 호가.
+ * 고른 쪽만이 아니라 양쪽 다 읽혀야 합니다 — 방향을 정하려면 두 값을 나란히
+ * 놓고 봐야 하는데, 안 고른 쪽이 안 읽히면 판단 근거가 고른 다음에 나타납니다.
+ * 낮추는 것은 버튼의 무게이지 그 안의 값이 아닙니다. */
+.seg-price {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-label);
+}
+
+.order-side .seg-item[aria-pressed='true'] .seg-price {
+  color: #ffffff;
+}
+
+.order-locked {
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 라벨은 입력 위가 아니라 왼쪽 열입니다. 「주문유형」 네 글자가 들어가면 됩니다. */
+.order-field {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+/* **좁은 폼.** 주문 열을 `FORM_ROOMY`(280) 아래로 끌면 줄 이름과 입력칸을 나란히
+ * 둘 폭이 없습니다. 줄 이름을 입력칸 위로 올리고 입력칸이 칸 폭을 다 씁니다 —
+ * 입력칸을 줄여 나란히 두면 가격·수량 값이 잘립니다. 넘치는 것은 세로로 굴러가고
+ * 가로로는 안 넘칩니다.
+ *
+ * 실행 단추는 원래부터 입력 칸의 굴림 밖(폼 아래)에 서므로, 좁은 폼에서 입력
+ * 칸이 길어져도 카드 아래에 남습니다. 굴러가는 입력 칸과 단추 사이에 선 하나를
+ * 그어, 단추가 칸의 일부가 아니라 폼 아래에 붙은 것임을 보입니다. */
+.card-form[data-tight] > .order-form {
+  min-width: 0;
+  padding-right: 14px;
+  padding-left: 18px;
+}
+
+.card-form[data-tight] .order-field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+/* 선은 입력 칸의 테두리로 긋습니다. 선 아래 틈은 실행 단추의 위 여백(10)이
+ * 맡습니다 — 입력 칸 안에 여백을 두면 그만큼 굴림이 먼저 섭니다. */
+.card-form[data-tight] .order-fields {
+  border-bottom: 1px solid var(--divider);
+}
+
+/* **좁은 폼에서는 빈 증거금 자리를 안 잡습니다.** 나란한 폼은 신규·청산을 오갈
+ * 때 조회 단추가 오르내리지 않게 증거금 두 줄 높이를 비워 두는데, 좁은 폼에서는
+ * 그 빈자리가 입력 칸을 넘치게 해 쓸데없는 굴림을 세우고 가능수량 줄을 그 밑으로
+ * 밉니다. 조회 단추도 줄 이름 열이 없으니 들여 세우지 않습니다. */
+.card-form[data-tight] .order-margin[aria-hidden='true'] {
+  display: none;
+}
+
+.card-form[data-tight] .order-check {
+  padding-left: 0;
+}
+
+/* 숫자와 −/+ 를 테두리 하나로 묶습니다. 선물 수량은 대개 한 자리 수라
+ * 타이핑보다 스테퍼가 빠르고, 오타로 자릿수가 튀는 사고를 막습니다. */
+.qty-stepper {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.qty-stepper button {
+  height: 100%;
+  border-radius: 8px;
+  color: var(--text-label);
+  font-size: 15px;
+}
+
+.qty-stepper button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* 안쪽 칸이 잠기면 상자도 함께 잠겨 보여야 합니다. 테두리와 흰 채움이
+ * 그대로면 아직 고칠 수 있는 칸으로 읽힙니다 — 취소는 낸 주문 그대로
+ * 나가는 자리라, 수량을 손볼 수 있어 보이면 안 됩니다. */
+.qty-stepper:has(input:disabled) {
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+.qty-stepper input:disabled,
+.qty-stepper button:disabled,
+.qty-stepper button:disabled:hover {
+  background: none;
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.qty-stepper input {
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* 브라우저 기본 증감 화살표는 스테퍼와 하는 일이 같아 겹칩니다. */
+.qty-stepper input::-webkit-outer-spin-button,
+.qty-stepper input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* 조회해 온 가능수량. 수량 칸 아래에 값으로만 섭니다 — 버튼이 아니라
+ * 읽는 값입니다. 라벨 열에 맞춰 들여쓰지 않습니다. 폼 폭이 280 이라
+ * 들여쓰면 한 줄에 못 들어갑니다. */
+/* **글자 사이를 벌리지 않습니다.** 이 줄을 flex 로 두고 `gap` 을 주면 수와
+ * 단위 사이가 벌어져 「47 계약」이 됩니다 — 우리말에서 단위는 수에 붙습니다.
+ * 자리 높이만 잡아 두고 안은 보통 글줄로 흐르게 합니다. */
+/* 서버가 보낸 거절 문장은 길어서 두세 줄로 넘어갑니다. 줄은 낱말 사이에서만
+ * 바꿉니다 — 「않/습니다」처럼 낱말 안에서 끊기면 읽다가 걸립니다.
+ * 공백 없는 긴 덩어리는 넘칠 때만 끊습니다. */
+.order-orderable {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  min-height: 18px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-label);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.order-orderable b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* 못 받았을 때 서는 「다시」. 값 줄 안에서 같은 높이로 서서 줄을 안 늘립니다. */
+.order-orderable-retry {
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+/* 조회 버튼은 입력 칸 열에 맞춰 섭니다. 라벨 열이 비므로 왼쪽을 그만큼 띄웁니다. */
+.order-check {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  padding-left: 72px;
+}
+
+/* 개시증거금 어림. 라벨은 첫 줄에 맞춥니다 — 값이 두 줄로 넘어가도 라벨이 두 줄
+ * 가운데로 내려가지 않게 합니다. */
+.order-margin {
+  align-items: start;
+}
+
+/* **높이를 두 줄로 잡아 둡니다.** 값이 오기 전·뒷마디가 빠진 때도 같은 높이라
+ * 아래 조회 단추가 오르내리지 않습니다. */
+.order-margin-value {
+  margin: 0;
+  min-height: 36px;
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* 마디 안에서는 안 꺾입니다 — 「649,925」와 「원」이 갈라지면 수를 잘못 읽습니다. */
+.order-margin-part {
+  white-space: nowrap;
+}
+
+/* 셈을 밝히는 한 줄. 값이 아니라 값에 붙는 말이라 한 급 낮습니다. 빈 때도 자리를
+ * 잡습니다(위와 같은 까닭). */
+.order-margin-note {
+  margin: 0;
+  min-height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+/* 상한을 넘겨 쳤을 때 값 아래에 서는 한 줄. 값이 왜 되돌아갔는지 말합니다.
+ * 라벨 열이 아니라 값 열에 섭니다 — 라벨 칸은 64px 이라 거기 두면 네 줄로
+ * 접힙니다. */
+.order-limit {
+  grid-column: 2;
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--error);
+}
+
+/* 고칠 것이 없는 한 줄 — 값이 잘못된 것이 아니라 화면이 못 받은 것입니다.
+ * 오류색으로 두면 사용자가 자기가 친 값을 고치려 듭니다.
+ *
+ * **낱말 가운데서 끊지 않습니다.** 칸이 좁아 한 줄을 넘기면 한글은 아무 데서나
+ * 잘려 「움직/입니다」처럼 섭니다 — 넘칠 때도 낱말 단위로 넘어가게 둡니다. */
+.order-limit.order-note {
+  color: var(--text-label);
+  word-break: keep-all;
+}
+
+/* 청산가능 0 안내. 막는 줄이 아니라 알리는 줄이라 오류색이 아니라 주의색입니다 —
+ * 사용자가 고칠 값이 없고, 내는 것은 그대로 됩니다. */
+.order-limit.order-close-zero {
+  font-size: 12px;
+  color: var(--warn);
+  word-break: keep-all;
+}
+
+/* 되돌릴 수 없는 동작이라 채운 버튼입니다. 한 화면에 이것 하나뿐입니다. */
+.order-submit {
+  flex: 0 0 auto;
+  margin-top: 10px;
+  height: 44px;
+  justify-content: center;
+  font-size: 15px;
+  color: #ffffff;
+}
+
+.order-submit:hover {
+  filter: brightness(1.06);
+}
+
+/* 행사가를 고르기 전에는 낼 종목이 없습니다. 방향색 채움을 벗겨야 「지금
+ * 누르는 것」으로 안 읽힙니다 — 이 앱에서 가장 무거운 채움이라 그대로 두면
+ * 못 누르는 단추가 화면에서 제일 먼저 보입니다. */
+.order-submit[aria-disabled='true'] {
+  background: var(--surface-muted);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.order-submit[aria-disabled='true']:hover {
+  filter: none;
+}
+
+/* 청산 가격이 잔고 조회 때 값이라는 한 줄. 가격 칸 바로 아래, 한 급 낮춰 답니다. */
+.order-close-price-note {
+  margin: -4px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 못 내는 이유. 단추 바로 아래 한 줄입니다. */
+.order-submit-why {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  /* 좁은 주문 칸에서 감길 때 낱말 가운데서 끊지 않습니다(「않았습 / 니다」). */
+  word-break: keep-all;
+}
+
+/* 사유 문장은 글줄 안에 흐르게 둡니다 — 「다시」가 문장 밖의 형제여도 문장
+ * 마지막 낱말 바로 뒤에 붙습니다. 감긴 문장에서도 같습니다. */
+.order-submit-why > p {
+  display: inline;
+  margin: 0;
+}
+
+/* 사유 줄 곁의 「다시」. 줄 글자와 같은 높이로 붙입니다. */
+.order-submit-retry {
+  height: 22px;
+  margin-left: 6px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 보낸 주문의 결과 한 줄. 못 누르는 이유와 **같은 자리**입니다 — 실행 단추
+ * 바로 아래가 방금 누른 일의 답이 설 자리입니다.
+ *
+ * 색은 「봐야 한다」는 뜻이라 잘 된 일(접수·보내는 중)과 이 실행에서 못 낼
+ * 뿐인 일(재생 기록 없음)에는 안 씁니다. */
+/* **다섯 얼굴이 같은 글자 급입니다.** 경고색 줄이 옅은 바탕 위 색 글자라 12px
+ * 에서는 대비가 모자라 한 단 올렸는데, 그 줄만 크면 같은 자리에 서는 답들이
+ * 서로 다른 무게로 읽힙니다 — 잘 된 일과 잘못된 일의 무게는 같아야 합니다.
+ * 바로 위 「못 내는 이유」 줄(`.order-submit-why`)과는 둘 중 하나만 서므로
+ * 나란히 견줄 일이 없습니다. */
+.order-result {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  /* 좁은 주문 칸이라 줄이 자주 꺾입니다 — 낱말 가운데서 끊지 않습니다. */
+  word-break: keep-all;
+}
+
+/* 서버가 안 받았습니다. */
+.order-result.is-rejected {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+/* **냈는지 모릅니다.** 오류색으로 두면 「안 나갔다」로 읽혀 한 번 더 내게
+ * 됩니다 — 이 자리에서 가장 나쁜 일입니다. */
+.order-result.is-unknown {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+/* 문장 자리. 급은 `.order-result` 와 같습니다 — 이 줄만 `div` 안에 들어 있어
+ * 바깥에서 물려받지 못하므로 여기서 한 번 더 적습니다. */
+.order-result-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* 결과를 모를 때 갈 곳. 「다시 보내기」가 아니라 **확인하러 가는** 길입니다.
+ * 문장과 다른 줄에 섭니다 — 문장 끝에 붙으면 마지막 낱말처럼 읽힙니다. */
+.order-result-go {
+  margin: 0;
+}
+
+.order-editing {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  height: 32px;
+  margin-bottom: 8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.order-editing-cancel {
+  flex: 0 0 auto;
+  margin-left: auto;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  /* 좁은 폼에서도 낱말 가운데서 끊지 않습니다(「그만두 / 기」). 줄어드는 것은
+   * 왼쪽 보유 글자입니다. */
+  white-space: nowrap;
+}
+
+/* 좁은 폼에서는 보유 글자가 두 줄로 감길 수 있어 줄 높이를 못 박지 않습니다. */
+.card-form[data-tight] .order-editing {
+  height: auto;
+  min-height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.card-form[data-slot^='l'] > .order-form {
+  width: 100%;
+  max-width: 360px;
+  align-self: flex-start;
+}

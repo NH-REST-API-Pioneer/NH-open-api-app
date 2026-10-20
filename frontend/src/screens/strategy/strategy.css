@@ -32,58 +32,6 @@
 
 /* ── 3열 ─────────────────────────────────────────────── */
 
-/* 필터와 상세는 폭이 못 박혀 있고 표가 남는 폭을 다 씁니다. 표는 열이
- * 다섯이라 넓어질수록 이름이 길게 서고, 필터·상세는 넓어져도 읽을 것이
- * 늘지 않습니다.
- *
- * **가운데 열에 바닥을 둡니다.** 바닥이 없으면 폭이 모자랄 때 표가 조용히
- * 좁아져 전략 이름이 「코.」 한 글자로 잘립니다 — 이 앱의 화면은 접거나
- * 뭉개지 않고 가로로 밉니다(`.app-screen`). 652 = 값 열 넷 454 + 이름 열의
- * 바닥 166 + 카드 안쪽 여백 32 입니다.
- *
- * **이름 열의 바닥은 「가장 긴 이름」이 아니라 「말줄임이 시작되는 지점」입니다.**
- * 전략 이름은 사용자가 직접 짓기 때문에 길이를 믿을 수 없습니다 — 지금 있는
- * 이름 중 가장 긴 것에 맞춰 두면, 더 긴 이름을 지은 다음 사용자에게는 그 값이
- * 아무것도 보장하지 않습니다. 이 바닥이 지키는 것은 「이름이 다 보인다」가
- * 아니라 「잘리더라도 어느 전략인지 가릴 만큼은 보인다」이고, 그 뒤는 말줄임이
- * 받습니다. 온전한 이름은 오른쪽 상세와 칸에 붙는 도움말이 답합니다.
- *
- * 세 열의 합은 172 + 652 + 250 + 간격 12×2 = 1098 입니다. 최근 본 패널을 연
- * 좁은 창에서는 이보다 좁아지므로, 그때는 필터 열을 접습니다(아래 `stg`
- * 문턱).
- *
- * 필터 열은 172 입니다 — 가장 긴 선택지(「모의 계좌 거래」)가 든 고르개가
- * 138 이라 카드 여백 32 를 더한 값입니다. 필터의 낱말은 결과에 붙는 낱말과
- * 같아야 하므로 여기서 줄이지 않습니다. */
-.stg-list {
-  display: grid;
-  grid-template-columns: 172px minmax(652px, 1fr) 250px;
-  gap: 12px;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* 전략 화면이 세 열의 합(1098)보다 좁으면 필터 열을 접고, 필터는 목록 머리의
- * 「필터」 단추가 여는 상자로 옮깁니다. 셋 중 필터가 먼저 비키는 것은 한 번
- * 정하면 두는 값이라서입니다 — 목록은 읽는 자리, 상세는 다음 걸음의 자리입니다.
- * 돌려받는 폭은 172 + 12 = 184 입니다. 열 하한 셋은 그대로 둡니다. */
-@container stg (max-width: 1097px) {
-  .stg-list {
-    grid-template-columns: minmax(652px, 1fr) 250px;
-  }
-
-  /* 카드의 `display` 규칙(`.stg .card`)보다 한 급 높여야 접힙니다. */
-  .stg .stg-list > .stg-filter {
-    display: none;
-  }
-
-  /* 아래의 기본값(숨김)보다 한 급 높여야 섭니다. */
-  .stg-filter-pop > .stg-filter-toggle {
-    display: inline-flex;
-  }
-}
-
 .stg .card {
   display: flex;
   flex-direction: column;
@@ -94,12 +42,6 @@
   border-radius: 12px;
 }
 
-.stg-card-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-}
-
 /* 안내는 좁은 카드 안에도 섭니다. 여백을 그대로 두면 상세 카드(250)에서
  * 글이 설 폭이 170 밖에 남지 않고, 한글은 기본 규칙이 낱말 가운데도 끊으므로
  * 「여기 / 에 섭니다」처럼 갈립니다. */
@@ -108,152 +50,7 @@
   word-break: keep-all;
 }
 
-/* ── 필터 ────────────────────────────────────────────── */
-
-.stg-filter {
-  gap: 10px;
-  overflow-y: auto;
-}
-
-.stg-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stg-field-label {
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-/* 글자를 넣는 칸이라 값 칸의 오른쪽 정렬을 되돌립니다. */
-.stg-text {
-  text-align: left;
-  font-size: 13px;
-}
-
-.stg-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.stg-reset {
-  align-self: stretch;
-  justify-content: center;
-  margin-top: 2px;
-}
-
 /* ── 표 ──────────────────────────────────────────────── */
-
-.stg-main {
-  gap: 8px;
-}
-
-.stg-main-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.stg-main-titles {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.stg-count {
-  margin-left: 6px;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-
-.stg-range {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.stg-main-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 6px;
-}
-
-/* 좁은 폭의 필터 단추와 상자. 단추는 제목 오른쪽·단추 묶음 왼쪽에 섭니다. */
-.stg-filter-pop {
-  position: relative;
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-.stg-filter-toggle {
-  display: none;
-}
-
-/* 필터 열의 칸을 그대로 담은 겹침 상자. 고르는 동안만 표의 왼쪽 위를 가립니다. */
-.stg-filter-box {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 220px;
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 8px 24px rgb(var(--ink) / 0.16);
-}
-
-/* 못 누르는 단추의 이유. 단추와 같은 줄에 두면 줄이 길어져 표가 밀립니다. */
-.stg-why {
-  min-height: 16px;
-  margin: 0;
-  font-size: 12px;
-  text-align: right;
-  color: var(--text-dim);
-}
-
-/* 방금 누른 일이 서버에 막혔다는 글. 지금 못 누르는 까닭(흐린 글자)과 급이 달라
-   오류색입니다. */
-.stg-why .stg-why-fail {
-  color: var(--error);
-}
-
-/* 담아 둔 전략을 서버가 못 읽었다는 한 줄. 줄이 일부라도 선 표 바로 위에 서고,
- * **있을 때만** 자리를 먹습니다. 옆의 「이유」 줄과 달리 왼쪽에서 읽습니다 —
- * 값에 붙는 말이 아니라 표 전체에 붙는 말입니다. */
-.stg-store-why {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--warn);
-}
-
-/* 종목 이름이 온전히 서는 폭입니다 — 지금 마스터 판본에서 가장 긴 이름
- * 「미니 S&P 500 26년 9월물」이 146, 칸 여백 16 을 더해 162. 이보다 긴 이름은
- * 잘리고 그 자리에 이름 전체가 뜨는 도움말이 붙습니다. */
-.stg-col-inst {
-  width: 162px;
-}
-
-.stg-col-status {
-  width: 78px;
-}
-
-.stg-col-pl {
-  width: 130px;
-}
-
-.stg-col-win {
-  width: 84px;
-}
 
 /* 한 칸에 두 줄이 섭니다. 위가 값이고 아래가 그 값을 읽는 데 필요한
  * 곁가지입니다 — 버전·시장·거래 수는 따로 열을 내주기에는 작습니다. */
@@ -272,167 +69,16 @@
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
-.stg-name,
-.stg-inst {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.stg-name {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.stg-version,
-.stg-trades {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-
-/* 성과 값 옆의 기록 유형. **값이 아니라 출처**라 무채색으로 흐리게 두고,
- * 값 아래 줄에 붙여 수와 겹쳐 읽히지 않게 합니다. */
-.stg-record {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-
 .stg-record > .badge {
   height: 18px;
   font-size: 11px;
 }
 
-.stg-inst {
-  font-size: 13px;
-}
-
-/* 종목 아래 줄의 시장 배지. 미결제 표의 시장 배지와 같은 꼴입니다. */
-.stg-market-badge {
-  margin-top: 2px;
-}
-
-.stg-win {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-/* 같은 전략의 둘째 버전부터 들여씁니다. 버전을 한 줄로 합치지 않는 대신,
- * 어느 줄이 같은 전략인지는 들여쓰기가 말합니다.
- * 칸을 함께 적습니다 — 표의 기본 여백(`.data-table td`)이 클래스 하나보다
- * 세서, 클래스만 적으면 들여쓰기가 눌립니다. */
-.stg-table td.stg-sub {
-  padding-left: 24px;
-}
-
 /* ── 선택 상세 ───────────────────────────────────────── */
-
-.stg-detail {
-  gap: 4px;
-  overflow-y: auto;
-}
-
-/* 배지를 제목 첫 줄에 맞춥니다. 가운데로 맞추면 이름이 길어 여러 줄이 될 때
- * 배지가 글 한가운데에 떠서, 어느 줄에 붙은 것인지 읽히지 않습니다. */
-/* 이름과 상태 배지는 붙어 섭니다 — 배지가 말하는 것이 그 이름의 상태라,
-   줄 반대편으로 밀면 무엇의 상태인지가 멀어집니다. 오른쪽 끝은 고치러 가는
-   단추가 씁니다. */
-/* 이름·상태와 고치러 가는 길이 한 줄에 서는데, 좀은 판에서는 줄이 모자랍니다 —
-   **접히게** 둡니다. 그러지 않으면 이름이 먼저 줄어들어 글자 중간에서 끈기거나
-   줄말줌표로 가려, 정작 무슨 전략인지가 안 보입니다. */
-.stg-detail-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-/* 고치러 가는 길. **이름·버전 덩이 아래에 따로 섭니다** — 이름 줄에 끼워 넣으면
-   좁은 판에서 이름이 먼저 줄어들고, 버전이 단추에 딸린 값처럼 읽힙니다.
-   왼쪽 끝은 이름과 같습니다. */
-.stg-detail-edit {
-  align-self: flex-start;
-  margin-top: 6px;
-}
 
 /* 제목 줄 높이와 배지 높이가 달라 위끝을 맞춰도 눈에는 어긋나 보입니다. */
 .stg-detail-head .badge {
   margin-top: 2px;
-}
-
-.stg-detail-name {
-  /* 한 줄로 둡니다 — 줄바꿈을 허라하면 한글은 글자 단위로 끈겨, 이름이
-     단어 한가운데서 나뉘어 잍힐니다. 넘치는 것은 줄말줌표로 마무리합니다. */
-  min-width: 0;
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.stg-detail-version {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.stg-detail-summary {
-  margin: 0 0 4px;
-  font-size: 13px;
-  color: var(--text-label);
-}
-
-.stg-detail-title {
-  margin: 12px 0 0;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.stg-detail-range {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-
-.stg-sheet {
-  margin: 0;
-}
-
-.stg-sheet-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  height: 28px;
-}
-
-.stg-sheet-row dt {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-.stg-sheet-row dd {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 이동 단추 셋은 성과 바로 아래에 섭니다. 카드 바닥에 붙이면 상세가 짧아
- * 그 사이에 빈 자리가 크게 남고, 읽던 곳과 누를 곳이 멀어집니다. */
-.stg-detail-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 16px;
 }
 
 .stg-detail-actions .btn {
@@ -440,15 +86,6 @@
 }
 
 /* ── 전략 설정 ───────────────────────────────────────── */
-
-.set {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  gap: 12px;
-}
 
 /* 상단 줄은 접히지 않습니다. 전략명·버전·기준 봉은 아래 조건이 무엇을 두고
  * 하는 말인지 정하는 값이라, 조건을 보는 동안 늘 함께 보여야 합니다.
@@ -462,163 +99,11 @@
   gap: 16px;
 }
 
-/* 도는 실행 안내가 설 때만 머리가 한 줄 더 내려갑니다. 안내가 카드 폭 전체를
- * 차지하도록 줄을 접고, 위 두 덩어리는 전과 같은 한 줄에 둡니다(왼쪽 덩어리가
- * 남는 폭을 다 먹는 것은 같습니다). */
-.stg .set-head.has-runs {
-  flex-wrap: wrap;
-  /* 줄 사이는 좁게 — 안내는 위 덩어리에 딸린 한 줄입니다. */
-  row-gap: 4px;
-}
-
-.stg .set-head.has-runs > .set-head-main {
-  flex-basis: 0;
-}
-
-.set-runs-note {
-  flex: 0 0 100%;
-  margin: 0;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-/* 머리는 「이 전략이 무엇인가」 넷입니다. 칸마다 최소 폭이 있고, 그 아래로는
- * 줄이지 않고 **줄을 접어 내립니다** — 잘린 글자보다 두 줄이 낫습니다. 가로로
- * 미는 띠는 쓰지 않습니다. */
-.set-head-main {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-  min-width: 0;
-}
-
-.set-head-acts {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-/* 못 하는 일의 이유가 모이는 줄. 단추 아래 한 줄을 차지합니다 — 단추와 같은
- * 줄에 두면 줄이 길어져 머리가 두 단이 됩니다.
- *
- * **폭이 0 에서 시작합니다.** 이 줄이 제 글 길이만큼 자리를 요구하면 머리줄의
- * 오른쪽 묶음이 그만큼 넓어지고, 왼쪽의 전략명·품목 칸이 밀려 이름이 잘립니다.
- * 폭을 0 으로 두고 줄 전체(100%)를 채우게 하면, 자리는 단추가 정하고 글은 그
- * 안에서 감깁니다. 한글은 기본 규칙이 낱말 가운데도 끊으므로 낱말을 지킵니다. */
-.set-note {
-  flex: 1 0 100%;
-  width: 0;
-  min-width: 100%;
-  margin: 0;
-  font-size: 12px;
-  text-align: right;
-  color: var(--text-label);
-  word-break: keep-all;
-}
-
-/* 「저장하려면 —」 뒤의 묶음 이름. 누르면 그 자리로 가는 글자 단추입니다 — 단추
-   꼴로 두면 머리줄의 단추들과 같은 무게가 됩니다. */
-.set-note-link {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
 .set-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-}
-
-.set-field-label {
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-/* 남는 폭은 전략명이 받습니다 — 이 판에서 가장 큰 글자이고 가장 긴 값입니다.
- * 최소 폭 188 은 넷(188 + 96 + 200 + 140 + 간격 36 = 660)이 1280 창의 머리에
- * 한 줄로 서는 값입니다. 그보다 좁은 창에서는 월물이 아랫줄로 접힙니다. */
-.set-name {
-  flex: 1 1 188px;
-  min-width: 188px;
-}
-
-.set-version {
-  flex: 0 0 96px;
-}
-
-.set-month {
-  flex: 0 0 140px;
-}
-
-/* **전략명을 고치는 자리는 여기 하나**입니다. 목록은 고르는 자리라 거기서도
- * 고쳐지면 잘못 눌러 이름이 바뀝니다. 이름이 이 판에서 가장 큰 글자라 칸도
- * 그 무게로 둡니다 — 옆 칸들과 같은 크기면 무엇의 설정인지가 묻힙니다.
- *
- * **본문색입니다.** 메모 칸(`.set-text`)은 적어 둔 말이라 흐림색인데, 이름은
- * 이 전략이 무엇인가를 말하는 값이라 흐리면 아직 안 적은 것처럼 읽힙니다 —
- * 흐린 것은 자리표시(placeholder)뿐입니다. */
-.set-name-value {
-  height: 34px;
-  text-align: left;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  /* 칸보다 긴 이름은 말줄임으로 섭니다. 전체는 칸의 `title` 에 있습니다. */
-  text-overflow: ellipsis;
-}
-
-/* 품목 칸. 고르개가 이 칸 아래에 떠야 해서 자리를 잡아 둡니다. */
-.set-instrument {
-  position: relative;
-  flex: 0 0 200px;
-  min-width: 0;
-}
-
-/* 품목을 여는 단추. **칸처럼 보입니다** — 옆의 월물·메모와 나란히 서는
-   자리라, 단추 얼굴을 하면 이 줄에서 혼자 눌러야 할 것처럼 읽힙니다.
-   다만 **여는 칸이라는 표시**는 답니다(오른쪽 꺾쇠) — 월물 셀렉트와 같은
-   꼴이라야 둘이 같은 갈래로 읽힙니다. */
-.set-pick {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  text-align: left;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.set-pick-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 꺾쇠를 **그려서** 달아 둡니다. 글자(▾)로 두면 글꼴이 정하는 대로 작게
-   그려져, 나란히 선 월물 칸의 꺾쇠와 크기가 달라집니다 — 둘은 같은 갈래의
-   칸이라 같은 꼴로 보여야 합니다. 색도 값과 같은 본문색입니다. */
-.set-pick-mark {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  margin-right: 3px;
-  border-right: 1.5px solid var(--text);
-  border-bottom: 1.5px solid var(--text);
-  /* 마름모 꼴로 돌리면 보이는 꺾쇠가 칸의 가운데보다 조금 아래에 서기에
-     그만큼 올려 준다. */
-  transform: translateY(-2px) rotate(45deg);
 }
 
 /* 고르개는 이 칸 바로 아래에 붙습니다 — 부품이 제 판에서는 차트 배지 아래에
@@ -633,31 +118,7 @@
   font-size: 11px;
 }
 
-/* 메모는 누를 것이 아니라 적어 둔 말이라 흐림색 본문입니다. */
-.set-text {
-  text-align: left;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
 /* ── 본문 2/3 · 보조 1/3 ─────────────────────────────── */
-
-/* 두 열 다 바닥을 둡니다. 바닥이 없으면 좁은 폭에서 조건 행의 셀렉트가
- * 줄어들어 「EMA(2…」처럼 값을 못 읽는 칸이 됩니다 — 목록 표와 같은 이유로
- * 접지 않고 가로로 밉니다.
- *
- * 가운데 8px 열은 폭 손잡이입니다. 양옆 틈 2px 와 합쳐 두 칸 사이가 12px 로
- * 섭니다. 손잡이를 끌면 화면이 셋째 열을 그 폭으로 못 박습니다
- * (`StrategySettings` 의 MAIN_MIN·SIDE_MIN·SPLIT_GUTTER 와 같은 값). */
-.set-body {
-  display: grid;
-  grid-template-columns: minmax(620px, 2fr) 8px minmax(300px, 1fr);
-  column-gap: 2px;
-  row-gap: 12px;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
 
 /* 세로 간격을 6 으로 둡니다 — 1280×800 에서 기본 내용(2단계·조건 셋)이
  * 구르지 않고 서야 합니다(세로 스크롤은 1200×720 에서만 허용합니다). */
@@ -714,14 +175,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.set-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  cursor: pointer;
 }
 
 .set-count {
@@ -883,26 +336,6 @@
   gap: 8px;
 }
 
-/* 지표의 매개변수 칸(기간·배수·단기…). 셀렉트 줄 바로 아래 한 줄이고, 칸이
- * 여럿이라 넘치면 줄 안에서 다음 줄로 감깁니다. 왼쪽 값의 칸은 값·조건 열 아래,
- * 견줄 값의 칸은 견줄 값 열 아래(오른쪽 맞춤)입니다. */
-.set-params {
-  display: flex;
-  flex-wrap: wrap;
-  align-self: start;
-  gap: 6px;
-  margin-top: -2px;
-}
-
-.set-params-left {
-  grid-column: 2 / 4;
-}
-
-.set-params-right {
-  grid-column: 4 / 7;
-  justify-content: flex-end;
-}
-
 .set-param {
   display: inline-flex;
   align-items: center;
@@ -1000,20 +433,6 @@
   font-size: 13px;
 }
 
-/* 막아 둔 칸과 그 이유. 이유가 칸 아래 붙어야 「왜 못 고치나」를 찾아다니지
-   않습니다 — 값이 아니라 설명이라 흐립니다. */
-.set-off {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.set-off-why {
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
 /* 견줄 값의 갈래를 고르는 자리. 두 글자와 꺾쇠가 드는 폭입니다 — 넓히면
    정작 치는 값 칸이 좁아집니다. */
 .set-kind {
@@ -1096,21 +515,6 @@
   margin: 0;
   font-size: 12px;
   color: var(--text-dim);
-}
-
-/* ── 자연어 요약 ─────────────────────────────────────── */
-
-/* 조건을 사람 말로 다시 적은 자리. **자리는 하나**이고 그 안에 단계마다 한
- * 문장이 섭니다 — 단계는 차례로 보는 별개의 관문이라 하나로 이어 붙이면
- * 어디까지가 첫 관문인지 문장 안에서 흐려집니다.
- *
- * 색을 쓰지 않습니다. 문장 속 한 낱말에 방향색을 얹으면 그 말이 값처럼
- * 읽히고, 이 앱에서 빨강·파랑은 매수·매도라는 값의 임자입니다. */
-.set-summary {
-  flex: 0 0 auto;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--surface-muted);
 }
 
 /* ── 지난 봉으로 돌려 보기 ───────────────────────────── */
@@ -1325,43 +729,6 @@
   color: var(--warn);
 }
 
-.set-summary-line {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: keep-all;
-}
-
-.set-summary-line + .set-summary-line {
-  margin-top: 2px;
-}
-
-.set-summary-empty {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-/* 이대로는 안 도는 설정 한 줄. **막는 말이 아니라 알려 주는 말**이라 경고색을
-   쓰되 저장 단추 위에는 두지 않습니다. 글자는 본문과 같은 크기로 둡니다 —
-   더 줄이면 읽히지 않고, 안 읽히는 경고는 없는 것과 같습니다. */
-.set-summary-warn {
-  margin: 8px 0 0;
-  padding: 6px 8px;
-  border-radius: 6px;
-  /* 바탕을 함께 깝니다 — 글자색만으로는 밝은 테마에서 본문과 겨우 갈립니다.
-     주문 결과의 「확인 필요」와 같은 장치입니다. */
-  background: var(--warn-bg);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--warn);
-  word-break: keep-all;
-}
-
-.set-summary-warn + .set-summary-warn {
-  margin-top: 4px;
-}
-
 /* 규칙 탭에 붙는 수. 그 규칙에 걸린 말이 몇인지만 답합니다. */
 .set-rule-warn {
   background: var(--warn-bg);
@@ -1390,35 +757,7 @@
   color: var(--error);
 }
 
-/* 저장이 막힌 까닭 한 줄. 저장 단추 바로 아래에 오류색으로 섭니다. */
-.set-fail {
-  margin: 4px 0 0;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--error);
-  text-align: right;
-  word-break: keep-all;
-}
-
-/* 아직 안 정한 값 한 줄. 문장이 아니라 **남은 할 일**이라 한 급 낮춥니다. */
-.set-summary-missing {
-  margin: 8px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-dim);
-  word-break: keep-all;
-}
-
 /* ── 보조 아코디언 ───────────────────────────────────── */
-
-.set-aux {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  gap: 8px;
-  overflow-y: auto;
-}
 
 /* 머리를 눌러 접는 카드라 안쪽 여백을 머리와 본문이 각자 가집니다 —
  * 카드가 여백을 가지면 누를 수 있는 자리가 글자만큼으로 줄어듭니다. */
@@ -1428,82 +767,12 @@
   gap: 0;
 }
 
-.set-acc-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 12px 16px;
-  text-align: left;
-}
-
-.set-acc-title {
-  flex: 0 0 auto;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-/* 접힌 채로도 무엇으로 정해졌는지 보입니다. 펴야만 알 수 있으면 접는 것이
- * 화면을 줄이는 대신 값을 숨기는 일이 됩니다. */
-.set-acc-sum {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.set-acc-bad {
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
 .set-acc-sum + .set-acc-bad {
   margin-left: 0;
 }
 
-.set-acc-mark {
-  flex: 0 0 auto;
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.set-acc-sum ~ .set-acc-mark {
-  margin-left: 0;
-}
-
-.set-acc-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 16px 14px;
-}
-
-.set-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 34px;
-}
-
-.set-row-label {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--text-label);
-}
-
 .set-row .control {
   width: 150px;
-}
-
-.set-unit {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .set-unit .control {
@@ -1516,28 +785,9 @@
   color: var(--text-label);
 }
 
-/* 수 칸과, 못 받은 값일 때 그 아래 서는 까닭. 테두리가 어느 칸인지 가리키고
- * 까닭은 칸 아래 한 줄이 말합니다 — 색만으로는 이유를 전하지 못합니다(주문
- * 화면의 가격 칸과 같은 규칙). 값 열에 붙여 오른쪽으로 맞춥니다. */
-.set-bad {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  min-width: 0;
-}
-
 /* 판정 줄의 오류색 갈래. 색은 「판정 줄의 두 색」 한 자리에서 정합니다. */
 .set-bad-why {
   font-size: 11px;
-}
-
-.set-hint {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  /* 긴 안내가 낱말 가운데서 꺾이지 않게 어절 단위로 넘깁니다. */
-  word-break: keep-all;
 }
 
 /* 거리 칸(손절·익절·추적 청산) — 수 칸 72 뒤에 단위 셀렉트 76. ATR 배를 고르면 칸 옆에
@@ -1552,51 +802,15 @@
   font-size: 13px;
 }
 
-.set-unit-note {
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.set-unit-note.is-off {
-  visibility: hidden;
-}
-
 /* 값이 빈 칸의 꼬리표. 그 청산을 쓰지 않아 ATR 도 계산에 들어가지 않습니다. */
 .set-unit-note.is-idle {
   opacity: 0.45;
-}
-
-/* 세션 끝 정리 한 줄 — 「☐ 세션 끝 [10] 분 전에 모두 청산하고 새 진입 막기」. 판정 줄은
-   그 아래 한 줄입니다. */
-.set-session-end {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  min-height: 34px;
 }
 
 .set-session-end > .set-bad-why,
 .set-session-end > .set-warn-why,
 .set-session-end > .set-session-end-text {
   flex-basis: 100%;
-}
-
-.set-session-end-text {
-  padding-left: 22px;
-}
-
-/* 이름을 위에 두는 줄. 칸들은 이름 아래에서 왼쪽부터 섭니다. */
-.set-row.set-row-stack {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-}
-
-.set-bad.set-bad-start {
-  align-items: flex-start;
 }
 
 /* 실행 조건의 작은 칸들 — 분·봉·번은 56, 시각은 72. */
@@ -1613,27 +827,6 @@
   font-size: 13px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-}
-
-.set-window {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.set-filter-text {
-  font-size: 12px;
-  color: var(--text-label);
-  white-space: nowrap;
-}
-
-.set-filter-dim {
-  color: var(--text-dim);
-}
-
-.set-filter-note {
-  font-size: 12px;
-  color: var(--text-dim);
 }
 
 /* ── 저장 안 된 변경 ─────────────────────────────────── */
@@ -1654,18 +847,6 @@
 
 /* ── 전략 검증 ───────────────────────────────────────── */
 
-/* 이 화면은 세로로 밀립니다. 차트와 아래 표에는 그 아래로 못 내려가는 바닥이
- * 있고(차트 355 · 탭 슬롯 212), 낮은 창에서 그 둘을 줄이면 봉이
- * 뭉개지고 표가 한 줄만 남습니다 — 뭉개는 대신 밉니다. */
-.vrf {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  gap: 12px;
-  overflow-y: auto;
-}
-
 .stg .vrf-head {
   flex: 0 0 auto;
   flex-direction: row;
@@ -1673,13 +854,6 @@
   justify-content: space-between;
   gap: 16px;
   padding: 10px 16px;
-}
-
-.vrf-head-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
 }
 
 /* 머리 줄에서 줄어드는 것은 **못 한 일 한 줄**(`.vrf-pending`)뿐입니다. 시세 상태·셈·
@@ -1692,120 +866,15 @@
   white-space: nowrap;
 }
 
-.vrf-head-left > .vrf-pending {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-/* 시세 상태 점. **정상에는 색이 없습니다** — 늘 켜져 있는 초록은 이상이
- * 생겨도 눈에 안 띄고, 이 앱의 색은 값의 방향이 갖습니다. */
-.vrf-feed {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-label);
-}
-
-.vrf-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--text-dim);
-}
-
 .vrf-dot.is-warn {
   background: var(--warn);
 }
 
-.vrf-counts {
-  font-size: 13px;
-  color: var(--text-label);
-  font-variant-numeric: tabular-nums;
-}
-
-/* 셈과 「거래 중 n — 진행에서 보기」 한 묶음. 머리의 다른 마디보다 붙여 둡니다 —
-   둘이 같은 「동시 실행」 이야기입니다. */
-.vrf-counts-line {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-/* 진행 탭으로 가는 글자 단추. 실전이 섞여 있으면 앞에 짧은 갈래 배지가 섭니다. */
-.vrf-trading {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-label);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.vrf-trading > span:last-child {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.vrf-trading-n {
-  font-variant-numeric: tabular-nums;
-}
-
-/* 빈 화면에서는 제목과 단추 사이에 섭니다. */
-.notice > .vrf-trading {
-  margin-top: 4px;
-}
-
 /* ── 왼쪽 목록 · 가운데 ──────────────────────────────── */
-
-/* 실행 목록은 폭이 못 박혀 있고 차트가 남는 폭을 다 씁니다. 이 화면에서
- * 읽는 것은 「어디서 사고팔았는가」이고 그것은 차트 폭이 정합니다. */
-.vrf-body {
-  display: grid;
-  grid-template-columns: 250px minmax(520px, 1fr);
-  gap: 12px;
-  flex: 1 0 auto;
-  min-width: 0;
-}
-
-/* 이 열은 화면의 높이를 정하지 않습니다. 안쪽을 띄워 두면 열 자체의 내용
- * 높이가 0 이 되어, 격자의 줄 높이는 차트와 아래 표가 있는 가운데 열이
- * 정합니다. 넘치는 것은 이 열이 제 안에서 구릅니다. */
-.vrf-side {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-}
-
-.vrf-side-inner {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow-y: auto;
-}
 
 .stg .vrf-runs {
   flex: 0 0 auto;
   gap: 8px;
-}
-
-.vrf-card-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.vrf-run-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 /* 고르는 목록이라 행 구분선을 안 긋습니다 — 고른 줄과 마우스가 가리킵니다. */
@@ -1818,86 +887,15 @@
   cursor: pointer;
 }
 
-/* 값을 못 받는 중인 줄. **한 겹 흐릴 뿐** 글자를 바꾸지 않습니다 — 값은 앞
-   박자의 참값이고 낡았을 뿐이라, 지우거나 「—」로 바꾸면 없던 일이 됩니다.
-   단추는 이 줄 밖에 있어 그대로 진합니다. */
-.vrf-run.is-stale .vrf-run-body {
-  opacity: 0.55;
-}
-
-.vrf-run:hover {
-  background: var(--hover);
-}
-
 .vrf-run.is-picked {
   background-image: linear-gradient(rgb(var(--ink) / var(--tbl-picked)) 0 0);
   /* 보는 카드는 바탕에 더해 안쪽 2px 테두리 — 체크한 카드와 한눈에 갈립니다. */
   box-shadow: inset 0 0 0 2px var(--brand);
 }
 
-/* 줄 몸은 「이 실행을 본다」 단추이고, 왼쪽 체크는 「이 실행에 동작을 건다」
- * 입니다 — 진행 화면의 줄과 같은 두 겹입니다. */
-.vrf-run-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: left;
-}
-
-/* 이름과(계좌 실행이면) 갈래 배지. 이름이 길면 이름만 말줄임입니다. */
-.vrf-run-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.vrf-run-name-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .vrf-run-name > .badge {
   flex: 0 0 auto;
   font-weight: 400;
-}
-
-.vrf-run-sub {
-  font-size: 12px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 자금이 증거금에 못 미친 실행의 표시. 상태 글자 뒤에 붙고, 폭이 모자라면
-   다음 줄로 내려갑니다. */
-.vrf-funds-badge {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 11px;
-  vertical-align: 1px;
-}
-
-/* 상태와 가상 보유는 값이라 본문색입니다. 색으로 상태를 말하면 읽는 사람이
- * 색표를 외워야 합니다. */
-.vrf-run-state {
-  font-size: 12px;
-  color: var(--text);
-}
-
-/* 줄 아래 한 줄. **바탕색은 중립**입니다 — 「아직 안 붙음」과 「준비 중」은
-   이상이 아니라 아직인 것이고, 경고색은 끊김 하나가 씁니다(머리의 점과 같은
-   규칙). 글자는 경고가 읽혀야 하므로 13px 입니다. */
-.vrf-run-feed {
-  font-size: 13px;
-  color: var(--text-dim);
 }
 
 /* 끊김 한 줄. 선택된 줄의 바탕 위에서도 갈리도록 **바탕을 함께 깝니다** —
@@ -1912,74 +910,12 @@
   color: var(--warn);
 }
 
-.vrf-stop {
-  align-self: stretch;
-  justify-content: center;
-}
-
 /* ── 아코디언 ───────────────────────────────────────── */
 
 .stg .vrf-acc {
   flex: 0 0 auto;
   padding: 0;
   gap: 0;
-}
-
-.vrf-acc-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 10px 14px;
-  text-align: left;
-}
-
-.vrf-acc-title {
-  flex: 0 0 auto;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.vrf-acc-sum {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vrf-acc-mark {
-  flex: 0 0 auto;
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.vrf-acc-sum ~ .vrf-acc-mark {
-  margin-left: 0;
-}
-
-.vrf-acc-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 14px 12px;
-}
-
-.vrf-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-.vrf-row b {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
 }
 
 /* 값이 긴 줄. **이름은 안 끊고 값만 접습니다** — 좁은 판에서 이름까지 접히면
@@ -1998,14 +934,6 @@
   text-align: right;
 }
 
-/* 값이 왜 없는지 적는 꼬리. **값이 아니라 설명**이라 값의 무게를 안 씁니다 —
-   바로 아래 안내 줄과 같은 얼굴입니다. */
-.vrf-row-why {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-
 /* 값의 조각들. **조각 안에서는 안 끊깁니다** — 「· 사용」과 그 숫자가 줄 끝에서
    갈리면 사용액이 앞 값의 꼬리처럼 읽힙니다. 줄은 조각 사이에서만 바뀝니다. */
 .vrf-row.is-long b > span {
@@ -2016,26 +944,6 @@
    까닭(「이 품목에는 계약당 증거금 칸이 없음」)이 좁은 판 밖으로 나갑니다. */
 .vrf-row.is-long b {
   min-width: 0;
-}
-
-.vrf-row.is-long b > .vrf-row-why {
-  white-space: normal;
-  word-break: keep-all;
-}
-
-.vrf-hint {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  word-break: keep-all;
-}
-
-/* 자금 판정 두 줄 — 모자라면 경고색 한 줄과 그 셈, 견줄 수 없으면 흐린 한 줄. */
-.vrf-funds-warn {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--warn);
-  word-break: keep-all;
 }
 
 .vrf-funds-dim,
@@ -2050,89 +958,11 @@
   margin-top: 2px;
 }
 
-/* 접힌 머리의 요약 뒤에 붙는 경고. 요약이 줄어도 이 말은 줄지 않습니다. */
-.vrf-acc-warn {
-  flex: 0 0 auto;
-  margin-left: 6px;
-  font-size: 12px;
-  color: var(--warn);
-  white-space: nowrap;
-}
-
 /* ── 가운데 ─────────────────────────────────────────── */
-
-.vrf-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 6px;
-}
-
-/* 아직 못 하는 일. 머리 띠 안에 한 줄로 서서 제 줄을 따로 갖지 않습니다 —
- * 이 화면의 세로는 차트와 아래 표가 다투는 자리입니다. */
-.vrf-pending {
-  font-size: 12px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* 검증 탭의 전체 중지가 계좌 실행까지 멈췄다는 줄. 이미 일어난 일이라 경고색입니다. */
 .vrf-pending.is-warn {
   color: var(--warn);
-}
-
-/* 담아 둔 실행을 서버가 못 읽었다는 한 줄. 실행 카드의 제목 아래에 서고,
- * **있을 때만** 자리를 먹습니다. 좁은 열이라 낱말 단위로 접습니다. */
-.vrf-store-why {
-  margin: 0;
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--warn);
-  word-break: keep-all;
-}
-
-.vrf-bar {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.vrf-bar-item {
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-.vrf-bar-item b {
-  margin-left: 4px;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.vrf-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-/* 차트가 이 화면의 주인이라 남는 높이를 다 가져가되, 355 아래로는 안
- * 내려갑니다. 그보다 낮아지면 봉이 뭉개져 매매 자리를 못 읽습니다. */
-.vrf-chart {
-  position: relative;
-  display: flex;
-  flex: 1 0 auto;
-  min-height: 355px;
-}
-
-.vrf-chart > * {
-  flex: 1;
-  min-width: 0;
 }
 
 /* 마커를 누르면 뜨는 상세. 차트 안에 떠서 누른 자리를 가리지 않게 아래로
@@ -2239,38 +1069,6 @@
 
 /* ── 하단 표 ────────────────────────────────────────── */
 
-.vrf-bottom {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-  gap: 6px;
-  /* 이 표의 바닥입니다. 탭 32 + 틈 6 + 머리 36 + 행 40 × 5 = 274.
-   *
-   * **다섯 줄은 보여야 합니다.** 이 표가 답하는 물음은 「내 체결이 났나」인데,
-   * 마지막 줄이 접히면 그 답이 가느다란 스크롤막대 하나로만 알려집니다 —
-   * 진입과 청산이 짝을 이루므로 한 거래가 두 줄이고, 다섯 줄이면 최근 두
-   * 거래와 그 앞 한 줄까지 한눈에 듭니다.
-   *
-   * 행이 그보다 늘면 표 안에서 구릅니다. 탭을 바꿀 때마다 높이가 달라지면
-   * 차트가 따라 흔들리므로 행 수에 맞춰 늘이지 않습니다(「탭 슬롯 바닥 =
-   * 든 카드의 최대」 규칙). */
-  height: 274px;
-}
-
-.vrf-bottom-tabs {
-  align-self: flex-start;
-}
-
-.vrf-table {
-  padding: 0 12px;
-  background: var(--surface);
-  border-radius: 12px;
-}
-
-.vrf-col-time {
-  width: 84px;
-}
-
 /* 틱으로 평가하는 실행이면 시각 옆에 「틱」 표지가 서는 만큼 넓힙니다. */
 .vrf-col-time.is-tick {
   width: 112px;
@@ -2281,28 +1079,7 @@
   margin-left: 6px;
 }
 
-.vrf-col-side {
-  width: 70px;
-}
-
-/* 용도는 **까닭까지 적는 칸**이라 폭을 안 못 박습니다 — 「청산 · 손절」에서
-   까닭이 잘리면 남는 것은 「청산」뿐이고, 그것은 이미 구분 칸이 말합니다.
-   남는 폭을 이 칸이 가져가고, 값 칸은 숫자 폭만큼만 잡습니다. */
-.vrf-col-price {
-  width: 110px;
-}
-
-.vrf-col-qty {
-  width: 80px;
-}
-
 /* ── 검증 추가 ──────────────────────────────────────── */
-
-.vrf-add {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 
 /* 실행 추가 폼의 칸 아래 판정 줄(진행·검증 같은 꼴). 틀린 값이라 오류색입니다. */
 .add-field-why {
@@ -2321,54 +1098,8 @@
   box-shadow: inset 0 0 0 1px var(--warn);
 }
 
-/* 거래 내역 머리 줄 끝 — 셈에서 뺀 거래 수. */
-.ana-uncounted {
-  margin-left: 8px;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.vrf-add-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.vrf-add-label {
-  font-size: 12px;
-  color: var(--text-label);
-}
-
 .vrf-add .control {
   width: 200px;
-}
-
-/* 고르는 자리가 아니라 **보여 주는 자리**. 셀렉트와 같은 폭에 세워 줄이
-   들쭉날쭉해지지 않게 합니다 — 값은 전략이 정합니다. */
-.vrf-add-fixed {
-  width: 200px;
-  font-weight: 600;
-  text-align: right;
-}
-
-/* 서버가 시작을 막은 까닭. 있으면 오류색이고, 없으면 그 자리가 빈 채로 남아
-   패널이 오르내리지 않습니다. */
-.vrf-start-why {
-  min-height: 18px;
-  color: var(--error);
-}
-
-.vrf-num {
-  text-align: right;
-  font-size: 13px;
-}
-
-.vrf-add-acts {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
 }
 
 /* ── 전략 진행 ───────────────────────────────────────── */
@@ -2391,76 +1122,8 @@
   padding: 10px 16px;
 }
 
-.run-head-line {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-width: 0;
-}
-
-/* 상태 낱말은 통째로 섭니다. 줄이 좁아질 때 줄어드는 것은 아래에서 폭을
- * 받는 안내 글 하나뿐입니다 — 이 규칙이 없으면 좁은 창에서 「시세 · 주문
- * 정상」이 낱말 가운데에서 갈립니다. */
-.run-head-line > * {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.run-counts,
-.run-link {
-  font-size: 13px;
-  color: var(--text-label);
-  font-variant-numeric: tabular-nums;
-}
-
-.run-link {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* 정상에는 색을 쓰지 않습니다. 늘 켜진 초록은 이상이 생겨도 안 보입니다. */
-.run-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--text-dim);
-}
-
-.run-need {
-  font-size: 13px;
-  color: var(--warn);
-}
-
-/* 「계좌와 대조」 단추와 그 답 한 줄. 답은 단추 바로 오른쪽에 서고, 머리 줄이
-   좁으면 답이 말줄임으로 줄어듭니다(전체 글은 `title`). 못 보낸 까닭은 다른
-   막힌 까닭과 같은 색이고, 기다리는 중·맞춰 본 결과는 정상 안내 색입니다. */
-.run-head-line > .run-reconcile {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.run-reconcile {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .run-reconcile > .btn {
   flex: 0 0 auto;
-}
-
-.run-reconcile-why {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.run-reconcile-why.is-note {
-  color: var(--text-label);
 }
 
 /* 상단 환경과 모의 계좌 실행이 갈렸을 때 갈래 배지 뒤에 서는 한 줄. 머리 줄의
@@ -2479,44 +1142,9 @@
   color: var(--warn);
 }
 
-/* 머리 줄의 오른쪽 끝을 밀어 두는 자리. 단추 둘이 오른쪽에 붙습니다. */
-.run-stopall {
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-/* 머리 단추의 까닭. 단추가 오른쪽에 붙어 있으므로 까닭도 그쪽 끝에 섭니다 —
-   왼쪽에 두면 줄 반대편의 말로 읽힙니다. */
-.run-head-why {
-  text-align: right;
-}
-
-/* 계좌 손실 한도 한 줄. 머리 띠 맨 아래, 값과 「바꾸기」가 나란히 섭니다. */
-.run-limits {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-label);
-}
-
 /* 한도 줄의 갈래 배지는 「계좌 손실 한도」 뒤 6px 입니다. */
 .run-limits-text > .badge {
   margin-left: 6px;
-}
-
-/* 접속 환경을 모를 때 「바꾸기」 뒤에 서는 한 줄. */
-.run-limits-wait {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.run-limits-text {
-  min-width: 0;
-  /* 통화가 늘면 줄이 넘칩니다 — 한 줄로 두고 말줄임, 온 글은 마우스 글(title)입니다. */
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 /* 한도 창의 「통화 더하기」. 칸 줄들 아래 왼쪽입니다. */
@@ -2564,120 +1192,14 @@
 
 /* ── 왼쪽 목록 ──────────────────────────────────────── */
 
-/* 창 높이에 맞춰 섭니다. 상세(오른쪽 열)가 그보다 길면 **그 열만** 세로로 구르고,
- * 실행 목록과 위 머리 카드는 제자리에 남습니다(`.run-main`). */
-.run-body {
-  display: grid;
-  grid-template-columns: 250px minmax(520px, 1fr);
-  gap: 12px;
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* 검증과 같은 이유로 이 열은 화면 높이를 정하지 않습니다. */
-.run-side {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-}
-
-.run-side-inner {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow-y: auto;
-}
-
 .stg .run-runs {
   flex: 0 0 auto;
   gap: 8px;
 }
 
-.run-runs-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.run-card-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.run-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.run-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 8px;
-}
-
-.run-row:hover {
-  background: var(--hover);
-}
-
-.run-row.is-shown {
-  background-image: linear-gradient(rgb(var(--ink) / var(--tbl-picked)) 0 0);
-  box-shadow: inset 0 0 0 2px var(--brand);
-}
-
-/* 체크는 「이 실행에 동작을 건다」이고 누름은 「이 실행을 차트에 띄운다」라,
- * 둘을 한 자리에 겹치지 않고 나란히 둡니다. */
-.run-row-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: left;
-}
-
-/* 이름과 그 실행의 갈래 배지. 이름이 길면 이름만 말줄임이고 배지는 남습니다. */
-.run-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.run-name-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .run-name > .badge {
   flex: 0 0 auto;
   font-weight: 400;
-}
-
-.run-sub {
-  font-size: 12px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.run-state {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
 }
 
 /* 방향이 있는 배지만 방향색을 씁니다 — 「감시 중 · 보유 0」에 파랑을 쓰면
@@ -2690,252 +1212,16 @@
   color: var(--text);
 }
 
-.run-dir-buy {
-  color: var(--up);
-}
-
-.run-dir-sell {
-  color: var(--down);
-}
-
-/* 줄 아래 곁줄. **중립입니다** — 기다리면 되는 것(답 대기·승인 없음)은
-   경고가 아닙니다. 경고색은 「확인 필요」 배지 하나가 씁니다. */
-.run-note {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-/* 손을 써야 넘어가는 줄의 배지. 이 화면에서 **경고색을 쓰는 자리는 여기
-   하나**입니다 — 여럿이 쓰면 정말 손써야 하는 줄이 그 속에 묻힙니다. */
-.run-alert {
-  background: var(--warn-bg);
-  color: var(--warn);
-}
-
-.run-acts {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
 .run-acts .btn {
   justify-content: center;
 }
 
 /* ── 가운데 ─────────────────────────────────────────── */
 
-.run-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  gap: 6px;
-  overflow-y: auto;
-}
-
-.run-bar {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.run-bar-item {
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-.run-bar-item b {
-  margin-left: 4px;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 서버가 접수한 STOP 과 앱이 보고 있는 손절은 다릅니다 — 앱이 꺼지면
- * 뒤엣것은 멈추므로 어느 쪽인지 낱말로 적습니다. */
-.run-watch {
-  margin-left: auto;
-  color: var(--text-dim);
-}
-
-/* 상태 카드 — 자금 · 가격 · 신호가 나면 나갈 주문 세 칸(`RunStatusCard.tsx`).
- * 칸 사이는 세로 선 하나이고, 합이 나오는 줄은 위에 가로 선을 긋습니다. */
-.run-status {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr 1.2fr;
-  flex: 0 0 auto;
-  padding: 10px 0;
-  background: var(--surface);
-  border-radius: 12px;
-}
-
-.run-status-cell {
-  min-width: 0;
-  padding: 0 16px;
-  border-left: 1px solid var(--divider);
-}
-
-.run-status-cell:first-child {
-  border-left: none;
-}
-
-.run-status-title {
-  display: flex;
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-/* 가격 칸의 갱신 시각. 칸 머리 오른쪽 끝입니다. */
-.run-status-at {
-  margin-left: auto;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-
-.run-status-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 0;
-}
-
-.run-status-list > div {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  font-size: 13px;
-}
-
-.run-status-list dt {
-  color: var(--text-label);
-}
-
-.run-status-list dd {
-  margin: 0;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.run-status-big {
-  font-size: 15px;
-}
-
-/* 묶인 돈의 셈 한 줄. 값이 아니라 셈이라 작고 흐리게 둡니다. */
-.run-status-sub dt {
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.run-status-sum {
-  margin-top: 2px;
-  padding-top: 4px;
-  border-top: 1px solid var(--divider);
-}
-
-/* 나갈 주문이 둘이면(보유 없이 매수·매도 진입이 다 켜진 실행) 사이에 선을 긋습니다. */
-.run-status-order + .run-status-order {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--divider);
-}
-
-.run-status-foot {
-  margin: 6px 0 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  word-break: keep-all;
-}
-
-/* **이 화면은 표가 주인입니다**(차트를 두지 않습니다) — 남는 세로를 표가
-   가져갑니다. 바닥은 검증과 같은 셈입니다: 탭 32 + 틈 6 + 머리 36 + 행 40 × 5. */
-.run-bottom {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  gap: 6px;
-  min-height: 274px;
-}
-
-/* 「확인 필요」 띠. 사용자가 손을 써야 넘어가는 자리라 보는 실행 위에 한 줄로
-   섭니다 — 목록 줄 안에만 두면 다른 실행을 보는 동안 그 사실이 사라집니다. */
-.run-attention {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--warn-bg);
-  color: var(--warn);
-  font-size: 13px;
-}
-
-/* 승인 문장. **이 창에서 가장 무거운 줄**이라 본문색으로 세우고 굵은 조각이
-   무엇이 일어나는지를 말합니다 — 경고색으로 칠하면 「조심하라」로 읽히는데,
-   여기는 조심할 자리가 아니라 고르는 자리입니다. */
-.run-approve {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: var(--text);
-  word-break: keep-all;
-}
-
-.run-bottom-tabs {
-  align-self: flex-start;
-}
-
-.run-table {
-  padding: 0 12px;
-  background: var(--surface);
-  border-radius: 12px;
-}
-
-.run-col-time {
-  width: 84px;
-}
-
 /* 틱으로 평가하는 실행이면 시각 옆에 「틱」 표지가 서는 만큼 넓힙니다
    (`StrategyRun.tsx` 의 `ORDER_NO_FITS_TICK` — 폭을 바꾸면 그 수도 함께). */
 .run-col-time.is-tick {
   width: 112px;
-}
-
-.run-col-side {
-  width: 66px;
-}
-
-/* 주문번호는 계좌 번호 열 자리(12px 숫자 65px)에 칸 안쪽 여백 양쪽 8px 이
-   들어가는 고정 폭입니다. 표가 좁아 용도 칸이 까닭 문구보다 좁아지면 이 열을
-   접습니다(`StrategyRun.tsx` 의 `ORDER_NO_FITS` — 열 폭을 바꾸면 그 수도 함께).
-   값이 아니라 찾아 맞출 때 쓰는 열쇠라 글자가 한 급 낮습니다. */
-.run-col-no {
-  width: 82px;
-}
-
-.run-no {
-  font-size: 12px;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-/* 용도는 **까닭까지 적는 칸**이라 폭을 안 못 박습니다 — 「청산 · 손절」에서
-   까닭이 잘리면 남는 것은 「청산」뿐이고, 그것은 이미 구분 칸이 말합니다.
-   검증 표와 같은 규칙입니다. */
-.run-col-state {
-  width: 86px;
-}
-
-.run-col-price {
-  width: 110px;
-}
-
-.run-col-qty {
-  width: 80px;
 }
 
 /* ── 확인 창 ────────────────────────────────────────── */
@@ -2961,18 +1247,6 @@
 .run-confirm-row span {
   flex: 0 0 auto;
   color: var(--text-label);
-}
-
-/* 계좌 칸의 값 — 갈래 배지와 그 뒤의 한 마디. */
-.run-kind-value {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.run-confirm-row .run-kind-note {
-  font-size: 12px;
-  color: var(--text-dim);
 }
 
 /* 실행 갈래 배지(`runKind.tsx`). **접속 환경이 아니라 갈래**라 환경 배지
@@ -3033,13 +1307,6 @@
   color: var(--text);
 }
 
-.run-hint {
-  margin: 12px 0 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  word-break: keep-all;
-}
-
 .run-confirm-acts,
 .run-add-acts {
   display: flex;
@@ -3052,11 +1319,6 @@
 /* 단추 글자는 한 줄입니다 — 좁으면 단추가 통째로 「그만두기」 아래로 내려갑니다. */
 .run-add-acts > .btn {
   white-space: nowrap;
-}
-
-/* 실전 계좌 확인창의 승인 문장에서 굵은 조각 하나만 경고색입니다. */
-.run-approve-real {
-  color: var(--warn);
 }
 
 /* ── 거래 추가 ──────────────────────────────────────── */
@@ -3106,52 +1368,11 @@
   font-weight: 700;
 }
 
-.run-start-why {
-  margin-top: 6px;
-  text-align: right;
-}
-
-/* 서버가 시작을 막은 문장(막는 거래소·통화를 모르는 품목 등). */
-.run-start-why.is-error {
-  color: var(--error);
-}
-
-/* 해외 옵션 매도 — 승인 문장 바로 위 한 줄. 막지 않고 알리는 경고색입니다. */
-.run-option-sell {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 12px 0 0;
-  font-size: 12px;
-  color: var(--warn);
-  word-break: keep-all;
-}
-
 .run-option-sell .badge {
   flex: 0 0 auto;
 }
 
 /* ── 전략 분석 ──────────────────────────────────────── */
-
-.ana {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  gap: 12px;
-
-  /* 곡선의 두 선. **색이 아니라 무채색 농도와 선 모양으로 가릅니다** — 이
-   * 앱에서 색에는 임자가 있고(빨강 매수·상승, 파랑 매도·하락, 초록 선택),
-   * 남는 색으로 계열을 만들면 색각 이상에서 서로 무너집니다. */
-  --ana-total: #2f3138;
-  --ana-pick: #5a5d67;
-}
-
-:root[data-theme='dark'] .ana {
-  --ana-total: #e6e8ee;
-  --ana-pick: #b6bac4;
-}
 
 /* 필터 한 줄. 진행 화면의 머리 띠와 같은 자리입니다. 좁으면 감깁니다. 칸들은
  * 위에 맞춥니다 — 기간 아래에 까닭 한 줄이 서도 다른 칸이 따라 내려가지
@@ -3163,21 +1384,6 @@
   align-items: flex-start;
   gap: 8px;
   padding: 10px 14px;
-}
-
-/* 필터 칩 하나. 테두리 안 앞머리에 이름을, 그 뒤에 고르개를 둡니다. 고르개는
- * 칩이 테두리를 지니므로 제 테두리·바탕을 걷고 값만 굵게 섭니다. */
-.ana-chip {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding-left: 8px;
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1px var(--border);
-  background: var(--surface);
-  white-space: nowrap;
 }
 
 .ana-chip > .control {
@@ -3192,14 +1398,6 @@
   margin-right: 6px;
 }
 
-/* 세그먼트를 든 칩. 세그먼트의 회색 트랙이 칩 바탕까지 이어져 한 덩어리로
- * 읽힙니다. */
-.ana-chip-seg {
-  gap: 0;
-  box-shadow: none;
-  background: var(--surface-muted);
-}
-
 .ana-chip-seg > .control-label {
   margin-right: 6px;
 }
@@ -3212,247 +1410,13 @@
   grid-auto-columns: minmax(44px, 1fr);
 }
 
-/* 기간 칩과 그 아래 까닭 한 줄. */
-.ana-period {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 2px;
-}
-
-/* 서버가 조회 조건을 물린 까닭. 방금 요청이 막혔다는 말이라 다른 자리의
- * 막힌 글(저장·시작·동작)과 같은 오류색입니다. */
-.ana-refused {
-  margin: 0;
-  font-size: 11px;
-  color: var(--error);
-}
-
-/* 기간 칩 끝의 날짜 범위. 해를 뺀 짧은 글이고, 올리면 전체 날짜가 보입니다. */
-.ana-value {
-  margin-right: 10px;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 「직접」 기간의 범위 단추와, 누르면 그 아래 뜨는 날짜 칸 둘. */
-.ana-range-box {
-  position: relative;
-  display: inline-flex;
-  margin-right: 2px;
-}
-
-.ana-range {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 4px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.ana-range:hover,
-.ana-range[aria-expanded='true'] {
-  background: var(--hover);
-}
-
-/* 달력 모양 — 윗변이 두꺼운 네모. */
-.ana-cal {
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--text-label);
-  border-top-width: 3px;
-  border-radius: 2px;
-  box-sizing: border-box;
-}
-
-.ana-range-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
-  white-space: nowrap;
-}
-
-.ana-range-pop[hidden] {
-  display: none;
-}
-
-.ana-date {
-  height: 28px;
-  width: 132px;
-}
-
-/* 줄 오른쪽 끝의 전략·종목. 감기면 둘이 함께 다음 줄로 내려갑니다. */
-.ana-scope {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
-  margin-left: auto;
-}
-
-/* 고르개는 가장 긴 선택지 폭으로 자라므로 폭을 묶습니다. 넘치는 이름은 잘리고,
- * 칩에 올리면 전체가 보입니다. */
-.ana-select {
-  max-width: 128px;
-}
-
-/* 필터와 전략·종목 사이 빈자리의 「받는 중」. 남는 폭만 쓰고, 모자라면 잘립니다 —
- * 잠깐 서는 글이 필터 줄을 감기게 하면 그때마다 아래 화면이 들썩입니다. 이 글이
- * 서면서 늘어나는 칸 사이 간격 하나를 오른쪽 음수 여백으로 되돌립니다(`.ana-head`
- * 의 gap 과 같은 값). */
-.ana-busy {
-  container: anabusy / inline-size;
-  display: flex;
-  flex: 1 1 0;
-  align-items: center;
-  align-self: center;
-  min-width: 0;
-  margin: 0 -8px 0 0;
-  overflow: hidden;
-  font-size: 12px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-/* 해외·통화·직접 범위처럼 칸이 많아 남는 폭이 글보다 좁을 때 서는 점. */
-.ana-busy-dot {
-  display: none;
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--text-dim);
-}
-
-@container anabusy (max-width: 47px) {
-  .ana-busy-text {
-    display: none;
-  }
-
-  .ana-busy-dot {
-    display: block;
-  }
-}
-
-/* 필터 줄 맨 뒤 제 줄의 안내(잘린 답·읽는 사이 바뀐 파일). 드물게 서는 경고라
- * 줄여 적지 않습니다. 값이 아니라 값의 범위를 말하는 글이라 중립색입니다. */
-.ana-notes {
-  display: flex;
-  flex: 1 1 100%;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ana-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-label);
-  word-break: keep-all;
-}
-
 /* ── 지표 카드 넷 ───────────────────────────────────── */
-
-.ana-cards {
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-
-.stg .ana-metric {
-  gap: 2px;
-  padding: 10px 14px;
-}
-
-.ana-metric-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-label);
-}
-
-.ana-metric-value {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 해외 「전체」에서 통화가 여럿일 때 카드 값은 통화마다 한 줄입니다(더하지 않음). 줄이
-   늘어도 카드 높이가 크게 흔들리지 않게 한 단계 작은 글자입니다. */
-.ana-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 16px;
-}
 
 .ana-line {
   display: block;
 }
 
-/* 통화가 여럿인 「전체」의 본문 자리 — 통화를 고르라는 한 줄만 섭니다. */
-.ana-pick-note {
-  padding: 12px 16px;
-}
-
-.ana-pick-note .ana-foot {
-  margin: 0;
-}
-
-/* 값이 없는 자리. 0 과 다른 말이라 굵기도 값의 것을 쓰지 않습니다. */
-.ana-none {
-  font-weight: 400;
-  color: var(--text-dim);
-}
-
-.ana-metric-note {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ana-tabs {
-  flex: 0 0 auto;
-}
-
 /* ── 곡선과 옆 칸 ───────────────────────────────────── */
-
-/* 곡선이 왼쪽 2/3, 비용·상세가 오른쪽 1/3 입니다. 비용 요약을 곡선 아래로
- * 내리면 그 카드 높이와 간격이 통째로 세로에서 빠져나가고, 그만큼 곡선이
- * 낮아집니다. */
-.ana-body {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(250px, 1fr);
-  flex: 1 1 auto;
-  gap: 12px;
-  min-height: 0;
-}
-
-/* 「곡선 읽는 법」 단추와 글이 이 카드를 기준으로 섭니다. */
-.stg .ana-chart {
-  position: relative;
-  padding: 8px 12px;
-}
 
 /* 그림은 **상자 밖으로 크기를 되돌려 주지 않습니다.** 자리를 차지하는 채로
  * 두면 「상자 높이 → 그림 높이 → 상자 높이」가 서로를 밀어 올려, 창 크기를
@@ -3578,178 +1542,11 @@
   fill-opacity: 0.7;
 }
 
-.ana-side {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-}
-
-.stg .ana-pane {
-  padding: 10px 14px;
-  gap: 6px;
-}
-
-/* 옆 칸은 곡선과 세로를 나눠 쓰므로 여백이 한 급 좁습니다 — 여기서 아낀
- * 만큼이 곡선의 높이가 됩니다. */
-.stg .ana-cost {
-  padding: 8px 14px;
-  gap: 4px;
-}
-
-.ana-card-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.ana-sheet {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-}
-
-.ana-sheet-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-}
-
-.ana-sheet-row dt {
-  color: var(--text-label);
-}
-
-.ana-sheet-row dd {
-  margin: 0;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 합이 나오는 줄. 위의 두 줄에서 나온 값이라 선 하나로 묶어 줍니다. */
-.ana-sheet-sum {
-  margin-top: 2px;
-  padding-top: 4px;
-  border-top: 1px solid var(--row-line);
-}
-
-/* 이름과 값이 한 줄의 양 끝에 서므로, 줄이 넓어지면 둘 사이가 벌어져 눈이
- * 건너뛸 거리가 됩니다. 자리는 카드가 넓어져도 이만큼만 씁니다. */
-.ana-sheet-wide {
-  max-width: 560px;
-}
-
-.ana-sheet-wide .ana-sheet-row {
-  gap: 24px;
-}
-
-.ana-sheet-wide .ana-sheet-row dd {
-  font-weight: 400;
-  text-align: right;
-}
-
-.ana-foot {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
 /* ── 비교표 ─────────────────────────────────────────── */
 
 .stg .ana-table {
   flex: 0 0 auto;
   padding: 0 16px;
-}
-
-.ana-col-pick {
-  width: 52px;
-}
-
-.ana-pick {
-  vertical-align: middle;
-}
-
-/* 곡선에 선 모양 조각. 색 점을 쓰지 않는 이유는 곡선이 색으로 갈리지
- * 않기 때문입니다 — 표가 색으로 말하면 곡선에서 찾을 색이 없습니다. */
-.ana-pick-mark,
-.ana-solid {
-  display: inline-block;
-  width: 16px;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-
-/* 고른 전략 — 곡선의 가늘고 흐린 실선과 같은 모양입니다. */
-.ana-pick-mark {
-  border-top: 1.5px solid var(--ana-pick);
-  opacity: 0.7;
-}
-
-.ana-solid {
-  border-top: 2.5px solid var(--ana-total);
-}
-
-.ana-ver {
-  color: var(--text-label);
-}
-
-/* 버전이 둘 이상인 전략의 묶음 줄. 합이라 굵고, 아래 버전 줄은 들여씁니다. */
-.ana-group td {
-  font-weight: 700;
-}
-
-.data-table td.ana-sub {
-  padding-left: 24px;
-}
-
-/* 기록 파일에 아직 남지 않는 값. 「—」(값이 없음)와 다른 말입니다. */
-.ana-sheet-wide .ana-sheet-row dd.ana-unkept {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-/* 서버가 적은 체결 품질 글자. 분자·분모가 함께 서서 자릿수를 맞춥니다. */
-.ana-sheet-wide .ana-sheet-row dd.ana-served {
-  font-variant-numeric: tabular-nums;
-}
-
-.ana-unkept-note {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  word-break: keep-all;
-}
-
-/* 합계 줄은 화면 바닥에 붙어 늘 보입니다 — 좁은 창에서 표가 화면 아래로
- * 밀려도 합계와 그 고르개는 남습니다. 표가 다 보이면 제자리에 그대로 섭니다.
- * 바탕이 있어야 밑으로 지나가는 줄을 가립니다. 고른 줄의 강조는 바탕색을
- * 갈아치우지 않고 잉크 한 겹(background-image)이라 이 바탕 위에 그대로 섭니다. */
-.ana-table tfoot td {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  font-weight: 700;
-  background-color: var(--surface);
-  box-shadow: inset 0 1px 0 var(--row-line);
-}
-
-/* 다른 줄 위에 떠 있는 동안만 위쪽 경계를 진하게 하고 그림자를 드리웁니다.
- * 「떠 있음」은 표의 아래 끝이 화면 바닥을 아직 넘지 않은 구간(entry-crossing)
- * 이라 스크롤 위치로 바로 갈립니다. 화면이 밀리지 않으면 이 구간이 생기지
- * 않아 그림자도 없습니다. 이 기능이 없는 환경에서는 그림자 없이 선만 섭니다. */
-@supports (animation-timeline: view()) {
-  .ana-table table {
-    view-timeline: --ana-table-view block;
-  }
-
-  .ana-table tfoot td {
-    animation: ana-total-afloat linear;
-    animation-timeline: --ana-table-view;
-    /* 끝을 2px 당겨 둡니다. 화면 배율에 따라 스크롤 끝이 표 아래 끝에 1px 못
-     * 미쳐, 끝까지 내려도 그림자가 남는 일을 막습니다. */
-    animation-range: entry-crossing 0% entry-crossing calc(100% - 2px);
-  }
 }
 
 @keyframes ana-total-afloat {
@@ -3761,50 +1558,7 @@
   }
 }
 
-/* 표 안의 빈 상태. `.data-table td` 가 오른쪽 정렬이라 셀렉터를 한 급
- * 올리지 않으면 가운데 정렬이 지고 글이 오른쪽 끝에 붙습니다. */
-.data-table td.ana-empty-row {
-  color: var(--text-dim);
-  text-align: center;
-}
-
 /* ── 기간·방향 ──────────────────────────────────────── */
-
-.ana-bars {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  gap: 4px;
-  list-style: none;
-}
-
-.ana-bars li {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 120px;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.ana-bar-label {
-  color: var(--text-label);
-  font-variant-numeric: tabular-nums;
-}
-
-.ana-bar-track {
-  display: block;
-  height: 10px;
-  background: rgb(var(--ink) / 0.05);
-  border-radius: 3px;
-}
-
-/* 손익은 방향값이라 색이 붙습니다. 곡선의 계열색과는 다른 자리입니다. */
-.ana-bar {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-}
 
 .ana-bar.up {
   background: var(--up-bar);
@@ -3814,126 +1568,10 @@
   background: var(--down-bar);
 }
 
-.ana-bar-value {
-  text-align: right;
-}
-
 /* 탭 안 화면 하나가 통째로 쓰는 카드. */
 .stg .ana-pane {
   flex: 1 1 auto;
   min-height: 0;
-}
-
-/* 곡선 읽는 법. 곡선 오른쪽 아래, 날짜 축 줄 높이에서 선 끝 이름표 칸의 빈
- * 바닥에 섭니다. 카드 흐름 밖이라 곡선의 세로를 먹지 않습니다. */
-.ana-help {
-  position: absolute;
-  right: 10px;
-  bottom: 6px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 20px;
-  font-size: 12px;
-  color: var(--text-label);
-  white-space: nowrap;
-}
-
-/* 곡선이 무엇을 쌓았는지 늘 보이는 꼬리표. 단추 글자와 같은 크기·색입니다. */
-.ana-help-tag {
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--text-label);
-}
-
-.ana-help-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-.ana-help-btn:hover,
-.ana-help-btn[aria-expanded='true'] {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.ana-help-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  font-size: 10px;
-  font-weight: 700;
-  font-style: normal;
-  line-height: 1;
-}
-
-/* 글은 곡선 위에 뜹니다. 카드 안에 두어 카드와 함께 움직입니다. */
-.ana-help-pop {
-  position: absolute;
-  right: 8px;
-  bottom: 30px;
-  z-index: 50;
-  display: grid;
-  gap: 6px;
-  width: 340px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
-}
-
-.ana-help-pop[hidden] {
-  display: none;
-}
-
-/* 글 아래 끝과 단추 위 끝 사이의 틈(단추 bottom 6 + 높이 20 = 26, 글 bottom 30 에서
- * 테두리 1 을 뺀 5)을 덮는 보이지 않는 다리. 포인터가 틈에 머물러도 글 위로
- * 셈해 닫히지 않습니다. 단추나 글의 위치를 바꾸면 높이를 함께 맞춥니다. */
-.ana-help-pop::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  right: 0;
-  left: 0;
-  height: 5px;
-}
-
-.ana-help-pop-title {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-.ana-help-pop .ana-foot {
-  color: var(--text);
-  line-height: 1.5;
-}
-
-/* 카드 안의 둘째 묶음. 앞 묶음과 선으로 갈라 「다른 이야기가 시작된다」를
- * 말합니다 — 제목만 두면 위 값들의 꼬리처럼 읽힙니다. */
-.ana-sub-title {
-  margin-top: 4px;
-  padding-top: 6px;
-  border-top: 1px solid var(--row-line);
-}
-
-/* 옆 칸은 줄어들지 않습니다. 줄어들면 글자가 잘리는데, 좁은 창에서 할 일은
- * 뭉개는 것이 아니라 미는 것입니다(1200×720 에서는 세로 스크롤을 허용합니다).
- * 그래서 가운데 칸도 「늘어나되 줄지는 않는」 자리로 둡니다. */
-.ana-body {
-  flex-grow: 1;
-  flex-shrink: 0;
 }
 
 .ana-side > .card {
@@ -3946,21 +1584,9 @@
   min-height: 150px;
 }
 
-/* 곡선 높이를 끌어 정한 때. 줄은 더 늘지 않고 곡선이 그 높이로 섭니다. 옆 칸은
- * 줄 높이를 정하는 데 끼지 않고(`contain: size`) 곡선 줄 높이 안에서 구릅니다 —
- * 그러지 않으면 곡선을 낮춰도 비용 카드 높이에 걸려 줄이 안 줄어듭니다. */
-.ana-body.ana-body-sized {
-  flex: 0 0 auto;
-}
-
 .ana-body-sized .ana-curve {
   flex: 0 0 var(--ana-curve-h);
   height: var(--ana-curve-h);
-}
-
-.ana-body-sized .ana-side {
-  contain: size;
-  overflow-y: auto;
 }
 
 /* ── 끌어서 나누는 손잡이 ──────────────────────────── */
@@ -3988,140 +1614,12 @@
   background: var(--text);
 }
 
-/* 두 칸 사이에 서는 세로 손잡이. 그리드의 한 열을 차지합니다. */
-.split-handle-x {
-  cursor: col-resize;
-}
-
-.split-handle-x::after {
-  width: 4px;
-  height: 44px;
-}
-
-/* 위아래 사이에 서는 가로 손잡이. 위아래 음수 여백으로 앞뒤 간격(12px) 안에
- * 들어앉아, 손잡이가 생겨도 카드 사이가 벌어지지 않습니다. */
-.split-handle-y {
-  flex: 0 0 8px;
-  margin: -10px 0;
-  cursor: row-resize;
-}
-
-.split-handle-y::after {
-  width: 44px;
-  height: 4px;
-}
-
-/* 좁은 창에서는 화면이 밀립니다. 미는 자리는 여기 한 곳입니다. */
-.ana {
-  overflow-y: auto;
-}
-
-/* 비교표의 열 폭. 표가 `table-layout: fixed` 라 값 열을 못 박지 않으면 여섯
- * 열이 폭을 똑같이 나눠 갖고, 전략 이름이 먼저 말줄임에 걸립니다. */
-.ana-table th:nth-child(3),
-.ana-table td:nth-child(3),
-.ana-table th:nth-child(4),
-.ana-table td:nth-child(4) {
-  width: 84px;
-}
-
-.ana-table th:nth-child(5),
-.ana-table td:nth-child(5),
-.ana-table th:nth-child(6),
-.ana-table td:nth-child(6) {
-  width: 140px;
-}
-
-/* 한글은 기본 규칙이 낱말 가운데도 끊습니다. 좁은 카드 안의 문장은 낱말을
- * 지킵니다. */
-.ana-foot {
-  word-break: keep-all;
-}
-
-/* 방향 표와 거래 내역 표의 값 열. 여기도 `table-layout: fixed` 라 못 박지
- * 않으면 금액이 먼저 잘립니다. */
-.ana-side-table th:nth-child(2),
-.ana-side-table td:nth-child(2),
-.ana-side-table th:nth-child(3),
-.ana-side-table td:nth-child(3) {
-  width: 90px;
-}
-
-.ana-side-table th:last-child,
-.ana-side-table td:last-child {
-  width: 150px;
-}
-
-/* 거래 내역 표의 열 폭. 종목 열이 섰다 접혔다 해서 차례가 아니라 열 이름으로
- * 못 박습니다. 합이 `CODE_FITS` 의 셈과 같습니다. */
-.ana-col-at {
-  width: 140px;
-}
-
-/* 종목 열은 「마이크로 S&P 500 26년 12월물」처럼 긴 월물 이름이 만기까지 드는
- * 폭입니다. 잘리는 자리가 월물이면 다른 종목으로 읽힙니다. 이보다 긴 이름
- * (스프레드)은 말줄임과 title 로 섭니다. */
-.ana-col-code {
-  width: 224px;
-}
-
-.ana-col-side,
-.ana-col-qty {
-  width: 80px;
-}
-
-.ana-col-net {
-  width: 150px;
-}
-
-.ana-body-even {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-/* 못 누르는 단추의 이유. 자리를 늘 비워 두어 목록이 오르내리지 않습니다. */
-/* 못 누르는 까닭이 서는 덩이. 단추 사이 간격만큼 벌리면 줄마다 다른 자리의
-   말처럼 보이므로, 여러 줄이 설 때는 한 덩이로 붙여 둡니다. */
-.vrf-whys {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.vrf-why {
-  min-height: 16px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  /* 좁은 열이라 한 줄을 넘깁니다. 낱말 가운데를 끊지 않게 둡니다 — 「먼저
-     하세요」가 「먼저 하 / 세요」로 갈리면 읽다가 한 번 멈춥니다. */
-  word-break: keep-all;
-}
-
 /* 표 안의 빈 상태. `.data-table td` 가 오른쪽 정렬이라 셀렉터를 한 급 올려야
  * 가운데 정렬이 집니다. */
 .data-table td.vrf-empty-row,
 .data-table td.run-empty-row {
   color: var(--text-dim);
   text-align: center;
-}
-
-/* 못 누르는 단추 둘이 이유 한 줄을 나눠 씁니다. */
-.run-why {
-  min-height: 16px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-/* 담아 둔 실행을 서버가 못 읽었다는 한 줄. 실행 카드의 제목 줄 아래에 서고,
- * **있을 때만 섭니다** — 자리를 늘 비워 두면 평소에 빈 줄 하나가 제목과 목록
- * 사이를 벌립니다. 문장이 길어 말줄임 대신 낱말 단위로 접히게 둡니다. */
-.run-store-why {
-  margin: 0;
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--warn);
-  word-break: keep-all;
 }
 
 /* 확인 창에서 이번 요청이 건드리지 않는 줄. 목록에는 남기되 왜 빠지는지를
@@ -4225,15 +1723,6 @@
   font-weight: 600;
 }
 
-/* 카드 상태 줄 끝의 「안 낸 신호 n」. 자금 부족 배지와 같은 자리·같은 꼴입니다. */
-.vrf-unsent-badge {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 11px;
-  vertical-align: 1px;
-  cursor: pointer;
-}
-
 /* 이벤트 줄 앞의 「안 냄」·「거부」. 「거부」는 진행 탭의 이벤트 줄에도 섭니다. */
 .vrf-event-badge {
   margin-right: 6px;
@@ -4292,53 +1781,6 @@
   font-size: 12px;
   color: var(--text-label);
   font-variant-numeric: tabular-nums;
-}
-
-/* 목록 상태 칸의 「검증 중 n」·「거래 중 n」 — 누르면 그 탭에서 그 실행을 엽니다.
-   상태 배지 뒤 6px, 배지와 같은 꼴의 단추입니다. */
-.stg-run-badge {
-  margin-left: 6px;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  border: 0;
-  cursor: pointer;
-}
-
-.stg-run-badge.run-kind-real {
-  border: 1px dashed var(--warn);
-}
-
-/* 이름 없는 전략의 이름 자리 — 지은 이름이 아니라 흐립니다. */
-.stg-name.is-nameless,
-.stg-detail-name.is-nameless {
-  color: var(--text-label);
-}
-
-/* 삭제 확인 창. */
-.stg-delete-lead {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.stg-delete-note {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--text-label);
-}
-
-.stg-delete-warn {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--warn);
-}
-
-/* 상태 칸 — 상태 배지 뒤에 실행 배지가 붙고, 칸이 좁으면 다음 줄로 내려갑니다
-   (말줄임으로 「거래 중 …」이 잘리면 몇 개가 도는지가 사라집니다). */
-.data-table td.stg-status {
-  white-space: normal;
-  overflow: visible;
 }
 
 .stg-status > .badge {

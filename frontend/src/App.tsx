@@ -31,6 +31,7 @@ import { Toasts } from './app/Toasts'
 import { ScreenBoundary } from './app/ScreenBoundary'
 import { notifyTargets } from './data/alerts'
 import './app/shell.css'
+import './app/SearchBox.css'
 
 /* 앱 셸.
  *
@@ -303,7 +304,6 @@ function App() {
       delete host.__nhNotifyClick
     }
     // 페이지를 옮기는 길(`goPage`)은 ref 로 지금 페이지를 봐서 처음 것으로 충분합니다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (

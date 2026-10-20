@@ -24,13 +24,19 @@ import {
   type StrategyTab,
   versionOf,
 } from '../../data/strategyStore'
-import { StrategyList, blankDraft } from './StrategyList'
+import { StrategyList } from './StrategyList'
+import { blankDraft } from './strategyListParts'
 import { StrategySettings } from './StrategySettings'
 import { StrategyVerify } from './StrategyVerify'
 import { StrategyRun } from './StrategyRun'
 import { StrategyAnalysis } from './StrategyAnalysis'
 import { LeaveGuard } from './LeaveGuard'
 import './strategy.css'
+import './StrategyList.css'
+import './StrategySettings.css'
+import './StrategyVerify.css'
+import './StrategyAnalysis.css'
+import './StrategyRun.css'
 
 /* 전략주문 화면.
  *

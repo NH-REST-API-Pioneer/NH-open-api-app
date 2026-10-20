@@ -8,7 +8,9 @@ import {
   type IndicatorSettings,
 } from './chartIndicators'
 import { IndicatorSettingsPopover } from './IndicatorSettings'
-import { ChartView, SyncHub, type BottomCap } from './ChartView'
+import { ChartView } from './ChartView'
+import { SyncHub } from './SyncHub'
+import type { BottomCap } from './chartLayout'
 import type { LegendFold } from './ChartLegend'
 import type { TradeMark } from './chartMarks'
 import type { InstrumentRef } from '../../lib/InstrumentPicker'

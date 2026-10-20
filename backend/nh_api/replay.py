@@ -295,14 +295,14 @@ class ReplayTransport(httpx.MockTransport):
         same_env = self.store.find_http(method=method, path=path, environment=environment)
         others = tuple(f for f in self.store.http if f.method == method and f.path == path)
         if not others:
-            raise ReplayMiss(f"반입해 둔 응답에 {method} {path} 기록이 없습니다.")
+            raise ReplayMiss(f"저장해 둔 응답에 {method} {path} 기록이 없습니다.")
 
         if (method, path) in ORDER_PATHS:
             for fixtures, match in ((same_env, MATCH_EXACT), (others, MATCH_CROSS_ENVIRONMENT)):
                 same_request = _same_request(fixtures, payload)
                 if same_request:
                     return _prefer_success(same_request), match, _symbol_state(wanted, wanted)
-            raise ReplayMiss(f"반입해 둔 응답에 이 주문과 같은 {method} {path} 기록이 없습니다.")
+            raise ReplayMiss(f"저장해 둔 응답에 이 주문과 같은 {method} {path} 기록이 없습니다.")
 
         requested = symbols_of(payload)
         # 목록 요청은 종목이 목록 안에 있어 통째로 같으면 곧 같은 종목의 기록입니다.
@@ -668,14 +668,14 @@ def find_stream(
             same_symbol = tuple(f for f in pool if _stream_symbol(f) == action_sym)
             if same_symbol:
                 return StreamMatch(_pick(same_symbol), match)
-        raise ReplayMiss(f"반입해 둔 응답에 {api_id} {action_sym} 실시간 기록이 없습니다.")
+        raise ReplayMiss(f"저장해 둔 응답에 {api_id} {action_sym} 실시간 기록이 없습니다.")
 
     if candidates:
         takes_symbol = any(_stream_symbol(f) for f in candidates)
         return StreamMatch(_pick(candidates), MATCH_API if takes_symbol else MATCH_EXACT)
     if others:
         return StreamMatch(_pick(others), MATCH_CROSS_ENVIRONMENT)
-    raise ReplayMiss(f"반입해 둔 응답에 {api_id} 실시간 기록이 없습니다.")
+    raise ReplayMiss(f"저장해 둔 응답에 {api_id} 실시간 기록이 없습니다.")
 
 
 def _stream_symbol(fixture: StreamFixture) -> str | None:

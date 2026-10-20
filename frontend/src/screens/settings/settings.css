@@ -14,21 +14,6 @@
   overflow-y: auto;
 }
 
-.settings-card {
-  flex: 0 0 auto;
-  width: 100%;
-  max-width: 560px;
-  padding: 20px;
-  background: var(--surface);
-  border-radius: 12px;
-}
-
-.settings-title {
-  margin-bottom: 16px;
-  font-size: 17px;
-  font-weight: 700;
-}
-
 .settings-row {
   display: flex;
   align-items: center;
@@ -49,10 +34,6 @@
   margin-top: 4px;
   font-size: 12px;
   color: var(--text-label);
-}
-
-.settings-seg {
-  flex: 0 0 auto;
 }
 
 /* 줄 오른쪽의 단추는 제 폭을 지킵니다. 왼쪽 설명이 길어져도(바꿀 수 없는 까닭이

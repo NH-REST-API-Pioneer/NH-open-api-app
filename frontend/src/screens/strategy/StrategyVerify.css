@@ -1,0 +1,496 @@
+/* 전략 검증(StrategyVerify)만 쓰는 스타일입니다. 공용 규칙은 strategy.css 에 있고, StrategyScreen.tsx 가 strategy.css 바로 뒤에 불러옵니다. */
+
+/* 이 화면은 세로로 밀립니다. 차트와 아래 표에는 그 아래로 못 내려가는 바닥이
+ * 있고(차트 355 · 탭 슬롯 212), 낮은 창에서 그 둘을 줄이면 봉이
+ * 뭉개지고 표가 한 줄만 남습니다 — 뭉개는 대신 밉니다. */
+.vrf {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.vrf-head-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.vrf-head-left > .vrf-pending {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* 시세 상태 점. **정상에는 색이 없습니다** — 늘 켜져 있는 초록은 이상이
+ * 생겨도 눈에 안 띄고, 이 앱의 색은 값의 방향이 갖습니다. */
+.vrf-feed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-label);
+}
+
+.vrf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-dim);
+}
+
+.vrf-counts {
+  font-size: 13px;
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 셈과 「거래 중 n — 진행에서 보기」 한 묶음. 머리의 다른 마디보다 붙여 둡니다 —
+   둘이 같은 「동시 실행」 이야기입니다. */
+.vrf-counts-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 진행 탭으로 가는 글자 단추. 실전이 섞여 있으면 앞에 짧은 갈래 배지가 섭니다. */
+.vrf-trading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-label);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.vrf-trading > span:last-child {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.vrf-trading-n {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 빈 화면에서는 제목과 단추 사이에 섭니다. */
+.notice > .vrf-trading {
+  margin-top: 4px;
+}
+
+/* 실행 목록은 폭이 못 박혀 있고 차트가 남는 폭을 다 씁니다. 이 화면에서
+ * 읽는 것은 「어디서 사고팔았는가」이고 그것은 차트 폭이 정합니다. */
+.vrf-body {
+  display: grid;
+  grid-template-columns: 250px minmax(520px, 1fr);
+  gap: 12px;
+  flex: 1 0 auto;
+  min-width: 0;
+}
+
+/* 이 열은 화면의 높이를 정하지 않습니다. 안쪽을 띄워 두면 열 자체의 내용
+ * 높이가 0 이 되어, 격자의 줄 높이는 차트와 아래 표가 있는 가운데 열이
+ * 정합니다. 넘치는 것은 이 열이 제 안에서 구릅니다. */
+.vrf-side {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.vrf-side-inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.vrf-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vrf-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 값을 못 받는 중인 줄. **한 겹 흐릴 뿐** 글자를 바꾸지 않습니다 — 값은 앞
+   박자의 참값이고 낡았을 뿐이라, 지우거나 「—」로 바꾸면 없던 일이 됩니다.
+   단추는 이 줄 밖에 있어 그대로 진합니다. */
+.vrf-run.is-stale .vrf-run-body {
+  opacity: 0.55;
+}
+
+.vrf-run:hover {
+  background: var(--hover);
+}
+
+/* 줄 몸은 「이 실행을 본다」 단추이고, 왼쪽 체크는 「이 실행에 동작을 건다」
+ * 입니다 — 진행 화면의 줄과 같은 두 겹입니다. */
+.vrf-run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+/* 이름과(계좌 실행이면) 갈래 배지. 이름이 길면 이름만 말줄임입니다. */
+.vrf-run-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vrf-run-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vrf-run-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 자금이 증거금에 못 미친 실행의 표시. 상태 글자 뒤에 붙고, 폭이 모자라면
+   다음 줄로 내려갑니다. */
+.vrf-funds-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  vertical-align: 1px;
+}
+
+/* 상태와 가상 보유는 값이라 본문색입니다. 색으로 상태를 말하면 읽는 사람이
+ * 색표를 외워야 합니다. */
+.vrf-run-state {
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* 줄 아래 한 줄. **바탕색은 중립**입니다 — 「아직 안 붙음」과 「준비 중」은
+   이상이 아니라 아직인 것이고, 경고색은 끊김 하나가 씁니다(머리의 점과 같은
+   규칙). 글자는 경고가 읽혀야 하므로 13px 입니다. */
+.vrf-run-feed {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.vrf-stop {
+  align-self: stretch;
+  justify-content: center;
+}
+
+.vrf-acc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.vrf-acc-title {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vrf-acc-sum {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vrf-acc-mark {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.vrf-acc-sum ~ .vrf-acc-mark {
+  margin-left: 0;
+}
+
+.vrf-acc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 14px 12px;
+}
+
+.vrf-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.vrf-row b {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 값이 왜 없는지 적는 꼬리. **값이 아니라 설명**이라 값의 무게를 안 씁니다 —
+   바로 아래 안내 줄과 같은 얼굴입니다. */
+.vrf-row-why {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.vrf-row.is-long b > .vrf-row-why {
+  white-space: normal;
+  word-break: keep-all;
+}
+
+.vrf-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+/* 자금 판정 두 줄 — 모자라면 경고색 한 줄과 그 셈, 견줄 수 없으면 흐린 한 줄. */
+.vrf-funds-warn {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--warn);
+  word-break: keep-all;
+}
+
+/* 접힌 머리의 요약 뒤에 붙는 경고. 요약이 줄어도 이 말은 줄지 않습니다. */
+.vrf-acc-warn {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+.vrf-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 6px;
+}
+
+/* 아직 못 하는 일. 머리 띠 안에 한 줄로 서서 제 줄을 따로 갖지 않습니다 —
+ * 이 화면의 세로는 차트와 아래 표가 다투는 자리입니다. */
+.vrf-pending {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 담아 둔 실행을 서버가 못 읽었다는 한 줄. 실행 카드의 제목 아래에 서고,
+ * **있을 때만** 자리를 먹습니다. 좁은 열이라 낱말 단위로 접습니다. */
+.vrf-store-why {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--warn);
+  word-break: keep-all;
+}
+
+.vrf-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.vrf-bar-item {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.vrf-bar-item b {
+  margin-left: 4px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vrf-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 차트가 이 화면의 주인이라 남는 높이를 다 가져가되, 355 아래로는 안
+ * 내려갑니다. 그보다 낮아지면 봉이 뭉개져 매매 자리를 못 읽습니다. */
+.vrf-chart {
+  position: relative;
+  display: flex;
+  flex: 1 0 auto;
+  min-height: 355px;
+}
+
+.vrf-chart > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.vrf-bottom {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 6px;
+  /* 이 표의 바닥입니다. 탭 32 + 틈 6 + 머리 36 + 행 40 × 5 = 274.
+   *
+   * **다섯 줄은 보여야 합니다.** 이 표가 답하는 물음은 「내 체결이 났나」인데,
+   * 마지막 줄이 접히면 그 답이 가느다란 스크롤막대 하나로만 알려집니다 —
+   * 진입과 청산이 짝을 이루므로 한 거래가 두 줄이고, 다섯 줄이면 최근 두
+   * 거래와 그 앞 한 줄까지 한눈에 듭니다.
+   *
+   * 행이 그보다 늘면 표 안에서 구릅니다. 탭을 바꿀 때마다 높이가 달라지면
+   * 차트가 따라 흔들리므로 행 수에 맞춰 늘이지 않습니다(「탭 슬롯 바닥 =
+   * 든 카드의 최대」 규칙). */
+  height: 274px;
+}
+
+.vrf-bottom-tabs {
+  align-self: flex-start;
+}
+
+.vrf-table {
+  padding: 0 12px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.vrf-col-time {
+  width: 84px;
+}
+
+.vrf-col-side {
+  width: 70px;
+}
+
+/* 용도는 **까닭까지 적는 칸**이라 폭을 안 못 박습니다 — 「청산 · 손절」에서
+   까닭이 잘리면 남는 것은 「청산」뿐이고, 그것은 이미 구분 칸이 말합니다.
+   남는 폭을 이 칸이 가져가고, 값 칸은 숫자 폭만큼만 잡습니다. */
+.vrf-col-price {
+  width: 110px;
+}
+
+.vrf-col-qty {
+  width: 80px;
+}
+
+.vrf-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vrf-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.vrf-add-label {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 고르는 자리가 아니라 **보여 주는 자리**. 셀렉트와 같은 폭에 세워 줄이
+   들쭉날쭉해지지 않게 합니다 — 값은 전략이 정합니다. */
+.vrf-add-fixed {
+  width: 200px;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* 서버가 시작을 막은 까닭. 있으면 오류색이고, 없으면 그 자리가 빈 채로 남아
+   패널이 오르내리지 않습니다. */
+.vrf-start-why {
+  min-height: 18px;
+  color: var(--error);
+}
+
+.vrf-num {
+  text-align: right;
+  font-size: 13px;
+}
+
+.vrf-add-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* 계좌 칸의 값 — 갈래 배지와 그 뒤의 한 마디. */
+.run-kind-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-confirm-row .run-kind-note {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 못 누르는 단추의 이유. 자리를 늘 비워 두어 목록이 오르내리지 않습니다. */
+/* 못 누르는 까닭이 서는 덩이. 단추 사이 간격만큼 벌리면 줄마다 다른 자리의
+   말처럼 보이므로, 여러 줄이 설 때는 한 덩이로 붙여 둡니다. */
+.vrf-whys {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vrf-why {
+  min-height: 16px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  /* 좁은 열이라 한 줄을 넘깁니다. 낱말 가운데를 끊지 않게 둡니다 — 「먼저
+     하세요」가 「먼저 하 / 세요」로 갈리면 읽다가 한 번 멈춥니다. */
+  word-break: keep-all;
+}
+
+/* 카드 상태 줄 끝의 「안 낸 신호 n」. 자금 부족 배지와 같은 자리·같은 꼴입니다. */
+.vrf-unsent-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  vertical-align: 1px;
+  cursor: pointer;
+}

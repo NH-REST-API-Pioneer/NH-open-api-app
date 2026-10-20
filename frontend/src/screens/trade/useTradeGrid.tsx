@@ -19,6 +19,7 @@ import {
   CARD_MAX_WIDTH,
   DEFAULT_LAYOUT,
   GUTTER,
+  HEAD_HEIGHT,
   LAYOUT_KEY,
   FORM_ROOMY,
   ORDERS_WIDE,
@@ -27,6 +28,7 @@ import {
   COLUMN_LABEL,
   COLUMN_SLOTS,
   columnGaps,
+  columnHeight,
   columnTracks,
   columnMaxWidth,
   columnMinWidth,
@@ -34,7 +36,6 @@ import {
   fitLayout,
   gridHeight,
   isSlotEmpty,
-  leftMinWidth,
   neighborSlot,
   normalizeLayout,
   slotFloor,
@@ -44,6 +45,7 @@ import {
   fixedHeight,
   fixedMaxHeight,
   fixedSlot,
+  wideFloor,
   wideWidth,
   withColumnWidth,
   withFixedHeight,
@@ -486,11 +488,18 @@ export function useTradeGrid({
       /* 짝이 비면 **남은 카드는 제 크기 그대로**이고 열 아래가 빕니다.
          늘려 채우면 카드 테두리와 머리 띠가 빈 자리를 감싸 「덜 그려진 카드」가
          됩니다 — 빈 것은 카드 안이 아니라 열입니다. */
-      return { ...base, alignSelf: 'start', height: slotFloor(shownLayout, slot, subjectShown) }
+      const own = slot === 'lb' && collapsed ? HEAD_HEIGHT : slotFloor(shownLayout, slot, subjectShown)
+      return { ...base, alignSelf: 'start', height: own }
     }
 
-    /* 정해진 쪽은 제 높이로 제자리에 붙고, 늘어나는 쪽이 나머지를 다 씁니다. */
-    const fixed = fixedHeight(shownLayout, column, subjectShown)
+    /* 정해진 쪽은 제 높이로 제자리에 붙고, 늘어나는 쪽이 나머지를 다 씁니다.
+       **왼쪽 아래 칸이 접혀 있으면 그 칸은 머리 띠 높이만 씁니다** — 끌어 둔
+       높이를 그대로 두면 접힌 카드가 빈 상자로 남습니다. 끌어 둔 값은 배치에
+       그대로 남아, 펼치면 그 높이로 돌아옵니다. */
+    const fixed =
+      column === 'left' && collapsed && !expandedChart
+        ? HEAD_HEIGHT
+        : fixedHeight(shownLayout, column, subjectShown)
     const isFixed = slot === fixedSlot(column)
     if (isFixed) {
       return isTop
@@ -689,8 +698,11 @@ export function useTradeGrid({
    * 앱 틀이 창보다 13 좁게 잡힌 기록의 최소 창(앱 틀 1187)에서 939 입니다.
    * 그때는 넓은 열이 바닥(주문체결상세 415)까지 줄어 기본 배치가 932(415 + 200 +
    * 280 + 24 + 세로 막대 13)로 들어갑니다 — 패널이 1280 미만에서 좁아지는 것이
-   * 이 폭 때문입니다(`shell.css` 의 `--panel-width`). 넓은 카드 셋을 나란히 세우는 배치를 만들면
-   * 그때는 밀립니다 — 줄이는 것이 아니라 미는 것이 규칙입니다.
+   * 이 폭 때문입니다(`shell.css` 의 `--panel-width`). 그보다 좁은 화면(패널을 연
+   * 앱 틀 1180 미만, 글자 크기를 키운 창)에서는 주문 폼이 좁은 폼까지, 그다음
+   * 넓은 열이 남는 폭까지 줄어 격자가 화면 안에 섭니다(`fitLayout`·`wideFloor`).
+   * 넓은 열이 차트 도구 줄이 들어가는 끝(340)에 닿고도 모자라는 화면에서만
+   * 옆으로 밀립니다.
    *
    * 세로는 최소 창이 다 받아 주지 않습니다. 기본 배치에서 **왼쪽 열**이
    * 579(차트 355 + 경계 12 + 미결제약정 212)를 부르는데 최소 창에서 격자가
@@ -758,14 +770,23 @@ export function useTradeGrid({
               : ({ alignSelf: 'start', marginTop: fixed } as const),
         }
       })
+  /* 왼쪽 아래 칸이 접혀 있으면 왼쪽 열은 그 칸의 머리 띠만큼만 부릅니다. 펼친
+     높이로 부르면 격자가 그만큼 길어져, 접힌 띠가 스크롤 아래로 밀려납니다. */
+  const leftFolded = isSlotEmpty(shownLayout, 'lt')
+    ? HEAD_HEIGHT
+    : slotMinHeight(shownLayout, 'lt') + GUTTER + HEAD_HEIGHT
   const height = expandedChart
     ? Math.max(slotMinHeight(shownLayout, 'lt'), slotMinHeight(shownLayout, 'r2'))
-    : gridHeight(shownLayout)
+    : collapsed
+      ? Math.max(leftFolded, columnHeight(shownLayout, 'r1'), slotMinHeight(shownLayout, 'r2'))
+      : gridHeight(shownLayout)
+  /* 넓은 열의 바닥. 좁은 창에서는 제 카드 바닥보다 낮아질 수 있습니다(`wideFloor`). */
+  const wideMin = wideFloor(shownLayout, room.width)
   const gridStyle = {
     /* 트랙 다섯 — 열 · 경계 · 열 · 경계 · 열. 차례는 사용자가 정한 열 순서를
        그대로 따르고, 넓은 열만 남는 폭을 다 씁니다. */
     gridTemplateColumns: tracks
-      .map((t) => (t.width === null ? `minmax(${leftMinWidth(shownLayout)}px, 1fr)` : `${t.width}px`))
+      .map((t) => (t.width === null ? `minmax(${wideMin}px, 1fr)` : `${t.width}px`))
       .flatMap((track, at) => (at === 0 ? [track] : [`${at === 1 ? gutterLR : gutterRR}px`, track]))
       .join(' '),
     /* 행은 하나입니다. 위아래로 갈리는 열은 카드가 제 높이와 위 여백으로
@@ -776,7 +797,7 @@ export function useTradeGrid({
     /* 세로 막대가 잡아 둔 폭을 함께 셉니다. 이 값은 테두리까지 친 폭이라,
        막대 몫을 빼면 열들이 그만큼 밀려 가로 막대가 하나 더 생깁니다. */
     minWidth:
-      leftMinWidth(shownLayout) +
+      wideMin +
       columnWidth(shownLayout, 'r1') +
       columnWidth(shownLayout, 'r2') +
       gutterLR +

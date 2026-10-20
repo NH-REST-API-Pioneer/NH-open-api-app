@@ -178,7 +178,6 @@ export function useOrderTicket({
     orderableAskRef.current += 1
     /* 새 종목이라 아직 안 채웠습니다. */
     filledForRef.current = null
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownQuote.code])
 
   /* **물음이 바뀌면 앞 답을 내립니다.**
@@ -274,7 +273,6 @@ export function useOrderTicket({
     /* 비어 있을 때만 채웁니다. 값이 늦게 서는 종목에서 사용자가 먼저 쳐 두는
        경우가 있고, 그때 채우면 친 값을 덮습니다. */
     setPrice((current) => (current === null ? shownQuote.last : current))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownQuote.code, shownQuote.last, priceKnown, shownBuilt])
 
   /* **청산 가격을 잔고 줄 값으로 채운 동안만**, 그 종목의 첫 시세가 오면 한 번

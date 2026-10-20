@@ -40,6 +40,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Any
 
 from backend.master.master_files import DOMESTIC, OVERSEAS
 from backend.master.master_parser import MasterTable

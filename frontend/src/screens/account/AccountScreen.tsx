@@ -785,7 +785,7 @@ function OpenOrdersPanel({
         </table>
       </div>
       <p className="acct-footnote">
-        우리 폼으로 낼 수 없는 주문은 여기서 정정·취소할 수 없습니다. 낸 곳에서
+        이 앱의 주문 폼으로 낼 수 없는 주문은 여기서 정정·취소할 수 없습니다. 낸 곳에서
         거두세요
       </p>
     </>

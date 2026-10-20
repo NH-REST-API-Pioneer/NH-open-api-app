@@ -1,0 +1,402 @@
+/* 전략 목록(StrategyList)만 쓰는 스타일입니다. 공용 규칙은 strategy.css 에 있고, StrategyScreen.tsx 가 strategy.css 바로 뒤에 불러옵니다. */
+
+/* 필터와 상세는 폭이 못 박혀 있고 표가 남는 폭을 다 씁니다. 표는 열이
+ * 다섯이라 넓어질수록 이름이 길게 서고, 필터·상세는 넓어져도 읽을 것이
+ * 늘지 않습니다.
+ *
+ * **가운데 열에 바닥을 둡니다.** 바닥이 없으면 폭이 모자랄 때 표가 조용히
+ * 좁아져 전략 이름이 「코.」 한 글자로 잘립니다 — 이 앱의 화면은 접거나
+ * 뭉개지 않고 가로로 밉니다(`.app-screen`). 652 = 값 열 넷 454 + 이름 열의
+ * 바닥 166 + 카드 안쪽 여백 32 입니다.
+ *
+ * **이름 열의 바닥은 「가장 긴 이름」이 아니라 「말줄임이 시작되는 지점」입니다.**
+ * 전략 이름은 사용자가 직접 짓기 때문에 길이를 믿을 수 없습니다 — 지금 있는
+ * 이름 중 가장 긴 것에 맞춰 두면, 더 긴 이름을 지은 다음 사용자에게는 그 값이
+ * 아무것도 보장하지 않습니다. 이 바닥이 지키는 것은 「이름이 다 보인다」가
+ * 아니라 「잘리더라도 어느 전략인지 가릴 만큼은 보인다」이고, 그 뒤는 말줄임이
+ * 받습니다. 온전한 이름은 오른쪽 상세와 칸에 붙는 도움말이 답합니다.
+ *
+ * 세 열의 합은 172 + 652 + 250 + 간격 12×2 = 1098 입니다. 최근 본 패널을 연
+ * 좁은 창에서는 이보다 좁아지므로, 그때는 필터 열을 접습니다(아래 `stg`
+ * 문턱).
+ *
+ * 필터 열은 172 입니다 — 가장 긴 선택지(「모의 계좌 거래」)가 든 고르개가
+ * 138 이라 카드 여백 32 를 더한 값입니다. 필터의 낱말은 결과에 붙는 낱말과
+ * 같아야 하므로 여기서 줄이지 않습니다. */
+.stg-list {
+  display: grid;
+  grid-template-columns: 172px minmax(652px, 1fr) 250px;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 전략 화면이 세 열의 합(1098)보다 좁으면 필터 열을 접고, 필터는 목록 머리의
+ * 「필터」 단추가 여는 상자로 옮깁니다. 셋 중 필터가 먼저 비키는 것은 한 번
+ * 정하면 두는 값이라서입니다 — 목록은 읽는 자리, 상세는 다음 걸음의 자리입니다.
+ * 돌려받는 폭은 172 + 12 = 184 입니다. 열 하한 셋은 그대로 둡니다. */
+@container stg (max-width: 1097px) {
+  .stg-list {
+    grid-template-columns: minmax(652px, 1fr) 250px;
+  }
+
+  /* 카드의 `display` 규칙(`.stg .card`)보다 한 급 높여야 접힙니다. */
+  .stg .stg-list > .stg-filter {
+    display: none;
+  }
+
+  /* 아래의 기본값(숨김)보다 한 급 높여야 섭니다. */
+  .stg-filter-pop > .stg-filter-toggle {
+    display: inline-flex;
+  }
+}
+
+.stg-card-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* ── 필터 ────────────────────────────────────────────── */
+
+.stg-filter {
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.stg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stg-field-label {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 글자를 넣는 칸이라 값 칸의 오른쪽 정렬을 되돌립니다. */
+.stg-text {
+  text-align: left;
+  font-size: 13px;
+}
+
+.stg-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.stg-reset {
+  align-self: stretch;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.stg-main {
+  gap: 8px;
+}
+
+.stg-main-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stg-main-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stg-count {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.stg-range {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.stg-main-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+/* 좁은 폭의 필터 단추와 상자. 단추는 제목 오른쪽·단추 묶음 왼쪽에 섭니다. */
+.stg-filter-pop {
+  position: relative;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.stg-filter-toggle {
+  display: none;
+}
+
+/* 필터 열의 칸을 그대로 담은 겹침 상자. 고르는 동안만 표의 왼쪽 위를 가립니다. */
+.stg-filter-box {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 220px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(var(--ink) / 0.16);
+}
+
+/* 못 누르는 단추의 이유. 단추와 같은 줄에 두면 줄이 길어져 표가 밀립니다. */
+.stg-why {
+  min-height: 16px;
+  margin: 0;
+  font-size: 12px;
+  text-align: right;
+  color: var(--text-dim);
+}
+
+/* 방금 누른 일이 서버에 막혔다는 글. 지금 못 누르는 까닭(흐린 글자)과 급이 달라
+   오류색입니다. */
+.stg-why .stg-why-fail {
+  color: var(--error);
+}
+
+/* 담아 둔 전략을 서버가 못 읽었다는 한 줄. 줄이 일부라도 선 표 바로 위에 서고,
+ * **있을 때만** 자리를 먹습니다. 옆의 「이유」 줄과 달리 왼쪽에서 읽습니다 —
+ * 값에 붙는 말이 아니라 표 전체에 붙는 말입니다. */
+.stg-store-why {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+/* 종목 이름이 온전히 서는 폭입니다 — 지금 마스터 판본에서 가장 긴 이름
+ * 「미니 S&P 500 26년 9월물」이 146, 칸 여백 16 을 더해 162. 이보다 긴 이름은
+ * 잘리고 그 자리에 이름 전체가 뜨는 도움말이 붙습니다. */
+.stg-col-inst {
+  width: 162px;
+}
+
+.stg-col-status {
+  width: 78px;
+}
+
+.stg-col-pl {
+  width: 130px;
+}
+
+.stg-col-win {
+  width: 84px;
+}
+
+.stg-name,
+.stg-inst {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stg-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stg-version,
+.stg-trades {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 성과 값 옆의 기록 유형. **값이 아니라 출처**라 무채색으로 흐리게 두고,
+ * 값 아래 줄에 붙여 수와 겹쳐 읽히지 않게 합니다. */
+.stg-record {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.stg-inst {
+  font-size: 13px;
+}
+
+/* 종목 아래 줄의 시장 배지. 미결제 표의 시장 배지와 같은 꼴입니다. */
+.stg-market-badge {
+  margin-top: 2px;
+}
+
+.stg-win {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 같은 전략의 둘째 버전부터 들여씁니다. 버전을 한 줄로 합치지 않는 대신,
+ * 어느 줄이 같은 전략인지는 들여쓰기가 말합니다.
+ * 칸을 함께 적습니다 — 표의 기본 여백(`.data-table td`)이 클래스 하나보다
+ * 세서, 클래스만 적으면 들여쓰기가 눌립니다. */
+.stg-table td.stg-sub {
+  padding-left: 24px;
+}
+
+.stg-detail {
+  gap: 4px;
+  overflow-y: auto;
+}
+
+/* 배지를 제목 첫 줄에 맞춥니다. 가운데로 맞추면 이름이 길어 여러 줄이 될 때
+ * 배지가 글 한가운데에 떠서, 어느 줄에 붙은 것인지 읽히지 않습니다. */
+/* 이름과 상태 배지는 붙어 섭니다 — 배지가 말하는 것이 그 이름의 상태라,
+   줄 반대편으로 밀면 무엇의 상태인지가 멀어집니다. 오른쪽 끝은 고치러 가는
+   단추가 씁니다. */
+/* 이름·상태와 고치러 가는 길이 한 줄에 서는데, 좀은 판에서는 줄이 모자랍니다 —
+   **접히게** 둡니다. 그러지 않으면 이름이 먼저 줄어들어 글자 중간에서 끈기거나
+   줄말줌표로 가려, 정작 무슨 전략인지가 안 보입니다. */
+.stg-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* 고치러 가는 길. **이름·버전 덩이 아래에 따로 섭니다** — 이름 줄에 끼워 넣으면
+   좁은 판에서 이름이 먼저 줄어들고, 버전이 단추에 딸린 값처럼 읽힙니다.
+   왼쪽 끝은 이름과 같습니다. */
+.stg-detail-edit {
+  align-self: flex-start;
+  margin-top: 6px;
+}
+
+.stg-detail-name {
+  /* 한 줄로 둡니다 — 줄바꿈을 허라하면 한글은 글자 단위로 끈겨, 이름이
+     단어 한가운데서 나뉘어 잍힐니다. 넘치는 것은 줄말줌표로 마무리합니다. */
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stg-detail-version {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.stg-detail-summary {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--text-label);
+}
+
+.stg-detail-title {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stg-detail-range {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.stg-sheet {
+  margin: 0;
+}
+
+.stg-sheet-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  height: 28px;
+}
+
+.stg-sheet-row dt {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.stg-sheet-row dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 이동 단추 셋은 성과 바로 아래에 섭니다. 카드 바닥에 붙이면 상세가 짧아
+ * 그 사이에 빈 자리가 크게 남고, 읽던 곳과 누를 곳이 멀어집니다. */
+.stg-detail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 16px;
+}
+
+/* 목록 상태 칸의 「검증 중 n」·「거래 중 n」 — 누르면 그 탭에서 그 실행을 엽니다.
+   상태 배지 뒤 6px, 배지와 같은 꼴의 단추입니다. */
+.stg-run-badge {
+  margin-left: 6px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  border: 0;
+  cursor: pointer;
+}
+
+.stg-run-badge.run-kind-real {
+  border: 1px dashed var(--warn);
+}
+
+/* 이름 없는 전략의 이름 자리 — 지은 이름이 아니라 흐립니다. */
+.stg-name.is-nameless,
+.stg-detail-name.is-nameless {
+  color: var(--text-label);
+}
+
+/* 삭제 확인 창. */
+.stg-delete-lead {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.stg-delete-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.stg-delete-warn {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+/* 상태 칸 — 상태 배지 뒤에 실행 배지가 붙고, 칸이 좁으면 다음 줄로 내려갑니다
+   (말줄임으로 「거래 중 …」이 잘리면 몇 개가 도는지가 사라집니다). */
+.data-table td.stg-status {
+  white-space: normal;
+  overflow: visible;
+}

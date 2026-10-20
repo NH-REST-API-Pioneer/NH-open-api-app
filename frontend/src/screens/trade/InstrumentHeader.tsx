@@ -1,20 +1,23 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { needsLeg, resolve } from '../../data/instruments'
+import { needsLeg } from '../../data/instruments'
 import { masterIndex } from '../../data/master'
-import { PAPER_NIGHT_PRICE_TEXT } from '../../data/quotes'
-import {
-  domesticHoursAreCommon,
-  domesticHoursFor,
-  overseasBreakIsLunch,
-  overseasHoursOf,
-  useSession,
-  type SessionEntry,
-} from '../../data/session'
+import { useSession } from '../../data/session'
 import { useFlash } from '../../lib/flash'
-import { kstClock, kstDay, kstParts } from '../../lib/kst'
 import { marketOf, valueWidthOf } from '../../lib/valueWidth'
-import { Count, Num, fracWidth, signSpace, toneOf } from '../../lib/number'
+import { Count, Num, fracWidth, signSpace } from '../../lib/number'
 import type { MarketContext, ProductKind, Quote } from '../../lib/types'
+import {
+  WIDEST_VALUE_CHARS,
+  Row,
+  Cell,
+  RangeRow,
+  EmptyRangeRow,
+  Turnover,
+  resnap,
+  placeStops,
+} from './InstrumentHeaderParts'
+import { sessionLabel } from './headerSession'
+import { renderHeaderName, renderHeaderQuote } from './InstrumentHeaderBody'
 
 /* 종목 헤더 — 왼쪽에 종목과 현재가, 오른쪽에 지표 칸들.
  *
@@ -102,320 +105,6 @@ interface Props {
   /** 이 화면 전체에 걸리는 동작. 카드 하나가 아니라 화면 구성에 대한 것이라
    *  카드 머리 띠가 아니라 여기 섭니다 — 띠는 「무슨 카드인가」만 답합니다. */
   actions?: ReactNode
-}
-
-/* 후보 행을 못 받았을 때 값 칸이 잡는 폭. **가장 넓은 무리에 맞춥니다** —
- * 좁게 잡으면 값이 칸을 넘겨 옆 칸 라벨 위에 얹히는데, 넓게 잡으면 빈 자리만
- * 생깁니다. 둘 중에는 뒤가 낫습니다. */
-const WIDEST_VALUE_CHARS = 12
-
-
-/* 한 행 — 라벨 왼쪽, 값 오른쪽.
- *
- * 값 자리 폭(`width`)은 그 항목이 낼 수 있는 최대 자릿수입니다. 지금 값
- * 기준으로 두면 값이 커질 때 칸이 넓어지면서 옆 칸이 전부 밀립니다. */
-function Row({ label, width, children }: { label: string; width: string; children: ReactNode }) {
-  return (
-    <div className="hd-metric">
-      <dt>{label}</dt>
-      <dd style={{ minWidth: width }}>{children}</dd>
-    </div>
-  )
-}
-
-/* 한 칸 — 두 행과 왼쪽 구분선.
- *
- * 행이 하나뿐인 칸은 위 행에 붙입니다. 가운데 두면 두 줄로 나란한 다른 칸
- * 사이에서 어느 줄도 아닌 자리에 떠서 세 번째 줄처럼 보입니다. */
-function Cell({ children }: { children: ReactNode }) {
-  return <dl className="hd-cell">{children}</dl>
-}
-
-/* 양 끝 값 사이에서 지금 어디에 있는지를 점 하나로 보여줍니다.
- *
- * 벽까지 얼마 남았는지는 숫자 둘을 빼서 알 값이 아니라 눈으로 볼 값입니다.
- * 양 끝 숫자를 그대로 두고 그 사이에 위치만 얹는 것이라 잃는 정보가 없습니다.
- *
- * 저가와 고가가 같은 날(장 시작 직후·단일가)에도 트랙을 그리고 점을 가운데
- * 둡니다. 막대를 숨기면 「아직 범위가 없음」이 「값이 없음」으로 읽힙니다. */
-function RangeRow({
-  label,
-  low,
-  high,
-  at,
-  decimals,
-  fraction,
-}: {
-  label: string
-  low: number | null
-  high: number | null
-  /** 트랙 위에 점을 찍을 자리(현재가). 아직 값이 없으면 `null` 이고 점을 안 찍습니다. */
-  at: number | null
-  decimals: number
-  fraction?: number | null
-}) {
-  /* 양 끝 중 하나라도 없으면 **아직 범위가 안 생긴 것**입니다 — 그날 거래가 없는
-     종목은 고가·저가가 안 옵니다. 틀(라벨·트랙)과 높이는 그대로 두고 값 자리만
-     비웁니다. 「—」를 세우지 않습니다 — 「—」는 이 시장에 원래 없는 값의 것이고,
-     이 값은 거래가 생기면 옵니다. 점은 놓을 자리가 없어 안 그립니다. */
-  const known = low !== null && high !== null && at !== null
-  const span = known ? (high as number) - (low as number) : 0
-  const ratio = span > 0 ? Math.min(1, Math.max(0, ((at as number) - (low as number)) / span)) : 0.5
-
-  return (
-    <div className="hd-range">
-      <dt>{label}</dt>
-      <dd className="hd-range-end">
-        {low !== null && <Num value={low} decimals={decimals} fraction={fraction} />}
-      </dd>
-      {/* 점은 방향색을 쓰지 않습니다. 말하는 것이 방향이 아니라 위치라,
-          빨강·파랑을 입히면 옆의 전일대비와 뜻이 겹칩니다. */}
-      <span className="hd-range-track" aria-hidden="true">
-        {known && <span className="hd-range-dot" style={{ left: `${ratio * 100}%` }} />}
-      </span>
-      <dd className="hd-range-end">
-        {high !== null && <Num value={high} decimals={decimals} fraction={fraction} />}
-      </dd>
-    </div>
-  )
-}
-
-/* 이 시장에 원래 없는 범위 행(해외의 실시간 상하한). 줄을 지우지 않고 「—」로
- * 둡니다 — 줄이 사라지면 같은 자리가 시장마다 다른 값을 가리켜, 무엇을 보고
- * 있는지 매번 확인해야 합니다. 「—」는 「아직 안 왔다」가 아니라 「이 시장에는
- * 없다」입니다 — 오늘 아직 안 생긴 값은 위 `RangeRow` 가 빈 채로 둡니다. */
-function EmptyRangeRow({ label }: { label: string }) {
-  return (
-    <div className="hd-range">
-      <dt>{label}</dt>
-      <dd className="hd-range-none">—</dd>
-    </div>
-  )
-}
-
-/* 거래대금 단위는 시장이 정합니다. 국내는 하루 거래대금이 조 단위까지 가서
- * 백만으로 적으면 여섯 자리가 되고, 억이면 세 자리에 들어갑니다.
- * 단위는 값에 붙여 쓰되 한 급 낮춥니다 — 값과 같은 무게면 자릿수처럼 읽힙니다. */
-function Turnover({ value, currency }: { value: number; currency: string }) {
-  return currency === '원' ? (
-    <>
-      <Count value={Math.round(value / 100)} />
-      <span className="hd-unit">억원</span>
-    </>
-  ) : (
-    <>
-      <Count value={value} />
-      <span className="hd-unit">백만 {currency}</span>
-    </>
-  )
-}
-
-/* 지표 띠를 가장 가까운 멈춤 자리에 다시 세웁니다. */
-function resnap(scroll: HTMLElement, stops: number[]): void {
-  const current = scroll.scrollLeft
-  let best = 0
-  for (const stop of stops) {
-    if (Math.abs(stop - current) < Math.abs(best - current)) best = stop
-  }
-  /* 반올림하지 않습니다 — 멈춤 자리는 소수라, 반올림하면 칸이 덩어리 밑으로 조금
-     들어간 자리로 보냅니다. */
-  scroll.scrollLeft = Math.max(0, best)
-}
-
-/** 지표 칸마다 멈출지를 정해 칸에 달고, 멈춤 자리들을 돌려줍니다.
- *
- *  칸의 멈춤 자리는 「칸 왼쪽 − 고정 덩어리 폭」입니다. **어느 멈춤에서도 칸이
- *  고정 덩어리 밑에 반쯤 들어가지 않아야 합니다** — 그래서 멈춤은 칸 경계에만
- *  둡니다.
- *
- *  마지막 멈춤은 **그 자리에서 마지막 칸까지 다 보이는 첫 칸**입니다. 그 뒤의
- *  칸에는 멈춤을 달지 않습니다 — 거기까지 밀 까닭이 없습니다. 그 자리가 밀 수
- *  있는 끝보다 뒤면, 모자란 만큼만 트랙 끝에 꼬리를 붙여 닿게 합니다. 꼬리는
- *  **넘칠 때만** 붙습니다 — 값이 다 들어가는 창에서는 밀리지 않아야 합니다.
- *
- *  첫 칸은 고정 덩어리와의 간격(`gap`)만큼 떨어져 있어, 그 간격을 칸 앞에 붙여
- *  **밀기 0 을 첫 자리로** 둡니다. 안 붙이면 처음 열 때 띠가 그 간격만큼 밀린
- *  채로 섭니다.
- *
- *  **한 번에 셈합니다.** 붙여 둔 꼬리까지 다시 재서 셈하면 답이 서로 물려
- *  흔들립니다 — 꼬리를 뺀 폭으로만 셉니다. */
-function placeStops(scroll: HTMLElement, metrics: HTMLElement, leftWidth: number): number[] {
-  const cells = [...scroll.querySelectorAll<HTMLElement>('.hd-cell')]
-  const tail = Number.parseFloat(metrics.style.getPropertyValue('--hd-tail-w')) || 0
-  const end = scroll.scrollWidth - tail - scroll.clientWidth
-  const overflows = end > 0.5
-  const boxes = cells.map((cell) => cell.getBoundingClientRect())
-  const begins = boxes.map((box) => trackLeft(scroll, box) - leftWidth)
-  const total = boxes.length > 0 ? begins[begins.length - 1] + boxes[boxes.length - 1].width : 0
-  const track = scroll.clientWidth - leftWidth
-  const last = begins.find((at) => at + track >= total - 0.5) ?? 0
-  const stops: number[] = []
-  cells.forEach((cell, at) => {
-    const begin = begins[at]
-    cell.style.scrollMarginLeft = at === 0 && begin > 0 ? `${begin}px` : ''
-    const here = overflows && (at === 0 || begin <= last + 0.5)
-    cell.style.scrollSnapAlign = here ? 'start' : ''
-    if (here) stops.push(at === 0 ? 0 : begin)
-  })
-  /* 밀기 한도는 정수로 잘리므로 한 자리 넉넉히 둡니다. */
-  const need = overflows ? last - end : 0
-  metrics.style.setProperty('--hd-tail-w', `${need > 0 ? Math.ceil(need) + 1 : 0}px`)
-  return stops
-}
-
-/** 띠 안 요소의 왼쪽 자리를 **밀기 0 기준**으로. 스크롤 값과 같은 단위입니다.
- *  `offsetLeft` 는 정수로 잘려 소수 픽셀 배율에서 멈춤 자리가 칸 경계와 어긋나,
- *  칸이 덩어리 밑으로 조금씩 들어갑니다 — 그래서 소수까지 나오는 상자 좌표로 잽니다. */
-function trackLeft(scroll: HTMLElement, box: DOMRect): number {
-  return box.left - scroll.getBoundingClientRect().left - scroll.clientLeft + scroll.scrollLeft
-}
-
-/* 헤더의 거래시간 자리에 서는 한 마디 — **세션은 서버가 답한 값**입니다.
- *
- * 시계를 보고 「지금 야간이다」라고 주장하지 않습니다. 서버의 판정(`/api/session`)
- * 이 상태를 주고, 시각은 그 판정이 준 구간(국내는 시간표의 세션 창)에서 옵니다.
- * 색은 없습니다 — 정상에는 색을 쓰지 않습니다.
- *
- * 꼴은 셋뿐입니다 — 열려 있으면 「{세션} {시작~끝}」, 열리기 전이면 「개장 전 ·
- * {세션} 개장 HH:MM」, 닫혔으면 「장 마감 · 다음 개장 {때}」. 단일가는 체결 방식이
- * 다른 유일한 구간이라 「주간 단일가 · 마감 HH:MM」으로 적습니다. 해외는 세션이
- * 하나라 세션 낱말 대신 「개장」이 서고(1차·2차·거래일 넘김을 가르지 않습니다 —
- * 사용자가 할 일이 같습니다), 정비 시간은 「정비 중 · 재개 HH:MM」입니다.
- *
- * 마감은 **시세 상태가 아닙니다.** 값이 있고 안 바뀌는 것이 정상이라 마지막 값을
- * 그대로 두고, 이 자리가 다음 개장을 말합니다. 다음 개장 시각은 서버가 준 것이고
- * 화면이 계산하지 않습니다 — 휴장일은 모릅니다. 오늘이 최종거래일이면 장중에는
- * 꼬리 「· 최종거래일」이 붙고(끝 시각만으로는 지나치기 쉽습니다), 마감 뒤에는 다음
- * 개장이 없어 「최종거래일 마감」입니다.
- *
- * 세션을 아직 못 들었거나(묻는 중·못 받음) 서버도 모르면(`unknown`) 시간표의
- * 거래시간만 접두어 없이 적습니다 — 「마감」이라 하면 모르는 것을 아는 척하는
- * 것이고, 「모름」을 세우면 정상 화면에 상시 배지가 됩니다. */
-/** 해외 품목이 거래시간표에 없을 때 시간 자리에 서는 말. */
-const NO_HOURS = '거래시간 정보 없음'
-
-function sessionLabel(context: MarketContext, code: string, entry: SessionEntry): string {
-  const said = sessionWords(context, code, entry)
-  /* 시각이 그 종목 품목 줄이 아니라 **시장 공통 표**에서 온 것이면 그 사실을 한
-     마디로 답니다. 비우지 않는 것은 시간표에 줄이 있는 종목이 열에 하나꼴이기
-     때문입니다 — 없는 쪽을 비우면 시각이 대부분의 화면에서 사라지는데, 15분
-     어긋난 참고값의 손해는 한 번이고 시각이 없는 손해는 매번입니다.
-     판정이 함께 준 시각(다음 개장·재개)에도 같은 꼬리가 걸립니다: 품목 줄이
-     없으면 서버 판정도 그 표로 내려가 결국 같은 출처입니다.
-     **시각이 없는 줄에는 안 답니다** — 「최종거래일 마감」에는 가리킬 값이
-     없습니다. */
-  if (!/\d{1,2}:\d{2}/.test(said)) return said
-  const item = resolve(code)
-  /* 판정이 없으면 몸통은 주간 창이고, 있으면 그 판정의 세션 창입니다. 야간 개장
-     전의 시각은 야간 개장 시각이라 야간으로 봅니다. */
-  const usable = entry.status === 'ready' && entry.source !== 'unknown' && entry.state !== null
-  const session =
-    usable && entry.state === 'pre-night' ? 'night' : usable && entry.session ? entry.session : 'day'
-  const common =
-    context !== 'overseas' &&
-    domesticHoursAreCommon(item?.product.tradeCode ?? null, item?.kind ?? 'futures', session)
-  return common ? `${said} · 시장 공통` : said
-}
-
-/** 위 띠가 세울 말. 출처 꼬리를 뺀 몸통입니다. */
-function sessionWords(context: MarketContext, code: string, entry: SessionEntry): string {
-  const usable = entry.status === 'ready' && entry.source !== 'unknown' && entry.state !== null
-  /* 해외 품목이 시간표에 없으면 **그렇다고 적습니다** — 시장 공통 시각으로 채우면
-     그 품목의 시간이 아닌 것을 그 품목의 시간으로 읽습니다. */
-  if (!usable) return staticHours(context, code) || (context === 'overseas' ? NO_HOURS : '')
-  const tail = entry.lastTradingDay ? ' · 최종거래일' : ''
-  const at = (iso: string | null, text: (clock: string) => string, none: string) => {
-    const clock = clockOf(iso)
-    return clock ? text(clock) : none
-  }
-  switch (entry.state) {
-    case 'closed': {
-      if (entry.lastTradingDay && entry.nextOpen === null) return '최종거래일 마감'
-      return at(entry.nextOpen, (next) => `장 마감 · 다음 개장 ${next}`, '장 마감')
-    }
-    case 'break': {
-      /* 한낮의 쉼은 점심 휴장입니다(홍콩 13:00~14:00 등). 「정비」라 하면 거래소
-         설비를 손보는 시간처럼 읽힙니다. 쉼 구간은 그 품목 시간표에서 읽습니다. */
-      const item = resolve(code)
-      const lunch =
-        context === 'overseas' && overseasBreakIsLunch(item?.product.exchangeNo ?? null, item?.product.code ?? '')
-      const word = lunch ? '점심 휴장' : '정비 중'
-      return at(entry.until, (resume) => `${word} · 재개 ${resume}`, word) + tail
-    }
-    case 'pre-open':
-      return at(entry.until, (open) => `개장 전 · 주간 개장 ${open}`, '개장 전 · 주간') + tail
-    case 'pre-night':
-      return at(entry.until, (open) => `개장 전 · 야간 개장 ${open}`, '개장 전 · 야간') + tail
-    case 'closing-auction':
-      return at(entry.until, (close) => `주간 단일가 · 마감 ${close}`, '주간 단일가') + tail
-    case 'day':
-      return `주간 ${domesticWindow('day', code, entry)}`.trimEnd() + tail
-    case 'night':
-      return `야간 ${domesticWindow('night', code, entry)}`.trimEnd() + tail
-    default:
-      /* open · open-2 · next-day — 그 구간의 시작~끝. 서버가 구간을 안 주면 시간표. */
-      {
-        const span = segmentText(entry) || staticHours(context, code)
-        if (!span && context === 'overseas') return `장중 · ${NO_HOURS}` + tail
-        return `개장 ${span}`.trimEnd() + tail
-      }
-  }
-}
-
-/** 판정이 없을 때 서는 시간 — 시간표의 정적 거래시간입니다. **그 품목의 창**이
- *  먼저이고, 국내는 품목 줄이 없으면 시장 공통 창입니다(꼬리가 그 사실을
- *  말합니다). 해외는 표에 그 품목이 없으면 빈 문자열이라 자리가 빕니다. */
-function staticHours(context: MarketContext, code: string): string {
-  const item = resolve(code)
-  if (context === 'overseas') return overseasHoursOf(item?.product.exchangeNo ?? null, item?.product.code ?? '')
-  return domesticHoursFor(item?.product.tradeCode ?? null, item?.kind ?? 'futures', 'day').text
-}
-
-/** 국내 세션의 창. **그 품목 줄의 창**을 쓰되, 오늘이 최종거래일이면 끝을 그날의
- *  마감 시각으로 바꿉니다 — 품목 줄은 보통 날의 창이고, 최종거래일의 마감은
- *  서버가 종목별로 줍니다. 품목 줄이 없는 종목은 시장 공통 창입니다. */
-function domesticWindow(session: 'day' | 'night', code: string, entry: SessionEntry): string {
-  const item = resolve(code)
-  const window = domesticHoursFor(
-    item?.product.tradeCode ?? null,
-    item?.kind ?? 'futures',
-    session,
-  ).text
-  const close = clockOf(entry.lastTradingDay?.closeAt ?? null)
-  if (!window || !close) return window
-  const start = window.split('~')[0]
-  return `${start}~${close}`
-}
-
-/** 서버가 준 구간의 시작~끝. 끝이 다음 날이면 「익일」을 붙입니다. */
-function segmentText(entry: SessionEntry): string {
-  if (!entry.since || !entry.until) return ''
-  const since = new Date(entry.since)
-  const until = new Date(entry.until)
-  if (Number.isNaN(since.getTime()) || Number.isNaN(until.getTime())) return ''
-  const nextDay = kstDay(until) !== kstDay(since)
-  return `${clockOnly(since)}~${nextDay ? '익일 ' : ''}${clockOnly(until)}`
-}
-
-/** 한국시간 「HH:MM」. 거래시간은 한국시간이라 PC 시간대와 무관하게 읽습니다. */
-function clockOnly(at: Date): string {
-  return kstClock(at)
-}
-
-/** ISO 시각을 「HH:MM」으로. **오늘이 아니면 날을 앞에 붙입니다** — 주말의
- *  「다음 개장 08:45」는 내일이 아니라 월요일이라, 시각만 적으면 거짓이 됩니다.
- *  내일은 「내일」, 그 뒤는 「M/D」(요일 이름은 「월」이 월물의 「월」과 겹칩니다). */
-function clockOf(iso: string | null): string {
-  if (!iso) return ''
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return ''
-  const clock = clockOnly(at)
-  /* 「오늘·내일」도 한국 달력으로 셉니다. */
-  const days = kstDay(at) - kstDay(Date.now())
-  if (days === 0) return clock
-  if (days === 1) return `내일 ${clock}`
-  const { month, day } = kstParts(at)
-  return `${month}/${day} ${clock}`
 }
 
 export function InstrumentHeader({
@@ -696,172 +385,39 @@ export function InstrumentHeader({
       <div className="hd-scroll" ref={scrollRef}>
       <div className="hd-left" ref={leftRef}>
         {/* 줄 A — 무엇을 보고 있나. */}
-        <div className="hd-name">
-          {/* 제목과 부제는 한 칸입니다. 부제가 없는 종목에서는 제목 한 줄이라
-              지금까지와 같은 높이로 섭니다. */}
-          <div className="hd-title">
-            <h1 className="t-screen" title={quote.productName}>
-              {quote.productName}
-            </h1>
-            {/* 두 다리를 한국어로 적는 자리. 제목이 마스터 원문(「코스피200 SP
-                2612-2703」)이라 만기가 코드에 가까운 표기로만 서는데, 그 표기를
-                읽을 수 있는 사람만 어느 두 달인지 알게 됩니다. */}
-            {legsLine !== null && <p className="hd-legs">{legsLine}</p>}
-          </div>
-
-          {/* 만기를 바꾸면 다른 종목이라 주문 폼이 리셋됩니다.
-              잔존일을 목록 안에 둡니다. 닫힌 셀렉터가 고른 만기의 잔존일을
-              그대로 보여주므로 늘 보이고, 목록을 열면 만기끼리 견줄 수도
-              있습니다 — 옆에 또 적으면 같은 값이 한 줄에 두 번 섭니다. */}
-          <select
-            className="hd-month"
-            value={quote.code}
-            aria-label="만기"
-            onChange={(event) => onMonthChange(event.target.value)}
-          >
-            {months.map((item) => (
-              <option key={item.code} value={item.code}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-
-          {kind === 'option' && (
-            <>
-              {/* 아직 안 고른 축은 **안 골랐다고 말합니다.** 목록의 첫 값을
-                  그리면 고른 적 없는 콜과 행사가가 골라진 것처럼 보이고, 그
-                  종목이 주문 폼에 실립니다. 고르고 나면 이 항목은 사라집니다 —
-                  되돌아갈 자리가 아니라 아직 안 지난 자리입니다. */}
-              <select
-                className="hd-month"
-                value={optionSide ?? ''}
-                aria-label="콜 / 풋"
-                onChange={(event) => onOptionSideChange(event.target.value as 'call' | 'put')}
-              >
-                {optionSide === null && (
-                  <option value="" disabled>
-                    콜/풋 선택
-                  </option>
-                )}
-                <option value="call">콜</option>
-                <option value="put">풋</option>
-              </select>
-
-              <select
-                className="hd-month"
-                value={strike ?? ''}
-                aria-label="행사가"
-                onChange={(event) => onStrikeChange(Number(event.target.value))}
-              >
-                {strike === null && (
-                  <option value="" disabled>
-                    행사가 선택
-                  </option>
-                )}
-                {strikes.map((value) => (
-                  <option key={value} value={value}>
-                    {value.toFixed(strikeDecimals)}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {/* 콜/풋과 행사가가 다 정해지기 전에는 종목코드가 아직 없습니다.
-              **값 칸이라 값이 없을 때의 표시(「—」)를 씁니다** — 무엇이 남았는지는
-              바로 왼쪽 두 셀렉트가 「콜/풋 선택」·「행사가 선택」으로 이미 말하고
-              있어, 여기에 같은 말을 또 세우면 한 줄에 같은 글자가 나란히 섭니다.
-              값이 아니라 빈자리라 한 급 낮추고 흐림색을 씁니다. */}
-          <span className="hd-code">
-            {pending ? <span className="hd-code-pending">—</span> : quote.code}
-          </span>
-
-        </div>
+        {renderHeaderName({
+          quote,
+          legsLine,
+          months,
+          onMonthChange,
+          kind,
+          optionSide,
+          onOptionSideChange,
+          strike,
+          strikes,
+          strikeDecimals,
+          onStrikeChange,
+          pending,
+        })}
 
         {/* 줄 B — 얼마인가. 한 문장으로 읽힙니다.
             「며칠보다」라고 날짜를 적지 않습니다. 국내가 주간·야간으로 갈려
             기준일을 단정할 수 없고, 화면이 아는 것은 「전일」까지입니다. */}
-        <div className="hd-quote">
-          {/* 못 받았으면 값이 서던 자리가 그 사실을 말합니다. 헤더에서 가장 큰
-              값이 현재가라, 없어진 것이 여기서 가장 먼저 보입니다. 값을 아직
-              한 번도 못 받았으면 값 자리를 이 문구가 대신하고, 받아 둔 값이
-              있으면 값 뒤에 붙습니다 — 그때 값은 틀린 값이 아니라 낡은
-              값입니다. */}
-          {valuesHidden ? (
-            valuesLoading ? <span className="hd-price-wait" aria-hidden="true" /> : null
-          ) : (
-            <>
-              <span className={`hd-price t-price${flash ? ` is-${flash}` : ''}`} style={price}>
-                {quote.last !== null && <Num value={quote.last} decimals={d} fraction={fraction} />}
-              </span>
-              <span className="hd-dot">·</span>
-              {/* 국내 야간의 등락은 **그 야간이 딸린 거래일의 주간 정산가**에서 잽니다.
-                  「전일보다」로 적으면 어제 값에서 잰 것으로 읽힙니다. 세션은 서버
-                  답(`context`)입니다. */}
-              <span className="hd-since">
-                {context === 'domestic-night' ? '주간 정산가보다' : '전일보다'}
-              </span>
-              {/* 등락이 안 온 칸은 빈 채입니다 — 0 으로 적으면 「안 움직였다」가 되고,
-                  「—」는 이 시장에 원래 없는 값의 말입니다. 「전일보다」 라벨만 남습니다. */}
-              <span className="hd-change" style={price}>
-                {quote.change !== null && (
-                  <Num value={quote.change} decimals={d} fraction={fraction} signed toned />
-                )}
-              </span>
-              <span className={`hd-pct ${quote.change === null ? '' : toneOf(quote.change)}`}>
-                {quote.changePct !== null &&
-                  `(${quote.changePct > 0 ? '+' : quote.changePct < 0 ? '−' : ''}${Math.abs(quote.changePct).toFixed(2)}%)`}
-              </span>
-              <span className="hd-dot">·</span>
-            </>
-          )}
-          {/* 값이 언제 것인가. 값 바로 뒤에 붙습니다 — 이 시각이 말하는 것은
-              화면이 아니라 그 숫자입니다. 값이 아예 없는 자리에는 안 답니다.
-              그때는 「없다」가 먼저입니다. */}
-          {!valuesHidden && since && (
-            <>
-              <span className="hd-at">{since} 기준</span>
-              <span className="hd-dot">·</span>
-            </>
-          )}
-          {failure && (
-            <span className="hd-failed">
-              {/* 「못 받았다」와 「아직 없다」는 사용자가 할 일이 다릅니다 —
-                  앞은 다시 불러 볼 만하고 뒤는 거래가 생겨야 값이 섭니다. */}
-              <span className="hd-failed-text">
-                {failure.kind === 'unasked'
-                  ? /* **이 문장은 화면에 한 번만 섭니다.** 화면 전체가 같은 사정일 때는
-                       카드마다 제 문장을 세우면 다른 일이 여럿 난 줄로 읽힙니다 —
-                       한 번 말하고 나머지 카드는 짧은 표지만 답니다. */
-                    `${context === 'overseas' ? '해외' : '국내'} 인증 정보가 없어 시세를 받지 않습니다`
-                  : failure.kind === 'empty'
-                    ? '아직 시세가 없습니다'
-                    : failure.kind === 'paper'
-                      ? /* 까닭이 정해진 답이라 그대로 말합니다. 다시 받는 단추도
-                           경고색도 없습니다 — 사용자가 고칠 일이 아닙니다. */
-                        PAPER_NIGHT_PRICE_TEXT
-                      : failure.text || '시세를 받지 못했습니다'}
-              </span>
-              {/* 거절은 눌러도 같은 답이 옵니다. 그때 다시 받는 길은 이 줄의
-                  만기·콜풋·행사가를 바꾸는 것이고, 그 컨트롤이 바로 옆에
-                  있습니다. */}
-              {failure.kind === 'retry' && (
-                <button type="button" className="btn btn-quiet" onClick={onRetry}>
-                  다시
-                </button>
-              )}
-              {failure.kind === 'unasked' && onOpenSettings && (
-                <button type="button" className="btn btn-quiet" onClick={onOpenSettings}>
-                  설정 열기
-                </button>
-              )}
-            </span>
-          )}
-          {failure && <span className="hd-dot">·</span>}
-          {/* 상자에 넣지 않습니다. 이 줄의 상자는 만기와 선물·옵션 둘 다
-              누르는 것이라, 안 눌리는 상자를 하나 더 놓으면 눌러 보게 됩니다. */}
-          <span className="hd-hours">{hours}</span>
-        </div>
+        {renderHeaderQuote({
+          valuesHidden,
+          valuesLoading,
+          flash,
+          price,
+          quote,
+          d,
+          fraction,
+          context,
+          since,
+          failure,
+          onRetry,
+          onOpenSettings,
+          hours,
+        })}
       </div>
 
       {/* 지표 칸 넷. 오른쪽으로 갈수록 「가려져도 다른 곳에서 답을 찾는 값」이

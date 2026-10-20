@@ -1,49 +1,35 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { Num, fracWidth } from '../../lib/number'
-import { Spark } from '../../lib/Spark'
-import { kstClock, kstMinutes } from '../../lib/kst'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useWishes } from '../../data/stream'
 import { resolve } from '../../data/instruments'
-import {
-  quoteEntry,
-  loadBars,
-  loadPrice,
-  subscribeQuotes,
-  useBars,
-  usePrice,
-} from '../../data/quotes'
-import {
-  depositMoney,
-  isDomesticDeposit,
-  retryDeposit,
-  retryList,
-  useDepositOnce,
-  useListOnce,
-  useMarketCredentialed,
-  type DepositEntry,
-  type DepositMarket,
-  type DepositRow,
-  type ListEntry,
-  type ServerOrder,
-  type ServerOrderError,
-} from '../../data/account'
-import { toOrder, toOrderError } from '../../data/accountRows'
+import { quoteEntry, loadBars, loadPrice, subscribeQuotes } from '../../data/quotes'
+import { retryDeposit, useDepositOnce } from '../../data/account'
 import type { MarketContext, RecentItem } from '../../lib/types'
-import {
-  MARKET_LINES,
-  domesticContextOf,
-  marketLineHours,
-  subscribeSession,
-  useSession,
-  useTimetable,
-} from '../../data/session'
-import { WATCH_SLOTS, defaultWatch, tileOf, type Tile } from '../../data/homeWatch'
+import { domesticContextOf, subscribeSession, useTimetable } from '../../data/session'
+import { WATCH_SLOTS, defaultWatch, tileOf } from '../../data/homeWatch'
 import { WatchPicker } from './WatchPicker'
 import { refreshMaster } from '../../data/master'
 import { useEnvironment } from '../../data/environment'
 import { useMasterStatus } from '../../lib/useMaster'
 import { useUiState } from '../../data/uiState'
 import './home.css'
+import './HomeCards.css'
+import './HomeTiles.css'
+import {
+  latest,
+  LeadTile,
+  QuoteRow,
+  StaleTile,
+  RemoveButton,
+  type Slot,
+} from './HomeTiles'
+import { AccountCardBody, OrdersCard, CardSkeleton, type ExpiryRow } from './HomeCards'
+import { renderHomeHours } from './HomeHours'
 
 /* 홈 — 앱을 켜면 처음 보는 화면.
  *
@@ -53,226 +39,6 @@ import './home.css'
  * 들어올 때마다 다시 부릅니다. 자동 갱신은 없고 새로고침 버튼이 있습니다 —
  * 훑는 화면에 값을 계속 끌어오면 호출 제한이 정작 필요할 때 모자랍니다.
  */
-
-/* 기준 종목 하나만 큰 타일입니다. 스파크라인이 길수록·높을수록 형태가
- * 읽히므로, 홈에서 세로로 늘어나는 것은 이 하나뿐입니다. */
-/** 여러 시각 중 **가장 최근**. 둘 다 오늘 안에서 이미 지난 시각이라는 것을
- *  써서 「지금으로부터 얼마나 지났나」로 견줍니다 — 국내 야간장은 자정을 넘겨
- *  이어지므로 글자로 견주면 00:10 이 23:55 보다 최근이라고 나옵니다. */
-function latest(times: string[]): string {
-  if (times.length === 0) return ''
-  /* 줄의 시각은 한국시간이라 지금도 한국시간으로 셉니다. */
-  const nowMinutes = kstMinutes(Date.now())
-  const ago = (text: string) => {
-    const [hour, minute] = text.split(':').map(Number)
-    return (nowMinutes - (hour * 60 + minute) + 1440) % 1440
-  }
-  return times.reduce((best, one) => (ago(one) < ago(best) ? one : best))
-}
-
-/* 타일 한 칸이 지금 무엇을 보일 수 있는가.
- *
- * **다섯 갈래를 가릅니다.** 값이 없는 까닭마다 사용자가 할 일이 다릅니다 —
- * 받는 중이면 기다리고, 못 받았으면 다시 받고, 거절이면 눌러도 같은 답이며,
- * 「받았는데 값이 아직 없다」는 그 종목에 오늘 거래가 없다는 뜻이고,
- * **아직 안 물어본 자리**는 앱이 그 시장을 조회하지 않는 자리입니다.
- * 다섯을 한 얼굴로 두면 사용자가 될 때까지 새로고침을 누릅니다.
- *
- * 값 갈래를 가르는 칸은 **현재가 하나**입니다. 전일대비·등락률은 시세가 있어도
- * 안 올 수 있는 칸이라 그때는 그 칸만 「—」로 섭니다 — 셋을 다 요구하면 멀쩡히
- * 그릴 수 있는 타일이 「거래 없음」으로 섭니다. */
-type TileFace =
-  | { kind: 'values'; last: number; change: number | null; changePct: number | null }
-  | { kind: 'loading' }
-  | { kind: 'failed'; retry: boolean }
-  | { kind: 'empty' }
-
-function useTileFace(tile: Tile): TileFace {
-  /* 두 시장 다 부릅니다 — 어느 길로 갈지는 시세 저장소가 종목으로 정합니다
-     (`data/quotes.ts`). 국내는 세션도 같이 묻습니다 — 야간이면 현재가가 야간
-     조회로 나가야 하고, 그 판단은 세션 답이 합니다. 해외는 길이 하나라 안 묻습니다. */
-  useSession('domestic', tile.market === 'domestic' ? tile.code : '')
-  const entry = usePrice(tile.code)
-
-  /* **값이 있으면 값이 먼저입니다.** 다시 받다 실패해도 앞서 받은 값은 틀린 값이
-     아니라 낡은 값이고, 낡았다는 사실은 카드 위 한 줄이 말합니다. 값을 「못 받음」
-     으로 갈아 끼우면 새로고침 한 번에 멀쩡한 값이 사라집니다. */
-  const price = entry.price
-  if (price && price.last !== null) {
-    return { kind: 'values', last: price.last, change: price.change, changePct: price.changePct }
-  }
-  if (entry.failure) return { kind: 'failed', retry: entry.failure === 'retry' }
-  return entry.status === 'ready' ? { kind: 'empty' } : { kind: 'loading' }
-}
-
-/** 값이 안 서는 칸에 서는 한 마디. **까닭마다 다릅니다** — 「없음」 하나로
- *  뭉치면 기다릴 자리와 다시 받을 자리가 같은 얼굴이 됩니다. */
-function faceWord(face: TileFace): string {
-  if (face.kind === 'loading') return '받는 중'
-  if (face.kind === 'failed') return face.retry ? '못 받음' : '받지 못했습니다'
-  return '거래 없음'
-}
-
-function LeadTile({ tile }: { tile: Tile }) {
-  const price = fracWidth(tile.decimals)
-  const face = useTileFace(tile)
-  /* 곡선은 **큰 타일에만** 있습니다. 작은 줄에서 56×24 곡선이 주는 것은
-     오르내림 모양 하나인데, 그것은 바로 옆 숫자와 등락률이 이미 말합니다.
-     큰 타일은 원래 더 보여 주는 자리라 값 하나를 더 부를 만합니다. */
-  const bars = useBars(face.kind === 'values' ? tile.code : '')
-
-  return (
-    <>
-      <span className="tile-name">
-        {tile.name}
-        {/* 이 누름이 화면을 나간다는 표시입니다. 오른쪽 화살표는 「다른 곳으로」,
-            작은 줄의 위쪽 화살표는 「여기 안에서」를 뜻합니다. */}
-        <span className="tile-hint" aria-hidden="true">
-          주문으로 →
-        </span>
-      </span>
-      {face.kind === 'values' ? (
-        <>
-          <span className="tile-price" style={price}>
-            <Num value={face.last} decimals={tile.decimals} />
-          </span>
-          {/* 안 온 칸은 빈 채입니다 — 0 으로 적으면 「안 움직였다」가 되고, 「—」는 이
-              시장에 원래 없는 값의 말입니다. */}
-          <span className="tile-change">
-            <span style={price}>
-              {face.change !== null && <Num value={face.change} decimals={tile.decimals} signed toned />}
-            </span>
-            <span style={fracWidth(2, 1)}>
-              {face.changePct !== null && (
-                <Num value={face.changePct} decimals={2} signed toned suffix="%" />
-              )}
-            </span>
-          </span>
-        </>
-      ) : (
-        /* 값이 없으면 **까닭만** 그 자리에 섭니다. 숫자 자리를 뼈대나 「—」로
-           채우지 않습니다 — 뼈대는 「곧 온다」는 말이고, 「—」는 「이 종목엔
-           원래 없는 값」이라는 말입니다. */
-        <span className="tile-word">{faceWord(face)}</span>
-      )}
-      {/* 선은 이름·값 아래에 카드 폭을 다 씁니다. 흐름이 형태로 읽히려면 길게
-          깔려야 합니다 — 짧게 자르면 같은 자료가 잔물결이 됩니다.
-          **값이 없으면 선 자리도 없습니다.** 자리만 잡아 두면 회색 블록이
-          「곧 온다」로 읽히는데, 조회가 아직 없는 자리에는 안 옵니다. */}
-      {face.kind === 'values' && (
-      <Spark
-        points={bars ? bars.map((bar) => bar.close) : null}
-        loaded={bars !== null}
-        stretch
-        width={1120}
-        height={160}
-        /* 기준선은 **전일 종가**입니다 — 이 타일이 적는 현재가와 전일대비에서
-           셉니다. 봉의 끝 값으로 짓지 않습니다(오늘 봉이 없거나 늦게 올 수 있고,
-           그러면 기준이 어제가 아니게 됩니다). 전일대비가 안 온 종목은 모릅니다. */
-        base={
-          face.kind === 'values' && face.change !== null && Number.isFinite(face.last - face.change)
-            ? face.last - face.change
-            : null
-        }
-        times={bars ? bars.map((bar) => barTime(bar.timestamp)) : undefined}
-        decimals={tile.decimals}
-      />
-      )}
-    </>
-  )
-}
-
-/* 나머지 다섯은 가로 한 줄짜리 목록입니다. 세로로 쌓으면 이름·값·등락이
- * 타일 높이에 안 들어가고, 다섯은 고르기 전에 훑는 대상이라 목록이 맞습니다. */
-function QuoteRow({ tile }: { tile: Tile }) {
-  const price = fracWidth(tile.decimals)
-  const face = useTileFace(tile)
-
-  return (
-    <>
-      {/* 목록의 이름은 잘려도 됩니다 — 여럿 중 하나를 찾는 자리라 앞부분이면
-          알아봅니다. 다만 전체는 물어볼 수 있어야 합니다. */}
-      <span className="quote-name" title={tile.name}>
-        {tile.name}
-        <span className="quote-hint" aria-hidden="true">
-          ↑ 크게 보기
-        </span>
-      </span>
-      {face.kind === 'values' ? (
-        <>
-          <span className="quote-price" style={price}>
-            <Num value={face.last} decimals={tile.decimals} />
-          </span>
-          <span className="quote-change" style={price}>
-            {face.change !== null && <Num value={face.change} decimals={tile.decimals} signed toned />}
-          </span>
-          {/* 등락률만 알약에 담습니다. 이 목록은 「무엇이 움직였나」를 찾으며
-              훑는 곳이라 등락률이 표적이고, 바탕은 표적에만 깝니다.
-              알약 폭은 열 폭 전부입니다 — 값에 맞춰 줄이면 「−13.36%」가
-              「−0.88%」보다 긴 알약이 되어 길이가 크기를 말하게 됩니다. */}
-          <span className={`quote-pct${face.change !== null && face.change > 0 ? ' up' : face.change !== null && face.change < 0 ? ' down' : ''}`}>
-            <span style={fracWidth(2, 1)}>
-              {face.changePct !== null && (
-                <Num value={face.changePct} decimals={2} signed toned suffix="%" />
-              )}
-            </span>
-          </span>
-        </>
-      ) : (
-        /* 값 세 칸을 한 마디가 대신합니다. 칸마다 같은 말을 세우면 한 줄에
-           같은 글자가 셋 섭니다. */
-        <span className="quote-word">{faceWord(face)}</span>
-      )}
-    </>
-  )
-}
-
-/** 봉 하나의 시각을 한국시각 `HH:MM` 으로. 곡선에 마우스를 올렸을 때 값과 함께 뜹니다. */
-function barTime(timestamp: number): string {
-  return kstClock(timestamp)
-}
-
-/** 한 칸에 담긴 것. 색인이 푸는 종목이거나, 담아 둔 코드가 색인에서 사라진
- *  **낡은 칸**이거나, 빈 칸입니다. */
-type Slot = { kind: 'tile'; tile: Tile } | { kind: 'stale'; code: string } | null
-
-/* 색인에 없는 코드가 담긴 칸 — 담아 둔 월물이 만기를 지나 마스터에서 빠진 경우가
- * 대부분입니다. **못 찾았을 때 대신 세울 것이 있으면 그것을 세웁니다** — 저장한
- * 것이 코드뿐이라 이름 자리에 코드(흐림), 값 자리에 한 마디. 숫자 자리를 뼈대나
- * 「—」로 채우지 않습니다(앞은 「곧 온다」, 뒤는 「원래 없다」라 둘 다 거짓이고,
- * 할 일이 있습니다 — 빼거나 바꿉니다). 큰 타일이면 곡선 자리도 없습니다 —
- * 자리를 남기고 비우면 「아직 안 받음」으로 읽힙니다. */
-function StaleTile({ code, lead }: { code: string; lead: boolean }) {
-  /* 큰 타일과 목록 줄은 다른 격자라 같은 칸 이름을 씁니다 — 목록 줄에서는
-     한 마디가 값 세 칸을 대신합니다(값이 없는 종목 줄과 같은 자리). */
-  return (
-    <>
-      <span className={`${lead ? 'tile-name' : 'quote-name'} home-stale-code`} title={code}>
-        {code}
-      </span>
-      {/* 큰 타일은 문장, 목록 줄은 한 마디 — 자리 폭이 다릅니다. 까닭(만기 지남
-          등)은 화면이 모르니 적지 않습니다. 낱말은 못 연 종목 줄(`app-missing`)과
-          같습니다. */}
-      <span className={lead ? 'tile-word' : 'quote-word'}>
-        {lead ? '종목 목록에 없는 종목입니다' : '목록에 없음'}
-      </span>
-    </>
-  )
-}
-
-function RemoveButton({ name, onRemove }: { name: string; onRemove: () => void }) {
-  return (
-    <button
-      type="button"
-      className="home-remove"
-      aria-label={`${name} 빼기`}
-      title="빼기"
-      onClick={onRemove}
-    >
-      ✕
-    </button>
-  )
-}
 
 /* 숫자와 단위는 한 덩어리입니다. 묶지 않으면 카드가 좁아질 때 「+495,000」과
  * 「원」이 다른 줄에 놓여, 금액이 아니라 두 개의 글자로 읽힙니다. */
@@ -293,253 +59,6 @@ interface Props {
 /* 관심종목의 구독 등급. 시세·주문 화면의 주문 대상(9)·둘째 칸(7)보다 낮습니다 —
  * 자리가 스물뿐이라, 모자라면 훑는 자리부터 밀리는 것이 맞습니다. */
 const WATCH_RANK = 3
-
-/** 만기 관리 카드의 한 줄 — 만기가 다가오는 보유 종목.
- *
- *  현금결제는 만기에 정산되고 끝이지만 실물 인수도는 최초통보일을 넘기면 실제로
- *  물건을 받습니다. 급이 달라서 줄을 가릅니다. **아직 채우는 조회가 없어** 목록은
- *  비어 있고, 이 모양은 잔고 조회가 붙을 때 그 응답에 맞춰 다시 봅니다. */
-interface ExpiryRow {
-  code: string
-  name: string
-  settlement: '실물 인수도' | '현금 결제'
-  /** 실물 인수도에만 뜻이 있습니다. */
-  noticeDate?: string
-  lastTradingDay: string
-  daysLeft: number
-  quantity: number
-}
-
-/** 예수금 답에서 카드가 쓰는 두 줄만 꺼냅니다.
- *
- *  **총액만 씁니다.** 카드는 훑는 자리라 현금·대용·외화까지 가르지 않습니다 —
- *  그 갈래는 계좌 화면이 답합니다. */
-function cardTotals(entry: DepositEntry) {
-  const value = entry.value
-  if (value === null) return null
-  const domestic = isDomesticDeposit(value)
-  const rows: DepositRow[] = domestic ? value.items : value.groups
-  const find = (key: string) => rows.find((row) => row.key === key)?.values[0] ?? null
-  return {
-    start: find('start'),
-    asset: find('assets'),
-    currency: domestic ? 'KRW' : value.currency,
-    decimals: domestic ? 0 : (value.decimals ?? 2),
-  }
-}
-
-/** 계좌 카드의 값 두 줄. 얼굴이 여기서 갈립니다. */
-function AccountCardBody({ entry, onRetry }: { entry: DepositEntry; onRetry: () => void }) {
-  const totals = cardTotals(entry)
-
-  /* **값이 있으면 값이 먼저입니다.** 다시 부르는 중에도, 다시 부르다 실패해도
-     앞서 받은 값은 그대로 섭니다 — 골격이 안 바뀌는 갱신에서 값을 지우면
-     나갔다 돌아온 화면이 「없다」고 말합니다. */
-  if (totals !== null) {
-    /* **받았는데 기록이 없는 계좌.** 아직 예탁한 적이 없는 계좌는 답이 오되 줄이
-       비어, 예탁자산 총액이 없습니다. 그것은 「못 받음」이 아니고 「0원」도 아니라
-       라벨은 남기고 값 자리는 비운 채 한 줄로 말합니다 — 「—」를 세우면 값을
-       못 채운 칸으로 읽히고, 「다시」를 세우면 눌러도 같은 답입니다. 국내·해외
-       같은 규칙입니다. */
-    if (totals.asset === null) {
-      return (
-        <>
-          <p className="home-lead">
-            <span className="home-lead-label">오늘</span>
-          </p>
-          <p className="home-sub">예탁자산</p>
-          <p className="home-unasked">예탁자산 기록이 아직 없습니다</p>
-        </>
-      )
-    }
-    const today = totals.start !== null ? totals.asset - totals.start : null
-    return (
-      <>
-        <p className="home-lead">
-          <span className="home-lead-label">오늘</span>
-          {today === null ? (
-            <span className="home-amount">—</span>
-          ) : (
-            <span className={`home-amount${today > 0 ? ' up' : today < 0 ? ' down' : ''}`}>
-              {today > 0 ? '+' : ''}
-              {depositMoney(today, totals.decimals, totals.currency)}
-            </span>
-          )}
-        </p>
-        <p className="home-sub">
-          예탁자산{' '}
-          <span className="home-amount">
-            {depositMoney(totals.asset, totals.decimals, totals.currency)}
-          </span>
-        </p>
-      </>
-    )
-  }
-
-  /* 아직 값이 없습니다. **뼈대는 「곧 온다」는 말이라 부르는 중에만** 세웁니다. */
-  if (entry.status === 'loading') {
-    return (
-      <>
-        <p className="home-lead">
-          <span className="home-lead-label">오늘</span>
-          <span className="skeleton" style={{ minWidth: '7ch', height: '18px' }} />
-        </p>
-        <p className="home-sub">
-          예탁자산 <span className="skeleton" style={{ minWidth: '8ch' }} />
-        </p>
-      </>
-    )
-  }
-
-  return (
-    <>
-      {/* 값을 못 세워도 **라벨은 남깁니다** — 칸이 사라지면 이 카드가 무엇을
-          담는 자리인지까지 없어집니다. */}
-      <p className="home-lead">
-        <span className="home-lead-label">오늘</span>
-      </p>
-      <p className="home-sub">예탁자산</p>
-      {entry.status === 'failed' ? (
-        <p className="home-unasked">
-          계좌를 받지 못했습니다
-          {/* 거절은 눌러도 같은 답이 옵니다. */}
-          {entry.failure === 'retry' && (
-            <button type="button" className="btn btn-quiet home-retry" onClick={onRetry}>
-              다시
-            </button>
-          )}
-        </p>
-      ) : (
-        <p className="home-unasked">계좌를 아직 조회하지 않았습니다</p>
-      )}
-    </>
-  )
-}
-
-/** 한 시장의 주문 카드 몫 — 미체결·주문내역(전체)·주문오류 세 목록. **계좌·일반주문
- *  화면과 같은 목록 저장소**라, 그 화면에 들어가도 다시 묻지 않습니다. 인증 정보가
- *  없는 시장은 부르지 않습니다(`useListOnce`). */
-function useOrderLists(market: DepositMarket) {
-  return {
-    open: useListOnce<ServerOrder>(market, 'orders', 'open'),
-    all: useListOnce<ServerOrder>(market, 'orders', 'all'),
-    errors: useListOnce<ServerOrderError>(market, 'errors'),
-  }
-}
-
-/** 이름 하나와 나머지 개수. 같은 종목이 여러 줄이면 한 번만 셉니다. */
-function namesLine(names: readonly string[]): string | null {
-  const unique = [...new Set(names.filter(Boolean))]
-  if (unique.length === 0) return null
-  return unique.length === 1 ? unique[0] : `${unique[0]} 외 ${unique.length - 1}`
-}
-
-/** 홈 「주문 내역」 카드 — 미체결·체결·오류 건수. **홈이 스스로 받습니다** — 들어올
- *  때와 창이 다시 보일 때 찬 시장의 세 목록을 한 번씩 받습니다.
- *
- *  **두 시장은 더해 적습니다.** 건수에는 통화가 없어 더해도 되고, 시장별로 가르면
- *  칸이 여섯이 되어 훑는 카드가 아닙니다. 시장별 내역은 「더 보기」가 맡습니다. 한
- *  시장만 찼으면 제목 곁에 그렇다고 적습니다 — 합계처럼 읽히지 않게 합니다.
- *
- *  **셋이 한 문장입니다.** 하나라도 못 받으면 세 칸을 다 「—」로 둡니다 — 일부만
- *  더한 합계는 틀린 수입니다. */
-function OrdersCard({ onGoOrders }: { onGoOrders: () => void }) {
-  const domesticOn = useMarketCredentialed('domestic')
-  const overseasOn = useMarketCredentialed('overseas')
-  const domestic = useOrderLists('domestic')
-  const overseas = useOrderLists('overseas')
-  const sides = [
-    ...(domesticOn ? [{ market: 'domestic' as const, lists: domestic }] : []),
-    ...(overseasOn ? [{ market: 'overseas' as const, lists: overseas }] : []),
-  ]
-  const entries: ListEntry<unknown>[] = sides.flatMap(({ lists }) => [lists.open, lists.all, lists.errors])
-  const busy = entries.some((entry) => entry.status === 'loading' || entry.refreshing === true || entry.filling)
-  const missing = entries.some((entry) => entry.rows === null)
-  const failed = entries.some((entry) => entry.rows === null && entry.status === 'failed')
-  const stale = !missing && entries.some((entry) => entry.failure !== null)
-  const reload = () => {
-    for (const { market } of sides) {
-      retryList(market, 'orders', 'open')
-      retryList(market, 'orders', 'all')
-      retryList(market, 'errors')
-    }
-  }
-
-  /* 건수와 그 줄들의 종목 이름. 부분 체결은 미체결에도 체결에도 셉니다 — 둘 다
-     사실이라 어느 한쪽에서 빼면 틀립니다. */
-  const openRows = sides.flatMap(({ market, lists }) =>
-    (lists.open.rows ?? []).map((row) => toOrder(row, market === 'overseas')),
-  )
-  const filledRows = sides.flatMap(({ market, lists }) =>
-    (lists.all.rows ?? []).filter((row) => (row.filled ?? 0) > 0).map((row) => toOrder(row, market === 'overseas')),
-  )
-  const errorRows = sides.flatMap(({ market, lists }) =>
-    (lists.errors.rows ?? []).map((row) => toOrderError(row, market === 'overseas')),
-  )
-  const counts = [
-    { label: '미체결', count: openRows.length, names: namesLine(openRows.map((row) => row.name)), rule: undefined },
-    {
-      label: '체결',
-      count: filledRows.length,
-      names: namesLine(filledRows.map((row) => row.name)),
-      rule: '체결 수량이 있는 주문 수 — 부분 체결 포함',
-    },
-    { label: '오류', count: errorRows.length, names: namesLine(errorRows.map((row) => row.name)), rule: undefined },
-  ]
-  const only = domesticOn && !overseasOn ? '국내만' : overseasOn && !domesticOn ? '해외만' : null
-
-  return (
-    <section className="card home-orders" aria-label="주문 내역">
-      <div className="home-card-head">
-        <h2 className="home-card-title">주문 내역</h2>
-        {only && <span className="home-card-note">{only}</span>}
-        {sides.length > 0 && (
-          /* 저절로 되풀이해 부르지 않습니다. 다른 창에서 낸 주문을 바로 보고 싶을
-             때 누르는 자리입니다. 화면을 옮기는 「더 보기」가 맨 끝입니다. */
-          <button
-            type="button"
-            className="btn btn-quiet home-reload"
-            aria-disabled={busy || undefined}
-            onClick={() => {
-              if (!busy) reload()
-            }}
-          >
-            다시 받기
-          </button>
-        )}
-        <button type="button" className="btn home-more" onClick={onGoOrders}>
-          더 보기
-        </button>
-      </div>
-      {sides.length === 0 ? (
-        <p className="home-unasked">주문 내역을 아직 조회하지 않았습니다</p>
-      ) : (
-        <>
-          <dl className="home-counts">
-            {counts.map((one) => (
-              <div key={one.label}>
-                <dt title={one.rule}>{one.label}</dt>
-                <dd>
-                  {missing && !failed ? (
-                    /* 받는 중에는 뼈대입니다 — 「곧 온다」는 말입니다. */
-                    <span className="skeleton" style={{ minWidth: '3ch' }} />
-                  ) : failed ? (
-                    <span className="dead">—</span>
-                  ) : (
-                    one.count.toLocaleString('ko-KR')
-                  )}
-                </dd>
-                {!missing && one.names && <p className="home-count-names">{one.names}</p>}
-              </div>
-            ))}
-          </dl>
-          {failed && <p className="home-unasked">주문 내역을 받지 못했습니다</p>}
-          {stale && <p className="list-stale">위는 마지막으로 받은 값입니다. 다시 받지 못했습니다</p>}
-        </>
-      )}
-    </section>
-  )
-}
 
 export function HomeScreen({
   context,
@@ -641,8 +160,10 @@ export function HomeScreen({
     valued.length > 0 &&
     valued.every((tile) => tile.market === 'domestic' && domesticContextOf(tile.code) === 'domestic-night')
 
+  /* 담기·빼기·맞바꾸기는 화면에 보이는 목록에서 시작합니다(기본 목록이 서 있을 때도).
+     저장 목록에서 시작하면 기본 목록이 서 있을 때 한 칸만 바꿔도 나머지가 빈 칸으로 저장됩니다. */
   const add = (slot: number, code: string) => {
-    const next = [...watch]
+    const next = [...shown]
     while (next.length < WATCH_SLOTS) next.push('')
     next[slot] = code
     setWatch(next)
@@ -652,7 +173,7 @@ export function HomeScreen({
   /* 뺀 자리는 그대로 빈 칸입니다. 뒤를 당겨 채우면 다른 종목이 자리를 옮겨,
      자기가 안 건드린 칸이 움직인 것으로 보입니다. */
   const remove = (slot: number) => {
-    const next = [...watch]
+    const next = [...shown]
     while (next.length < WATCH_SLOTS) next.push('')
     next[slot] = ''
     setWatch(next)
@@ -667,7 +188,7 @@ export function HomeScreen({
      다른 일이라, 한 번의 누름에 둘을 담지 않습니다.
      순서는 그대로 저장되므로 다시 열어도 고른 대로 있습니다. */
   const swapToLead = (slot: number) => {
-    const next = [...watch]
+    const next = [...shown]
     while (next.length < WATCH_SLOTS) next.push('')
     const head = next[0]
     next[0] = next[slot]
@@ -837,46 +358,11 @@ export function HomeScreen({
           말하고, 휴장 정보는 없어 지어내지 않습니다. 시간표를 못 받았으면 라벨만
           남고 시간 자리가 빕니다 — 「—」는 「원래 없음」이라 여기 안 씁니다. 점에도
           색을 쓰지 않습니다 — 정상에 색을 쓰면 이상할 때 쓸 색이 없습니다. */}
-      <section className="home-hours" aria-label="장 시간">
-        {/* 띠를 **미는 자리와 안 미는 자리**로 가릅니다. 좁아지면 이 트랙만
-            줄어들고, 오른쪽 덩어리는 제자리에 섭니다 — 띠가 좁아질 때 양보하는
-            것은 보조 설명이고, 길을 여는 조작과 값은 양보하지 않습니다. */}
-        <div className="home-hours-track">
-          {MARKET_LINES.map((item) => (
-            <span key={item.key} className="home-hour">
-              <span className="conn-dot" aria-hidden="true" />
-              <span className="home-hour-name">{item.label}</span>
-              <span className="home-hour-time">{marketLineHours(item.key)}</span>
-            </span>
-          ))}
-          {/* 세 줄이 적는 것은 **그 시장이 열려 있는 폭**이고, 그 안이 내내 열려
-              있는 것은 아닙니다. 그 사실을 띠에 **한 번만** 답니다 — 줄마다 달면
-              같은 말이 셋이 되고, 한 종목의 시각을 더 말해 주지도 않습니다.
-              자리는 설명하는 대상 바로 뒤이고, 트랙에서 줄어드는 몫은 이 마디가
-              집니다 — 줄 셋은 줄면 시각이 잘립니다. */}
-          <span className="home-hours-note" title="종목 시간은 그 종목 화면에">
-            종목 시간은 그 종목 화면에
-          </span>
-        </div>
-
-        {/* 안 미는 덩어리. 다시 받는 길과 그 값이 언제 것인지는 창이 좁다고
-            사라지면 안 됩니다 — 옆으로 굴려야 나오는 단추는 없는 것과 같습니다. */}
-        <div className="home-hours-fixed">
-          {/* 받는 동안 잠급니다 — 먼저 나간 요청은 취소되지 않아, 연달아 누르면
-              호출 예산만 먹습니다. 잠긴 동안 무엇을 기다리는지도 단추가 말합니다.
-              **이 단추가 부르는 것은 관심종목뿐입니다** — 계좌·주문 카드는 아직
-              부를 곳이 없어 이 누름이 바꿀 것이 없습니다. */}
-          <button
-            type="button"
-            className={`btn home-refresh ${loading ? '' : 'btn-outline'}`.trim()}
-            disabled={loading}
-            onClick={load}
-          >
-            {loading ? '불러오는 중' : '새로고침'}
-          </button>
-          <span className="as-of">{updatedAt && `갱신 ${updatedAt}`}</span>
-        </div>
-      </section>
+      {renderHomeHours({
+        loading,
+        load,
+        updatedAt,
+      })}
 
       {/* 넷을 한 줄로 폅니다. 오른쪽에 세로로 쌓으면 그 열이 행 높이를 정하고
           왼쪽 카드 아래가 배경으로 드러나 구멍처럼 보입니다. 한 줄이면 카드가
@@ -1009,18 +495,6 @@ export function HomeScreen({
           />
         )}
       </section>
-    </div>
-  )
-}
-
-/* 카드가 채워지는 동안 자리를 잡아둡니다. 값이 들어올 때 화면이 흔들리지
- * 않도록 줄 수와 폭을 미리 잡습니다. */
-function CardSkeleton({ lines }: { lines: number }) {
-  return (
-    <div className="home-skeleton" aria-hidden="true">
-      {Array.from({ length: lines }, (_, i) => (
-        <span key={i} className="skeleton" style={{ width: i === 0 ? '60%' : '85%', height: i === 0 ? 24 : 12 }} />
-      ))}
     </div>
   )
 }

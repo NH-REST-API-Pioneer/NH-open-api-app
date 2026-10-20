@@ -1,16 +1,20 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Num, fracWidth, fractionText, priceHint, readPrice, signSpace, stepPrice } from '../../lib/number'
+import { useEffect, useState } from 'react'
 import type { MarketContext, OpenOrder, Position, ProductKind, Quote } from '../../lib/types'
 import { PENDING_TEXT, needsLeg } from '../../data/instruments'
 import type { OrderableState } from '../../data/orderable'
-import type { OrderKind, OrderResult } from '../../data/orders'
-import { fillCondsFor } from '../../data/strategyRules'
+import type { OrderResult } from '../../data/orders'
+import { useProductInfo } from '../../data/productInfo'
+import { PriceField } from './OrderFormPriceField'
+import { MarginLine } from './OrderFormMargin'
+import { OrderResultLine } from './OrderFormResult'
 import {
-  PRODUCT_INFO_FAILED,
-  ceilWon,
-  useProductInfo,
-  type ProductInfoEntry,
-} from '../../data/productInfo'
+  renderOrderSubject,
+  renderOrderEditing,
+  renderOrderClosing,
+  renderOrderSide,
+  renderOrderLocked,
+} from './OrderFormHead'
+import { renderOrderTypeField, renderOrderCondition, renderOrderable } from './OrderFormFields'
 
 /* 주문 폼.
  *
@@ -47,201 +51,6 @@ export interface OrderEdit {
 const DOMESTIC_TYPES = ['지정가', '시장가', '조건부지정가', '최유리지정가']
 /** 해외 주문유형. 뒤 둘은 스탑가격을 함께 받습니다. */
 const OVERSEAS_TYPES = ['시장가', '지정가', 'STOP-M', 'STOP-L']
-
-/* 가격 칸.
- *
- * 값은 숫자로 들고 다니지만 칸에는 그 품목이 부르는 대로 보여야 합니다 —
- * 425.9 로 채워 두면 아래 표의 425.90 과 같은 값인데 다른 값처럼 읽힙니다.
- * 그렇다고 매번 다듬어 넣으면 「425.」 처럼 치는 중인 글자가 끊깁니다.
- * 그래서 치는 동안은 친 그대로 두고, 밖에서 값이 바뀌거나 칸을 떠날 때만
- * 다듬습니다.
- *
- * **분수로 부르는 품목에서는 글자 칸입니다.** 숫자 칸은 `99'30` 을 못 받습니다 —
- * `'` 를 치는 순간 칸이 값을 통째로 비웁니다. 대신 숫자 칸이 주던 화살표
- * 증감을 직접 답니다. 한 번에 그 품목의 호가단위 하나입니다.
- *
- * **분수 칸은 칸을 떠날 때 값이 확정됩니다.** 십진 칸은 치는 대로 값이
- * 가는데, 그건 친 글자의 앞부분이 겨냥한 값 근처라서 그렇습니다 — 425.90 을
- * 치는 도중의 425 는 목표에서 1 도 안 떨어져 있습니다. 분수는 다릅니다:
- * `99'32` 를 치는 도중의 `99'3` 은 99.09 라, 겨냥한 100 언저리에서 27/32
- * 포인트 떨어진 **다른 값**입니다. 그 잔재가 주문에 남으면 안 됩니다.
- *
- * 못 읽은 글자는 칸에 그대로 두고 이유도 그대로 둡니다. **값은 마지막으로
- * 받아들인 것 그대로이고 이유 줄도 안 지웁니다** — 지우면 틀린 값이 정상인
- * 얼굴로 남습니다. 그동안 실행 단추는 막힙니다. */
-function PriceField({
-  id,
-  label,
-  value,
-  decimals,
-  fraction,
-  tick,
-  note,
-  noteWhy,
-  signed,
-  step,
-  disabled,
-  placeholder,
-  onChange,
-  onBlocked,
-}: {
-  /** 이유 줄과 이어 붙일 이름. 폼 안에서 겹치지 않아야 합니다. */
-  id: string
-  label: string
-  value: number | null
-  decimals: number
-  /** 분수로 적는 품목이면 그 분모. 있으면 칸이 분수 표기를 주고받습니다. */
-  fraction?: number | null
-  /** 그 품목의 호가단위. 분수 품목의 화살표 한 단이 이 값입니다. */
-  tick?: number | null
-  /** 값과 상관없이 늘 서는 한 줄. 지금은 **호가단위를 모를 때** 씁니다 —
-   *  못 받은 것을 말하지 않으면 사용자가 지금 눈금을 거래소 눈금으로 읽습니다. */
-  note?: string | null
-  /** 그 한 줄이 선 까닭. **서버가 낸 문장 그대로**이고, 칸이 좁아 본문에
-   *  세우지 못해 마우스를 올리면 보입니다. */
-  noteWhy?: string | null
-  /** 값이 음수로 설 수 있는 종목인가(스프레드). 칸이 음수를 받을지, 화살표가
-   *  0 아래로 갈지를 정합니다. */
-  signed: boolean
-  /** 호가단위를 모르는 시장(국내)에서 숫자 칸이 쓰는 증감 폭. */
-  step: number
-  disabled: boolean
-  placeholder?: string
-  onChange: (next: number | null) => void
-  /** 이 칸이 못 읽은 글자를 안고 있는지. 폼이 실행 단추를 막는 데 씁니다. */
-  onBlocked: (blocked: boolean) => void
-}) {
-  const format = (v: number | null) =>
-    v === null ? '' : fraction ? fractionText(v, fraction) : v.toFixed(decimals)
-  const [text, setText] = useState(() => format(value))
-  /* 못 받은 이유. 받은 순간에만 서 있습니다. */
-  const [reason, setReason] = useState<string | null>(null)
-
-  /* 밖에서 값이 바뀌면 칸도 따라갑니다. **글자가 아니라 값으로 견줍니다** —
-     같은 수를 적는 방식이 둘이라(`99'30` 과 `99.9375`) 글자로 비교하면 치는
-     족족 다시 씌워집니다. */
-  useEffect(() => {
-    setText((current) => {
-      const read = readPrice(current, fraction, tick, signed)
-      return read.state === 'ok' && read.value === value ? current : format(value)
-    })
-    setReason(null)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, decimals, fraction, tick])
-
-  /* 못 읽은 글자를 안고 있는 동안은 폼이 실행을 막습니다. 칸이 사라질 때는
-     막을 이유도 사라지므로 풀어 줍니다 — 주문유형을 바꿔 스탑가격 칸이
-     없어졌는데 그 칸 때문에 못 내는 상태가 남으면 안 됩니다. */
-  useEffect(() => {
-    onBlocked(reason !== null)
-    return () => onBlocked(false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reason])
-
-  /** 분수 칸은 칸을 떠날 때 확정합니다. 십진 칸만 치는 대로 값이 갑니다. */
-  const live = !fraction
-
-  const apply = (raw: string) => {
-    setText(raw)
-    const read = readPrice(raw, fraction, tick, signed)
-    setReason(read.state === 'bad' ? read.reason : null)
-    if (!live) return
-    if (read.state === 'ok') onChange(read.value)
-    else if (read.state === 'empty') onChange(null)
-  }
-
-  /* 칸을 떠날 때. 읽히면 그때 값이 되고, 못 읽으면 **값도 이유도 그대로**
-     둡니다 — 반쯤 친 글자(`99'`)도 떠나는 순간에는 못 읽은 것입니다. */
-  const settle = () => {
-    const read = readPrice(text, fraction, tick, signed)
-    if (read.state === 'ok') {
-      setText(format(read.value))
-      setReason(null)
-      onChange(read.value)
-      return
-    }
-    if (read.state === 'empty') {
-      setText('')
-      setReason(null)
-      onChange(null)
-      return
-    }
-    /* 못 읽은 글자는 십진 칸에서도 그대로 둡니다. 조용히 되돌리면 틀린 값이
-       정상인 얼굴로 남고, 그동안 실행 단추는 막혀 있습니다. */
-    setReason(read.state === 'bad' ? read.reason : fraction ? priceHint(fraction, tick) : null)
-  }
-
-  /* 화살표 증감. 눈금을 모르는 품목에서는 분모 한 칸이 한 단입니다 — 화면이
-     적을 수 있는 가장 잔 자리라, 그보다 잘게 움직이면 값이 안 바뀌어 보입니다. */
-  const bump = (direction: 1 | -1) => {
-    const grid = tick && tick > 0 ? tick : fraction ? 1 / fraction : null
-    if (grid === null) return
-    const read = readPrice(text, fraction, tick, signed)
-    /* 치는 중이면 마지막으로 받은 값에서 셉니다. 빈 칸에서는 셀 자리가 없어
-       아무 일도 하지 않습니다 — 없던 가격이 화살표 한 번에 생기면 안 됩니다. */
-    const from = read.state === 'ok' ? read.value : value
-    if (from === null) return
-    const next = stepPrice(from, grid, direction, signed)
-    setText(format(next))
-    setReason(null)
-    onChange(next)
-  }
-
-  const why = `${id}-why`
-  return (
-    <label className="order-field">
-      <span className="control-label">{label}</span>
-      <input
-        className={`control${reason ? ' is-bad' : ''}`}
-        type={fraction ? 'text' : 'number'}
-        inputMode={fraction ? undefined : 'decimal'}
-        /* 화살표 한 번은 **그 품목의 호가단위**입니다. 품목과 무관한 고정값으로
-           두면 미니 S&P 500(0.25)에서 `6850.30` 처럼 낼 수 없는 값이 나오고,
-           바로 옆 호가 사다리는 품목 호가단위로 서 있어 둘이 어긋납니다.
-           마스터가 호가단위를 안 주는 시장(국내)에서만 넘겨받은 값을 씁니다. */
-        step={fraction ? undefined : tick && tick > 0 ? tick : step}
-        /* 글자 칸이지만 하는 일은 숫자 칸과 같습니다. 화살표로 오르내리는
-           값이라고 적어 두어야 화면을 읽어 주는 도구가 그렇게 안내합니다. */
-        role={fraction ? 'spinbutton' : undefined}
-        aria-valuenow={fraction && value !== null ? value : undefined}
-        aria-valuetext={fraction && value !== null ? text : undefined}
-        value={text}
-        disabled={disabled}
-        placeholder={placeholder}
-        aria-invalid={reason ? true : undefined}
-        aria-describedby={reason ? why : undefined}
-        onChange={(event) => apply(event.target.value)}
-        onKeyDown={
-          fraction
-            ? (event) => {
-                if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-                event.preventDefault()
-                bump(event.key === 'ArrowUp' ? 1 : -1)
-              }
-            : undefined
-        }
-        onBlur={settle}
-      />
-      {/* 왜 안 받았는지 그 자리에서 말합니다. 값만 조용히 안 바뀌면 자기가
-          잘못 친 줄 모르고 그대로 냅니다.
-
-          **고쳐야 할 것이 먼저입니다.** 안내 한 줄과 겹치면 지금 손봐야 하는
-          쪽이 그 자리를 갖습니다 — 두 줄을 겹쳐 세우면 칸 밑이 두 겹이 되고,
-          급한 쪽이 아래로 밀립니다. */}
-      {reason ? (
-        <span className="order-limit" id={why}>
-          {reason}
-        </span>
-      ) : (
-        note && (
-          <span className="order-limit order-note" title={noteWhy ?? undefined}>
-            {note}
-          </span>
-        )
-      )}
-    </label>
-  )
-}
 
 /** 호가단위를 모를 때 화살표가 움직이는 폭. **그 종목의 눈금이 아닙니다** —
  *  모르는 채로 멈춰 세우면 값을 아예 못 넣으므로 움직이게 두고, 대신 칸 밑에
@@ -513,55 +322,27 @@ export function OrderForm({
           대상 배지와 같은 표시이고, 종목명이 큽니다 — 다른 칸의 종목을 보며
           이 폼으로 주문하는 일이 없어야 합니다. 머리를 색으로 채우지 않습니다:
           그러면 방향 세그먼트의 빨강·파랑 옆에 색 덩어리가 하나 더 섭니다. */}
-      {subject && (
-        <div className="order-subject">
-          <span className="order-subject-title">주문 대상</span>
-          <b className="order-subject-name">{quote.name}</b>
-          {/* 아직 종목이 아니면 값 자리에 남은 축을 세웁니다. 그 값은 기초
-              선물의 것이라, 「주문 대상」이라고 적힌 자리에 그대로 두면 이 값으로
-              낸다는 뜻이 됩니다 — 차트 배지가 값을 뺀 것과 같은 자리입니다. */}
-          {pendingLeg ? (
-            <span className="order-subject-pending">{PENDING_TEXT[quote.pendingAxis ?? 'strike'].pick}</span>
-          ) : (
-            <span className="order-subject-quote">
-              {quote.last !== null && (
-                <Num value={quote.last} decimals={d} fraction={quote.fraction} />
-              )}{' '}
-              {quote.change !== null && (
-                <Num value={quote.change} decimals={d} fraction={quote.fraction} signed toned />
-              )}
-            </span>
-          )}
-        </div>
-      )}
+      {renderOrderSubject({
+        subject,
+        quote,
+        pendingLeg,
+        d,
+      })}
 
-      {editing && (
-        <div className="order-editing">
-          <span className="badge badge-brand">{cancelling ? '취소' : '정정'}</span>
-          <span className="t-label">
-            {editing.order.side === 'buy' ? '매수' : '매도'} {editing.order.quantity}계약
-          </span>
-          <button type="button" className="btn order-editing-cancel" onClick={onCancelEditing}>
-            그만두기
-          </button>
-        </div>
-      )}
+      {renderOrderEditing({
+        editing,
+        cancelling,
+        onCancelEditing,
+      })}
 
       {/* 청산은 「무엇을 덜어내는가」가 먼저입니다 — 들고 있는 방향과 수량을
           적어 두어야, 반대 방향으로 바뀐 폼이 실수로 보이지 않습니다.
           배지는 중립색입니다. 초록은 정정·취소가 쓰는데, 그 둘은 시장에 새
           주문을 안 냅니다 — 청산은 냅니다. */}
-      {closing && (
-        <div className="order-editing">
-          <span className="badge">청산</span>
-          <span className="t-label">
-            {closing.side === 'long' ? '매수' : '매도'} {closing.quantity}계약 보유
-          </span>
-          <button type="button" className="btn order-editing-cancel" onClick={onCancelEditing}>
-            그만두기
-          </button>
-        </div>
-      )}
+      {renderOrderClosing({
+        closing,
+        onCancelEditing,
+      })}
 
       {/* 선물은 매수와 매도가 대등하므로 이것이 첫 컨트롤입니다.
           각 버튼에 그 방향의 최우선 호가가 함께 섭니다.
@@ -570,94 +351,49 @@ export function OrderForm({
           기초 선물의 것이라, 옵션을 고르는 중인 화면에서 그 값이 방향 단추에
           붙으면 「이 값으로 낸다」로 읽힙니다. 방향은 미리 골라 둘 수 있으므로
           단추 자체는 그대로 삽니다(차트 배지와 같은 판단). */}
-      <div className="seg order-side">
-        <button
-          type="button"
-          className="seg-item seg-buy"
-          aria-pressed={side === 'buy'}
-          disabled={sending || editing !== null || closing != null}
-          onClick={() => onSideChange('buy')}
-        >
-          매수
-          {/* 걸린 호가가 없으면 **숫자 자리를 통째로 뺍니다.** 「—」를 세우면
-              그 글리프가 이 화면에서 이미 맡은 뜻(「이 자리에 값이 안 선다 —
-              할 일이 없다」)과 부딪힙니다. 값을 못 받은 것은 할 일이 있는
-              상태이고, 그 이유는 실행 단추 밑이 한 번 말합니다. 단추의 이름은
-              「매수」이고 값은 덤이라, 덤이 없으면 이름만 남습니다. */}
-          {!pendingLeg && bestBid !== null && (
-            <span className="seg-price" style={fracWidth(d, signSpace(quote.kind), quote.fraction)}>
-              <Num value={bestBid} decimals={d} fraction={quote.fraction} />
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
-          className="seg-item seg-sell"
-          aria-pressed={side === 'sell'}
-          disabled={sending || editing !== null || closing != null}
-          onClick={() => onSideChange('sell')}
-        >
-          매도
-          {!pendingLeg && bestAsk !== null && (
-            <span className="seg-price" style={fracWidth(d, signSpace(quote.kind), quote.fraction)}>
-              <Num value={bestAsk} decimals={d} fraction={quote.fraction} />
-            </span>
-          )}
-        </button>
-      </div>
+      {renderOrderSide({
+        side,
+        sending,
+        editing,
+        closing,
+        onSideChange,
+        pendingLeg,
+        bestBid,
+        d,
+        quote,
+        bestAsk,
+      })}
 
       {/* 정정·취소는 원주문의 매매구분을 그대로 따릅니다. 방향을 바꾸려면
           취소하고 새로 내야 하므로, 누를 수 있어 보이면 안 됩니다. */}
-      {(editing || closing) && (
-        <p className="order-locked">
-          {cancelling
-            ? '취소는 낸 주문 그대로 나갑니다'
-            : editing
-              ? overseas
-                ? '정정은 방향·주문유형을 바꿀 수 없습니다'
-                : '정정은 방향을 바꿀 수 없습니다'
-              : '보유와 반대 방향으로 채웠습니다. 수량·가격은 바꿔도 됩니다'}
-        </p>
-      )}
+      {renderOrderLocked({
+        editing,
+        closing,
+        cancelling,
+        overseas,
+      })}
 
       <div className="order-fields">
-        <label className="order-field">
-          <span className="control-label">주문유형</span>
-          {/* 해외 정정은 원주문의 주문유형으로 나갑니다 — 바꿀 수 있어 보이면
-              바꾼 유형으로 고쳐지는 것처럼 읽힙니다. */}
-          <select
-            className="control"
-            value={orderType}
-            disabled={sending || cancelling || (overseas && editing !== null)}
-            onChange={(event) => onOrderTypeChange(event.target.value)}
-          >
-            {typeOptions.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </label>
+        {renderOrderTypeField({
+          orderType,
+          sending,
+          cancelling,
+          overseas,
+          editing,
+          onOrderTypeChange,
+          typeOptions,
+        })}
 
         {/* 체결조건은 국내에만 있습니다. 선택지는 주문유형이 받는 것만 둡니다 —
             시장가는 FAS 만 받습니다(`fillCondsFor`). */}
-        {!overseas && (
-          <label className="order-field">
-            <span className="control-label">체결조건</span>
-            <select
-              className="control"
-              value={condition}
-              disabled={sending || cancelling}
-              onChange={(event) => onConditionChange(event.target.value)}
-            >
-              {fillCondsFor(orderType).map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        {renderOrderCondition({
+          overseas,
+          condition,
+          sending,
+          cancelling,
+          onConditionChange,
+          orderType,
+        })}
 
         {/* 값 칸 둘은 **낼 값**이라 대기 중에 기초 선물 값을 담지 않습니다.
             보이는 값은 그대로 두는데 이 둘만 비우는 이유는, 이것이 읽는 값이
@@ -792,48 +528,10 @@ export function OrderForm({
         {/* **자리를 늘 잡아 둡니다.** 누르기 전에는 비어 있지만 높이는 그대로라,
             답이 오고 가는 동안 아래 조회 단추가 오르내리지 않습니다 — 누르려던
             자리가 누르는 순간 움직이면 두 번째 누름이 엉뚱한 데로 갑니다. */}
-        <p className="order-orderable">
-          {orderable.status === 'loading' && (
-            <>
-              가능수량 <span className="skeleton" style={{ minWidth: '4ch' }} />
-            </>
-          )}
-          {/* 값이 비어 올 수 있습니다. 그때 0 을 적으면 「낼 수 없다」가 되는데
-              화면이 아는 것은 「받은 답에 수가 없다」까지입니다. */}
-          {/* 서는 수는 **신규와 청산의 합** — 서버가 준 뜻 그대로 적습니다. 신규·청산
-              가능수(`newQuantity`/`closeQuantity`)가 따로 오지만 이 자리에는 합을 그
-              이름으로 보입니다. 청산 가능 수는 청산할 때 0 이면 서는 안내에만 쓰고,
-              신규 가능 수는 화면에 쓰지 않습니다. */}
-          {orderable.status === 'ready' &&
-            (orderable.quantity === null ? (
-              '가능수량 값 없음'
-            ) : (
-              <>
-                신규·청산 합 <b>{orderable.quantity}</b>계약
-              </>
-            ))}
-          {orderable.status === 'failed' && (
-            <>
-              {/* NH선물 오류 코드가 함께 온 거절이면 서버가 보낸 문장(코드와 문구)을
-                  그대로 세웁니다. 코드가 없거나 문장이 안 왔거나 다시 불러 볼 만한
-                  실패면 일반 문구입니다. */}
-              {orderable.failure === 'rejected' && orderable.code && orderable.text
-                ? orderable.text
-                : '가능수량 받지 못했습니다'}
-              {/* 거절은 눌러도 같은 답이 옵니다. 다시 부를 길은 조건을 바꾸는
-                  것이고 그 칸들은 바로 위에 있습니다. */}
-              {orderable.failure === 'retry' && (
-                <button
-                  type="button"
-                  className="btn btn-quiet order-orderable-retry"
-                  onClick={onCheckOrderable}
-                >
-                  다시
-                </button>
-              )}
-            </>
-          )}
-        </p>
+        {renderOrderable({
+          orderable,
+          onCheckOrderable,
+        })}
         <div className="order-check">
           <button
             type="button"
@@ -912,181 +610,5 @@ export function OrderForm({
         <OrderResultLine sending={sending} result={result} onOpenOrders={onOpenOrders} />
       )}
     </section>
-  )
-}
-
-/** 옵션 카드의 증거금 안내. 빈 자리가 높이를 맞추려고 같은 문장을 씁니다. */
-const OPTION_MARGIN_NOTE = '옵션 증거금은 품목정보에 없습니다'
-
-/** 개시증거금 어림 한 줄 —「계약당 X원 · 이 주문 Y원」과 그 셈을 밝히는 한 줄.
- *
- *  **두 수는 각각 원 단위 올림입니다.** 증거금은 모자라면 안 되는 값이라, 내린 수를
- *  「묶인다」고 적으면 실제보다 적게 말합니다. 곱셈은 **받은 원값**으로 합니다 —
- *  계약당을 먼저 올려 곱하면 수량만큼 오차가 불어납니다.
- *
- *  **자리 높이는 늘 같습니다.** 값이 오기 전에도, 수량이 비어 뒷마디와 셈 줄이
- *  빠져도 두 줄의 자리를 잡아 두어, 아래 「가능수량 조회」 단추가 오르내리지
- *  않습니다. 좁은 카드에서는 「·」 뒤에서 다음 줄로 넘어갑니다. */
-function MarginLine({
-  blank,
-  option,
-  entry,
-  quantity,
-}: {
-  /** 신규가 아닌 주문(청산·정정·취소) — 라벨도 값도 없이 자리만 잡습니다. */
-  blank: boolean
-  option: boolean
-  entry: ProductInfoEntry
-  quantity: number
-}) {
-  if (blank) {
-    /* 옵션의 안내 문장은 좁은 카드에서 두 줄로 꺾입니다. 빈 자리에도 **같은 문장을
-       보이지 않게** 넣어, 폭이 바뀌어도 신규일 때와 같은 높이를 잡습니다. */
-    return (
-      <div className="order-field order-margin" aria-hidden="true">
-        <span className="control-label" />
-        <div>
-          <p className="order-margin-value" />
-          <p className="order-margin-note" style={{ visibility: 'hidden' }}>
-            {option ? OPTION_MARGIN_NOTE : ''}
-          </p>
-        </div>
-      </div>
-    )
-  }
-  let value: ReactNode = null
-  let title: string | undefined
-  let note = ''
-  if (option) {
-    /* 옵션은 품목정보에 증거금이 없습니다. 셈할 값이 없다는 사실만 적습니다. */
-    value = '계약당 —'
-    note = OPTION_MARGIN_NOTE
-  } else if (entry.status === 'failed') {
-    value = '계약당 —'
-    title = PRODUCT_INFO_FAILED
-  } else if (entry.status === 'ready' && entry.row) {
-    const each = entry.row.contractInitialMargin
-    if (each == null) {
-      value = '계약당 —'
-      title = entry.row.why || undefined
-    } else {
-      const per = `계약당 ${ceilWon(each).toLocaleString('ko-KR')}원`
-      if (Number.isFinite(quantity) && quantity > 0) {
-        const total = ceilWon(each * quantity).toLocaleString('ko-KR')
-        value = (
-          <>
-            <span className="order-margin-part">{per} ·</span>{' '}
-            <span className="order-margin-part">이 주문 {total}원</span>
-          </>
-        )
-        note = '품목 값 × 수량으로 셈했습니다'
-      } else {
-        value = <span className="order-margin-part">{per}</span>
-      }
-    }
-  }
-  return (
-    <div className="order-field order-margin">
-      <span className="control-label">개시증거금</span>
-      <div>
-        <p className="order-margin-value" title={title}>
-          {value}
-        </p>
-        <p className="order-margin-note">{note}</p>
-      </div>
-    </div>
-  )
-}
-
-/** 받아들여진 답의 머리 — 결과까지 확인됐을 때와 접수만 확인됐을 때. */
-const ACCEPTED_WORD: Record<OrderKind, { confirmed: string; unconfirmed: string }> = {
-  new: { confirmed: '접수됨', unconfirmed: '접수됨' },
-  modify: { confirmed: '정정됨', unconfirmed: '정정 접수됨' },
-  cancel: { confirmed: '취소됨', unconfirmed: '취소 접수됨' },
-}
-
-/** 거절된 답의 머리. 정정·취소의 거부는 「원주문에 그 요청이 적용되지 않았다」는
- *  뜻이라 신규의 거절과 낱말을 가릅니다. */
-const REJECTED_WORD: Record<OrderKind, string> = {
-  new: '거절',
-  modify: '정정 거부',
-  cancel: '취소 거부',
-}
-
-/* 보낸 주문의 결과 한 줄.
- *
- * **시간으로 사라지지 않습니다.** 사용자의 다음 손(값·종목 바꿈·다시 보내기)이
- * 걷어냅니다 — 몇 초 뒤 지워지면 자리를 비운 사이에 눈을 돌린 사람은 자기 주문이
- * 어떻게 됐는지 영영 못 봅니다.
- *
- * 색이 셋입니다. 거절은 **오류색**(서버가 안 받았다), 결과를 모르는 것은
- * **경고색**(냈는지 아닌지 모른다), 재생에서 못 내는 것은 **색 없음**(이 실행에서
- * 못 낼 뿐 주문에 아무 일도 없었다). 접수와 보내는 중도 색이 없습니다 — 색은
- * 「봐야 한다」는 뜻이고 잘 된 일에는 그 뜻이 없습니다.
- *
- * **결과를 모르는 자리에 「다시 보내기」를 세우지 않습니다.** 서버가 받았을 수도
- * 있는 주문을 한 번 더 내면 두 배로 체결됩니다. 대신 주문체결상세로 보냅니다 —
- * 무엇이 나갔는지는 거기서만 알 수 있습니다.
- *
- * **접수 번호를 받은 뒤 결과를 확인하지 못한 주문도 경고색입니다.** 접수는 됐지만
- * 그 뒤 거절됐는지 모르는 자리라, 「접수됨」만 적으면 확인할 까닭이 안 보입니다.
- * 신규·정정·취소가 같은 세 얼굴(됨 / 결과 미확인 / 거부)로 섭니다.
- */
-function OrderResultLine({
-  sending,
-  result,
-  onOpenOrders,
-}: {
-  sending: boolean
-  result: OrderResult | null
-  onOpenOrders: () => void
-}) {
-  if (sending) {
-    /* 서버가 접수 뒤 결과까지 확인하고 답하므로 몇 초 걸릴 수 있습니다. 그동안
-       실행 단추는 잠겨 있어 같은 주문이 두 번 나가지 않습니다. */
-    return <p className="order-result">보내는 중…</p>
-  }
-  if (!result) return null
-
-  if (result.kind === 'accepted') {
-    const done = ACCEPTED_WORD[result.action]
-    if (result.confirmed) {
-      return (
-        <p className="order-result">
-          {done.confirmed} · 주문번호 {result.orderId}
-        </p>
-      )
-    }
-    return (
-      <div className="order-result is-unknown">
-        <p className="order-result-text">
-          {done.unconfirmed} · 주문번호 {result.orderId} · 결과 미확인 — 주문체결상세에서 확인하세요
-        </p>
-        <button type="button" className="btn btn-quiet order-result-go" onClick={onOpenOrders}>
-          주문체결상세 보기
-        </button>
-      </div>
-    )
-  }
-  if (result.kind === 'rejected') {
-    /* 코드와 문구는 서버가 준 그대로입니다. 둘 중 비어 오는 것은 빼고 적습니다. */
-    const parts = [REJECTED_WORD[result.action]]
-    if (result.code) parts.push(`코드 ${result.code}`)
-    if (result.reason) parts.push(result.reason)
-    return <p className="order-result is-rejected">{parts.join(' · ')}</p>
-  }
-  if (result.kind === 'blocked') {
-    return <p className="order-result">{result.reason}</p>
-  }
-  /* `unknown`·`failed` — 냈는지 모르는 자리. */
-  return (
-    <div className="order-result is-unknown">
-      <p className="order-result-text">{result.reason}</p>
-      {/* 문장과 **다른 줄**입니다 — 문장 끝에 붙으면 마지막 낱말처럼 읽혀서,
-          읽는 도중에 눌러야 할 것이 있다는 것이 늦게 보입니다. */}
-      <button type="button" className="btn btn-quiet order-result-go" onClick={onOpenOrders}>
-        주문체결상세 보기
-      </button>
-    </div>
   )
 }

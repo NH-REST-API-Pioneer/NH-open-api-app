@@ -81,7 +81,7 @@ export function watchable(code: string): { ok: true } | { ok: false; reason: str
  *  적어 둔 값은 만기가 지나면 아무것도 안 가리킵니다. 품목의 어느 월물을 쓸지는
  *  색인이 답합니다(주력이 있으면 주력, 없으면 가장 가까운 만기). 여섯째를 비워
  *  두는 것은 「여기에 담을 수 있다」를 빈 칸 하나로 보여 주기 위해서입니다.
- *  품목이 색인에 없으면 그 칸만 빕니다.
+ *  품목이 색인에 없으면 그 칸을 걷고 뒤를 당깁니다 — 그래서 다섯보다 적을 수 있습니다.
  *
  *  **색인이 도착한 뒤에 불러야 값이 있습니다** — 그전에는 빈 목록입니다. */
 const DEFAULT_PRODUCTS: { market: Market; product: string }[] = [

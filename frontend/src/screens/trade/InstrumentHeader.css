@@ -1,0 +1,444 @@
+/* 일반주문 종목 머리(InstrumentHeader)만 쓰는 스타일입니다. 공용 규칙은 trade.css 에 있고, TradeScreen.tsx 가 trade.css 바로 뒤에 불러옵니다. */
+
+/* 왼쪽에 종목과 현재가, 오른쪽에 지표 칸들. 둘 다 세로 가운데입니다 —
+ * 위 맞춤이면 왼쪽 두 줄과 오른쪽 두 행의 기준선이 서로 어긋나 보입니다. */
+.instrument-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+/* 값이 든 안쪽. 좁아서 안 들어가면 지표를 아래로 내리는 대신 **이 안쪽만**
+ * 가로로 밀립니다 — 접으면 헤더 높이가 창마다 달라지고, 그만큼 아래 호가
+ * 사다리가 들어가는지도 창마다 갈립니다.
+ *
+ * 미는 것을 여기에 가둡니다. 화면 전체에 걸면 아래 세 열까지 헤더 폭으로
+ * 늘어나, 오른쪽 끝의 주문 폼이 창 밖으로 나갑니다 — 매수 단추가 밀려나면
+ * 주문을 낼 수 없습니다.
+ *
+ * 왼쪽 덩어리와 지표 사이는 24 입니다. 좁아서 모자라면 간격을 걷지 않고
+ * 밀립니다 — 밀도를 창 크기에 따라 바꾸면 같은 헤더가 두 밀도를 갖게 되어,
+ * 같은 값을 창마다 다른 간격에서 찾게 됩니다. */
+.hd-scroll {
+  display: flex;
+  align-items: center;
+  /* 값은 이름 바로 뒤에 이어 섭니다. 넓은 창에서 양 끝으로 벌리면 같은 종목의
+     이름과 값 사이가 비어, 이어 읽을 것을 따로 찾게 됩니다. */
+  justify-content: flex-start;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  gap: 8px 24px;
+  overflow-x: auto;
+  /* 가로만 밀립니다. 한쪽만 `auto` 로 두면 다른 쪽도 따라 `auto` 가 됩니다. */
+  overflow-y: hidden;
+  /* 멈추는 자리는 고정 덩어리의 오른쪽 모서리입니다. */
+  scroll-padding-left: var(--hd-left-w, 0px);
+}
+
+/* **칸 단위로 멈춥니다.** 아무 데서나 서면 고정 덩어리 밑에 칸이 반쯤 들어가
+ * 라벨 앞 글자가 잘립니다 — 「미결제」가 「결제」로 읽히는데 둘 다 있는 말이라
+ * 잘린 줄도 모릅니다.
+ *
+ * **설 자리가 둘 이상일 때만** 켭니다. 자리가 하나뿐인데 반드시 서게 해 두면
+ * 밀어도 그 자리로 되돌아와 띠가 잠깁니다. 자리를 세는 것은 헤더입니다. */
+.hd-scroll[data-snaps] {
+  scroll-snap-type: x mandatory;
+}
+
+/* 줄어들지 않습니다. 줄어들면 종목명이 잘리는데, 종목명은 이 화면에서 자를
+ * 수 없는 유일한 글자입니다 — 무엇을 주문하는지가 그 글자입니다.
+ *
+ * **밀 때는 제자리에 섭니다.** 좁은 창에서 헤더가 가로로 밀리면 왼쪽부터
+ * 나가는데, 나가는 것이 하필 종목명과 현재가입니다 — 오른쪽 지표를 보려고
+ * 민 사람은 「무엇의 지표인지」를 잃습니다. 표에서 쓰는 것과 같은 장치입니다
+ * (주문체결상세의 동작 열, 미결제약정의 오른쪽 둘, 체인의 행사가 열).
+ *
+ * 고정되는 칸이라 바탕이 불투명해야 합니다 — 반투명이면 밑을 지나가는 지표가
+ * 비칩니다. 오른쪽 선은 고정된 덩어리와 미는 덩어리의 경계입니다. */
+.hd-left {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  /* 헤더 카드와 같은 바탕입니다. */
+  background-color: var(--surface);
+  /* 경계선은 지표 쪽이 아니라 여기에 긋습니다. 고정되는 것은 이 덩어리라, 선이
+     저쪽에 있으면 밀 때 선까지 함께 밀려 들어와 아래로 사라집니다. 값들이
+     지나가는 자리에 경계가 늘 서 있어야 「여기까지가 고정」이 읽힙니다.
+
+     **선 하나로는 모자랍니다.** 잔선은 카드 바탕과 한 단 차이라(어두운 면에서
+     대비 1.06) 확대해서 봐도 잘 안 보입니다. 이 선은 「나뉘어 있다」가 아니라
+     「여기 밑으로 지나간다」를 말해야 하므로 그림자를 함께 답니다 — 잉크 토큰이라
+     밝은 면에서는 오른쪽으로 떨어지는 그늘, 어두운 면에서는 옅은 후광입니다
+     (모달 카드와 같은 방식). */
+  border-right: 1px solid var(--divider);
+  box-shadow: 8px 0 10px -8px rgb(var(--ink) / 0.45);
+  /* **지표와 사이의 24 는 이 덩어리 안에 둡니다.** 밖에 두면 민 화면에서 그
+   * 띠에 앞 칸의 꼬리가 비쳐 부분 칸이 생깁니다 — 「부분적으로 보이는 칸을
+   * 만들지 않는다」에 걸립니다. 안에 두면 불투명한 고정 덩어리가 그 자리를
+   * 덮어, 안 민 화면에서는 여백으로 보이고 민 화면에서는 밑을 가립니다.
+   * 폭을 재어 멈춤 자리로 넘기므로(`--hd-left-w`) 멈춘 칸도 이만큼 떨어져
+   * 섭니다. */
+  padding-right: 24px;
+}
+
+/* 줄 A — 무엇을 보고 있나. 줄바꿈하지 않습니다. 두 줄이 되면 헤더 높이가
+ * 창 폭에 따라 달라져, 아래 호가 사다리가 들어가는지가 창마다 갈립니다. */
+.hd-name {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  /* 부제가 붙는 종목에서만 이 줄이 자랍니다 — 못 박아 두면 부제가 칸 밖으로
+     비어져 나와 아래 값 줄과 겹칩니다. */
+  min-height: 28px;
+  min-width: 0;
+}
+
+/* 제목과 부제가 한 칸. 폭이 모자라면 **부제가 먼저 줄어듭니다** — 무엇을 보고
+   있는지에 답하는 것은 제목입니다. */
+.hd-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.hd-legs {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 종목명은 기본 창에서 온전히 섭니다. 이 화면에서 「무엇을 보고 있나」에
+ * 답하는 유일한 글자라, 지표를 깎아서라도 자리를 냅니다.
+ * 최소 창에서는 여기가 줄어듭니다 — 전문은 마우스를 올려 봅니다. */
+.hd-name h1 {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hd-month {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hd-code {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 코드 자리에 서는 「행사가 선택」. 값이 아니라 할 일이라 그 자리 값보다 한 급
+ * 낮춥니다 — 자리를 채우는 글자가 채워질 값보다 커지면 없는 것이 있는 것보다
+ * 먼저 눈에 듭니다. 색은 코드 자리가 이미 흐림이라 그대로입니다. */
+.hd-code-pending {
+  font-size: 11px;
+}
+
+/* 줄 B — 얼마인가. 한 문장으로 읽히도록 가운뎃점으로 잇습니다. */
+.hd-quote {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 6px;
+  height: 30px;
+  min-width: 0;
+}
+
+/* 실시간이 현재가를 갈아 끼운 순간 이 자리를 잠깐 비춥니다. 자릿수가 같으면
+ * 숫자가 바뀌어도 글자 모양이 그대로라 눈이 변화를 못 잡습니다.
+ *
+ * **켜는 것은 곧바로, 걷는 것은 천천히.** 켜지는 쪽이 사건이라 늦으면 놓치고,
+ * 걷히는 쪽은 잔상이라 툭 꺼지면 그것이 또 한 번 깜빡이는 셈이 됩니다.
+ *
+ * 바탕을 글자 밖으로 번지게 그립니다 — 안쪽 여백으로 넓히면 값이 바뀔 때마다
+ * 옆 글자가 밀립니다. */
+.hd-price {
+  flex: 0 0 auto;
+  line-height: 30px;
+  border-radius: 3px;
+  transition:
+    background-color 180ms ease-out,
+    box-shadow 180ms ease-out;
+}
+
+.hd-dot,
+.hd-since {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.hd-change {
+  flex: 0 0 auto;
+  font-size: 15px;
+}
+
+.hd-pct {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 거래시간은 상자에 넣지 않습니다. 이 줄의 상자는 만기와 선물·옵션 둘 다
+ * 누르는 것이라, 안 눌리는 상자를 하나 더 놓으면 눌러 보게 됩니다.
+ * 좁아지면 여기가 먼저 줄어듭니다 — 전문은 마우스를 올려 봅니다. */
+/* 이 값이 언제 것인가. **자리가 모자라 실시간이 안 붙은 동안에만** 섭니다.
+ * 배지가 아니라 맨 글자입니다 — 상태가 아니라 값에 붙은 이름표입니다.
+ * 호가 카드 머리의 같은 글자와 세기를 맞춥니다. */
+.hd-at {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.hd-hours {
+  /* 자르지 않습니다 — 시각은 잘리면 틀린 값입니다. 이 덩어리(.hd-left)는 내용
+     폭으로 서므로 문장이 길어지면 덩어리가 넓어지고 지표 띠가 그만큼 줄어 밉니다. */
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 시세를 못 받았을 때 현재가 자리에 서는 줄.
+ *
+ * **헤더 높이를 바꾸지 않습니다.** 헤더는 높이가 못 박힌 골격이라, 잠깐 있다
+ * 가는 상태 때문에 그 아래가 통째로 밀리면 안 됩니다. 그래서 값이 서던 줄
+ * 안에 그대로 들어앉고, 글자 크기도 그 줄이 이미 쓰는 값(13)을 넘지 않습니다.
+ *
+ * 색은 오류 빨강을 안 씁니다 — 이 화면의 빨강은 방향(매수·상승)이라, 같은
+ * 빨강이 숫자 옆에 서면 두 뜻이 겹칩니다. 못 받은 것은 화면이 깨진 것이
+ * 아니라 값이 아직 없는 것이므로 보조 글자색으로 적고, 알아채는 일은 값이
+ * 서던 자리가 비었다는 사실이 합니다. */
+.hd-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-label);
+}
+
+/* **기다리는 중에는 「여기 값이 올 자리」를 보입니다.** 빈 자리만 남기면
+ * 「받는 중」과 「못 받음」이 한 얼굴이 되어, 기다려도 소용없는 화면을
+ * 기다리게 됩니다. 값이 안 올 것이 정해지면(`is-blank`) 이 블록을 걷습니다.
+ *
+ * 감춘 값 위에 덧그리므로 자리와 높이가 그대로입니다. */
+.hd-metrics.is-waiting .hd-metric dd,
+.hd-metrics.is-waiting .hd-range-end {
+  position: relative;
+  visibility: visible;
+  color: transparent;
+}
+
+.hd-metrics.is-waiting .hd-metric dd::after,
+.hd-metrics.is-waiting .hd-range-end::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 100%;
+  height: 12px;
+  transform: translateY(-50%);
+  border-radius: 4px;
+  background: var(--surface-muted);
+}
+
+/* 현재가 자리도 같습니다. 헤더에서 가장 큰 값이라 그 자리가 비면 가장 먼저
+ * 눈에 띄는데, 기다리는 중에는 「올 자리」로 보여야 합니다. */
+.hd-price-wait {
+  display: inline-block;
+  width: 7ch;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+/* ── 지표 칸 ─────────────────────────────────────────── */
+
+/* 왼쪽 덩어리와 이 블록 사이가 이 줄에서 제일 큰 경계입니다 — 한쪽은
+ * 「무엇을 얼마에 보고 있나」, 다른 쪽은 「그것에 대한 값들」이라 종류가
+ * 다릅니다. 칸과 칸 사이보다 약하면 덩어리가 잘못 잡히므로 선을 하나 둡니다. */
+.hd-metrics {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding-left: 0;
+  /* 트랙 끝의 꼬리. **넘칠 때만** 붙고, 마지막 멈춤 자리(칸 경계)에 닿는 데
+     모자란 만큼만입니다 — 없으면 끝까지 민 자리가 칸 경계가 아니라 앞 칸이
+     고정 덩어리 밑에 반쯤 걸립니다. 값은 헤더가 셉니다. */
+  padding-right: var(--hd-tail-w, 0px);
+}
+
+/* 칸 폭은 내용이 정합니다. 균등하게 나누면 짧은 값 옆이 비고 긴 값이 눌립니다.
+ * 칸 사이는 선 하나입니다 — 옅어서 값보다 먼저 보이지 않고, 여백만으로는
+ * 어디까지가 한 칸인지가 두 행에 걸쳐 흐려집니다.
+ *
+ * 미는 것이 여기서 멈춥니다 — 칸의 왼쪽 모서리가 고정 덩어리의 오른쪽 모서리에
+ * 섭니다. 그래서 라벨이 반만 남는 자리가 없습니다. 어느 칸에서 멈출지는 폭에
+ * 따라 달라 헤더가 정해 칸에 직접 답니다 — 여기서는 기본을 「안 멈춤」으로
+ * 두어, 아직 안 정해진 순간에 아무 데서나 서지 않게 합니다. */
+.hd-cell {
+  scroll-snap-align: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  gap: 0;
+  height: 36px;
+  margin: 0;
+  /* 칸 사이 경계(6+1+6=13)가 왼쪽 덩어리와의 경계(24+8+1=33)보다 작아야
+   * 합니다. 큰 경계가 작은 경계보다 약하면 덩어리가 잘못 잡힙니다. */
+  padding: 0 6px;
+  border-left: 1px solid var(--divider);
+}
+
+.hd-cell:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+.hd-cell:last-child {
+  padding-right: 0;
+}
+
+/* 한 행 — 라벨 왼쪽, 값 오른쪽. 라벨을 값 위에 쌓으면 한 항목이 한 줄을
+ * 통째로 쓰는데, 좌우로 놓으면 같은 세로에 두 항목이 들어갑니다. */
+.hd-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  height: 18px;
+}
+
+.hd-metric dt {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+/* 라벨보다 한 단 큽니다. 칸이 좁고 라벨이 길어서, 크기까지 같으면 어느 쪽이
+ * 값인지가 색 하나에만 걸립니다. */
+.hd-metric dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 단위는 값에 붙여 쓰되 한 급 낮춥니다. 값과 같은 무게면 자릿수처럼 읽힙니다. */
+.hd-unit {
+  margin-left: 1px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 범위 두 줄이 격자 하나를 나눠 씁니다. 두 행의 왼쪽 값끼리, 오른쪽 값끼리
+ * 같은 선에서 끝나야 위아래를 견줄 수 있습니다. */
+.hd-cell:has(.hd-range) {
+  display: grid;
+  grid-template-columns: max-content max-content 32px max-content;
+  align-items: center;
+  gap: 0 8px;
+}
+
+.hd-range {
+  display: contents;
+}
+
+.hd-range dt {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+  padding-right: 4px;
+}
+
+.hd-range-end {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 값이 없는 행. 위 행의 왼쪽 값과 같은 열에 세웁니다 — 「없다」도 값이 서는
+ * 자리에 서야 위아래를 견주는 눈이 헛돌지 않습니다. 트랙과 오른쪽 값 자리는
+ * 비워 둡니다. */
+/* 지표 칸의 「—」. 이 시장에는 없는 값이라 값 글자와 같은 무게로 섭니다. */
+.hd-none {
+  color: var(--text-dim);
+}
+
+.hd-range-none {
+  grid-column: 2;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--text-dim);
+}
+
+/* 얇은 선이고 그 위의 점 위치를 읽어야 하는 자리라, 넓은 면에 쓰는 옅은
+ * 값이 아니라 미결제 막대와 같은 세기를 씁니다. */
+.hd-range-track {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background-color: rgb(var(--ink) / var(--tbl-bar-2));
+}
+
+.hd-range-dot {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--text);
+  transform: translateY(-50%);
+}
+
+/* 종목 띠의 오른쪽 끝. 카드 하나가 아니라 화면 구성에 대한 동작이 섭니다 —
+ * 카드 머리 띠는 「무슨 카드인가」만 답합니다.
+ *
+ * **미는 안쪽(`hd-scroll`) 밖에 있습니다.** 안에 두면 좁은 창에서 지표와 함께
+ * 밀려나 옆으로 굴려야 나오는데, 되돌리는 길이 가장 필요한 것이 그 창입니다. */
+.hd-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}

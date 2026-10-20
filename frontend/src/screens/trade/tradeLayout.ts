@@ -669,7 +669,7 @@ export function columnGaps(layout: TradeLayout): [number, number] {
 export function wideWidth(layout: TradeLayout, usable: number): number {
   const [g1, g2] = columnGaps(layout)
   const rest = usable - g1 - g2 - columnWidth(layout, 'r1') - columnWidth(layout, 'r2')
-  return Math.max(leftMinWidth(layout), Number.isFinite(usable) && usable > 0 ? rest : 0)
+  return Math.max(wideFloor(layout, usable), Number.isFinite(usable) && usable > 0 ? rest : 0)
 }
 
 /** 한 열을 끌 때 갈 수 있는 끝. 옆 열은 그대로 두고 넓은 열이 제 바닥에
@@ -701,7 +701,12 @@ function fitFloor(layout: TradeLayout, column: 'r1' | 'r2', width: number): numb
  *  들어가면 그대로 쓰고, 모자라면 두 열이 **비율대로** 함께 줄어듭니다 — 한쪽만
  *  깎으면 창을 조금 줄였을 뿐인데 호가나 주문 폼 한쪽이 통째로 바닥까지
  *  내려앉습니다. 저장한 값은 건드리지 않으므로 창을 다시 넓히면 원래 폭으로
- *  돌아옵니다. 둘 다 바닥에 닿아도 모자라면 그때는 줄이지 않고 화면이 밀립니다.
+ *  돌아옵니다.
+ *
+ *  둘 다 그 바닥에 닿아도 모자라면(최근 본 패널을 연 좁은 창이나 글자 크기를
+ *  키운 창), 주문 폼이 선 열은 좁은 폼의 폭까지 더 줄어듭니다. 그래도 모자라는
+ *  만큼은 넓은 열이 정해진 끝까지 내놓습니다(`wideFloor`). 화면이 옆으로
+ *  밀리면 주문 폼의 오른쪽이 잘려 실행 단추가 반쯤 가려지기 때문입니다.
  *
  *  세로에는 같은 것을 하지 않습니다. 높이가 모자랄 때는 카드를 줄이는 대신
  *  격자가 세로로 스크롤합니다 — 뭉갠 호가는 단계가 잘린 채로 값처럼 보이고,
@@ -716,13 +721,49 @@ export function fitLayout(layout: TradeLayout, usable: number): TradeLayout {
   const room = usable - g1 - g2 - leftMinWidth(layout)
   if (w1 + w2 <= room) return layout
   const spare = room - min1 - min2
+  if (spare < 0) {
+    /* 나란한 폼의 폭까지 줄여도 모자랍니다. 이번에는 열의 바닥(좁은 폼)까지
+       같은 비율로 줄입니다. */
+    const floor1 = columnMinWidth(layout, 'r1')
+    const floor2 = columnMinWidth(layout, 'r2')
+    const left = room - floor1 - floor2
+    const give = min1 - floor1 + (min2 - floor2)
+    const squeeze = left > 0 && give > 0 ? Math.min(1, left / give) : 0
+    return {
+      ...layout,
+      r1Width: floor1 + Math.floor((min1 - floor1) * squeeze),
+      r2Width: floor2 + Math.floor((min2 - floor2) * squeeze),
+    }
+  }
   const extra = w1 - min1 + (w2 - min2)
-  const ratio = spare > 0 && extra > 0 ? spare / extra : 0
+  const ratio = extra > 0 ? spare / extra : 0
   return {
     ...layout,
     r1Width: min1 + Math.floor((w1 - min1) * ratio),
     r2Width: min2 + Math.floor((w2 - min2) * ratio),
   }
+}
+
+/** 넓은 열이 좁은 창에서 내려갈 수 있는 끝(px). 차트의 도구 줄(일·분, 지표
+ *  다섯, 설정)이 한 줄에 다 들어가는 폭입니다. 이보다 좁으면 설정 단추부터
+ *  카드 밖으로 잘려 누를 수 없게 되므로, 그때는 더 줄이지 않고 화면이 옆으로
+ *  밀립니다. 주문 내역 표는 이 폭에서 제 안에서 옆으로 밀려 열이 다 남습니다. */
+const WIDE_SQUEEZE_MIN = 340
+
+/** 넓은 열이 지금 서는 바닥. 평소에는 제 카드의 바닥(`leftMinWidth`)이고, 좁은
+ *  열 둘이 끝까지 줄어도(`fitLayout`) 모자라는 창에서만 남는 폭까지 내려갑니다 —
+ *  격자가 화면보다 넓어져 옆으로 밀리면 주문 폼의 오른쪽이 잘리는데, 차트와
+ *  주문 내역은 좁게 서도 값을 읽을 수 있습니다. 주문 내역은 좁은 칸에서 열
+ *  묶음을 다시 짜고(`ORDERS_WIDE`), 차트는 제 폭에 맞춰 도구 줄을 줄입니다.
+ *  내려가는 끝은 `WIDE_SQUEEZE_MIN` 입니다.
+ *
+ *  창을 아직 재지 못했으면 제 바닥 그대로입니다. */
+export function wideFloor(layout: TradeLayout, usable: number): number {
+  const floor = leftMinWidth(layout)
+  if (!Number.isFinite(usable) || usable <= 0) return floor
+  const [g1, g2] = columnGaps(layout)
+  const rest = usable - g1 - g2 - columnWidth(layout, 'r1') - columnWidth(layout, 'r2')
+  return Math.min(floor, Math.max(WIDE_SQUEEZE_MIN, rest))
 }
 
 /* ── 행 높이 ─────────────────────────────────────────────

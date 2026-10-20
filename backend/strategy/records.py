@@ -760,7 +760,7 @@ def _equity_curves(
     for (run_id, day), row in balances.items():
         by_run.setdefault(run_id, []).append((day, row))
     curves: dict[str, list[float]] = {}
-    for run_id, rows in by_run.items():
+    for _run_id, rows in by_run.items():
         rows.sort(key=lambda one: one[0])
         version_id = str(rows[0][1].get("versionId") or "")
         before = [row for day, row in rows if day < ask.start]

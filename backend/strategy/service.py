@@ -175,9 +175,9 @@ RECONCILE_KEPT_PAUSED_REASON = "reconcile-kept-paused"
 WHY_RESTORED_END = "앱을 껐다 켜서 이 실행은 끝냈습니다. 이어서 돌리려면 새로 세워 주세요"
 
 #: 대사에서 어긋난 자리마다의 말.
-WHY_ORDER_GONE = "계좌에 우리 미체결 주문 {no} 이(가) 없습니다"
+WHY_ORDER_GONE = "계좌에 이 앱의 미체결 주문 {no} 이(가) 없습니다"
 WHY_ORDER_FILLED = "계좌의 주문 {no} 은(는) {theirs}계약 체결인데 장부는 {ours}계약입니다"
-WHY_UNKNOWN_ORDERS = "계좌에 우리가 모르는 {code} 미체결 주문이 {count}건 있습니다"
+WHY_UNKNOWN_ORDERS = "계좌에 이 앱이 모르는 {code} 미체결 주문이 {count}건 있습니다"
 WHY_POSITION = "계좌 보유는 {theirs}계약인데 장부는 {ours}계약입니다({code})"
 
 

@@ -1,0 +1,151 @@
+/* 일반주문 차트(ChartView)만 쓰는 스타일입니다. 공용 규칙은 trade.css 에 있고, TradeScreen.tsx 가 trade.css 바로 뒤에 불러옵니다. */
+
+/* 범례·배지는 이 상자 안에서만 보입니다. 칸 위치가 어긋나는 순간이 있어도
+ * 배지가 카드 밖 주문내역 표 위에 떠서 체결 숫자로 읽히는 일은 없어야 합니다. */
+.chart-box {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  /* 범례가 자기 칸의 폭을 보고 라벨을 고릅니다. 창이 아니라 이 칸이 기준입니다 —
+   * 2분할이면 한 창 안에 넓은 칸과 좁은 칸이 함께 서고, 카드를 옮기면 같은
+   * 창에서도 칸 폭이 달라집니다. */
+  container-type: inline-size;
+  container-name: chartbox;
+}
+
+.chart-box.is-target .chart-badge {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--divider);
+  border-left: 4px solid var(--target);
+  padding-left: 6px;
+  color: var(--text);
+}
+
+.chart-box.is-idle .chart-badge {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1.5px var(--inactive);
+  color: var(--text-dim);
+}
+
+/* 차트는 남는 자리를 다 씁니다. 라이브러리가 이 칸의 크기를 재서 그리므로
+ * 높이가 0 이면 아무것도 안 그려집니다 — `min-height` 가 그 바닥입니다. */
+.chart-canvas {
+  position: absolute;
+  inset: 0;
+  min-height: 120px;
+}
+
+/* 종목 배지. 칸의 왼쪽 위, 범례 위에 한 줄입니다. */
+/* 차트 위에 **조용히 적는 한 줄**. 할 일이 생기는 말이 아니라 사정을 적어 두는
+   말이라, 단추도 색 띠도 없이 흐림색 작은 글자로 오른쪽 아래에 섭니다 — 값이 선
+   자리(왼쪽 위 배지·범례)를 안 건드리는 구석입니다. 눌리지도 않습니다. */
+.chart-quiet {
+  position: absolute;
+  /* 값이 선 자리를 안 건드리는 구석입니다 — 왼쪽 위는 배지와 범례, 아래는 시각
+     눈금, 오른쪽 끝은 가격 눈금이 씁니다. 그 사이 한 칸입니다. */
+  top: 28px;
+  right: 52px;
+  z-index: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.chart-badge {
+  position: absolute;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: calc(100% - 80px);
+  height: 22px;
+  margin-top: 2px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: rgb(var(--ink) / 0.06);
+  font-size: 12px;
+  color: var(--text);
+  /* 한 줄입니다. 접히면 아래 시가·고가 줄을 덮습니다. 좁으면 이름 쪽이 줄어듭니다. */
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.chart-badge:hover {
+  background: rgb(var(--ink) / 0.1);
+}
+
+/* 종목을 바꿀 수 없는 차트의 배지 — 누르는 것이 아니라 글자입니다. */
+.chart-badge.is-static {
+  cursor: default;
+}
+
+.chart-badge.is-static:hover {
+  background: rgb(var(--ink) / 0.06);
+}
+
+.chart-badge-chev {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.chart-badge-span {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* 아직 안 고른 축. 값이 아니라 할 일이라 헤더의 「행사가 선택」과 같은 크기로
+ * 한 급 낮추고, 이름이 줄어들 때도 이 말은 남습니다 — 남은 일이 사라지면
+ * 배지가 정해진 종목의 시세를 말하는 것으로 읽힙니다. */
+.chart-badge-pending {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+
+.chart-badge b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-badge b {
+  font-weight: 600;
+}
+
+.chart-badge-price {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-badge-change {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 아래 칸의 마지막 값 배지. 오른쪽 축 위에 선 색으로 섭니다. */
+.chart-mark {
+  position: absolute;
+  right: 0;
+  z-index: 2;
+  transform: translateY(-50%);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+.draw-picker-remove {
+  width: 100%;
+  height: 28px;
+  margin-top: 8px;
+  justify-content: center;
+  font-size: 12px;
+}

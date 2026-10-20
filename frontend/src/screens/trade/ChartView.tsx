@@ -1,38 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import {
-  dispose,
-  init,
-  registerOverlay,
-  utils,
-  type AxisCreateTicksParams,
-  type AxisTick,
-  type Chart,
-  type Crosshair,
-  type PaneOptions,
-} from 'klinecharts'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { dispose, init, type Chart, type Crosshair } from 'klinecharts'
 import type { Quote } from '../../lib/types'
-import { PENDING_TEXT, needsLeg, resolve } from '../../data/instruments'
-import { kstParts } from '../../lib/kst'
+import { PENDING_TEXT, needsLeg } from '../../data/instruments'
 import { fractionText, toneOf } from '../../lib/number'
-import {
-  loadHistory,
-  quoteAsked,
-  quoteEntry,
-  quoteHasValues,
-  subscribeQuotes,
-  useDailyBars,
-  type Bar,
-} from '../../data/quotes'
-import {
-  LINE_SIZES,
-  PALETTE,
-  lineStyles,
-  type IndicatorSetting,
-  type IndicatorSettings,
-} from './chartIndicators'
+import type { Bar } from '../../data/quotes'
+import { lineStyles, type IndicatorSetting, type IndicatorSettings } from './chartIndicators'
 import { allIndicatorDefs, extendOfIndicator } from './extraIndicators'
 import {
-  lastDrawingStyle,
   loadDrawings,
   overlayStyles,
   rememberDrawingStyle,
@@ -40,35 +14,37 @@ import {
   type Drawing,
   type DrawingStyle,
 } from './chartDrawings'
-import {
-  DRAW_GROUP,
-  MARK_GROUP,
-  dropStack,
-  ensureMarkOverlay,
-  holdStack,
-  type MarkData,
-  type TradeMark,
-} from './chartMarks'
-import {
-  SESSION_GROUP,
-  ensureSessionBreakOverlay,
-  ensureSessionLabelOverlay,
-  sessionBreaksOf,
-  sessionName,
-  type SessionLabelData,
-} from './chartSessions'
-import { sessionWindows, useTimetable } from '../../data/session'
+import { DRAW_GROUP, type TradeMark } from './chartMarks'
+import { useTimetable } from '../../data/session'
 import { InstrumentPicker, type InstrumentRef } from '../../lib/InstrumentPicker'
 import { SPAN_LABEL, type Span } from './chartSlots'
+import { ChartLegend, collectLegend, type LegendFold, type LegendRow, type OhlcRow } from './ChartLegend'
 import {
-  ChartLegend,
-  collectLegend,
-  type LegendFold,
-  paneTop,
-  precisionFor,
-  type LegendRow,
-  type OhlcRow,
-} from './ChartLegend'
+  CANDLE_PANE,
+  DEFAULT_TOP_GAP,
+  BOTTOM_GAP,
+  headroomGap,
+  X_AXIS_HEIGHT,
+  PANE_FLOOR,
+  CANDLE_MIN,
+  type BottomCap,
+  capBottom,
+  fitPanes,
+} from './chartLayout'
+import { ticksClearOfLastMark, axisDecimals, withDecimals } from './chartAxis'
+import {
+  ensureRectOverlay,
+  markSessionBreaks,
+  lastLineValue,
+  type ValueMark,
+  collectMarks,
+} from './chartOverlays'
+import { styleFromTokens } from './chartStyle'
+import { SyncHub } from './SyncHub'
+import { DrawingStylePopover } from './DrawingStylePopover'
+import { useChartQuote } from './useChartQuote'
+import { useChartData } from './useChartData'
+import { useChartOverlays } from './useChartOverlays'
 
 /* 차트 한 칸.
  *
@@ -89,616 +65,6 @@ import {
  * 두 칸이 같은 종목이면 스크롤과 확대가 같이 움직입니다. 다른 종목이면
  * 따로 움직입니다 — 시간축이 달라 같은 거리를 밀어도 같은 자리가 아닙니다.
  */
-
-/* 봉이 서는 칸과 시간 축 칸의 이름. 겹치는 지표는 봉 칸의 이름을 대고 만들어야
- * 봉 위에 얹힙니다 — 이름을 대지 않으면 제 칸을 새로 받습니다. */
-const CANDLE_PANE = 'candle_pane'
-const X_AXIS_PANE = 'x_axis_pane'
-
-/* 봉 칸 위·아래 여백. 라이브러리는 1 보다 작으면 칸 높이에 대한 몫으로, 1
- * 이상이면 px 로 읽습니다. 위쪽은 범례 높이에 맞춰 재고(`headroomGap`), 못 잴
- * 때는 라이브러리 기본값입니다. */
-const DEFAULT_TOP_GAP = 0.2
-const BOTTOM_GAP = 0.1
-/* 범례 아래 끝과 최고가 글자 윗끝 사이. */
-const HEADROOM_MARGIN = 4
-/* 최고가 글자는 봉의 고가에서 이만큼 위를 가운데로 섭니다(라이브러리의
- * 최고·최저가 표 그림 — 꺾인 선 2px + 5px). */
-const HIGH_MARK_LIFT = 7
-
-/** 최고가 표가 범례(`headBottom`, 봉 칸 위에서 잰 아래 끝) 밑 4px 에 서게 하는
- *  위쪽 여백(px). 못 맞추면 `null`.
- *
- *  고가가 설 높이를 Y 라 하면 글자 윗끝은 Y − 7 − 글자/2 이므로
- *  Y = 범례 아래 끝 + 4 + 7 + 글자/2 입니다. 라이브러리는 값 범위(최고값 M,
- *  폭 R)를 위로 t = G/h, 아래로 b = 0.1 만큼 늘려 칸 높이 h 에 폅니다. 고가 H 가
- *  M 보다 d·R 아래이면(볼린저 윗선처럼 봉보다 높은 지표가 있으면 d > 0) H 는
- *  h·(t + d)/(1 + t + b) 에 섭니다. 지금 여백 `currentTop`(t) 에서 잰 고가 높이
- *  `highY` 로 d 를 구하고, Y 에 서게 하는 t 로 풉니다 —
- *  t = (Y·(1 + b) − h·d) / (h − Y). 여백을 바꿔도 d 는 그대로라 한 번에 맞습니다.
- *  지표가 이미 고가를 Y 아래로 밀어 두었으면(t < 0) 여백을 더 줄 까닭이 없어
- *  가장 작은 여백입니다. */
-function headroomGap(
-  headBottom: number,
-  textSize: number,
-  paneHeight: number,
-  highY: number,
-  currentTop: number,
-): number | null {
-  const h = paneHeight
-  const y = headBottom + HEADROOM_MARGIN + HIGH_MARK_LIFT + textSize / 2
-  /* 칸이 범례보다 조금 큰 정도면 봉이 설 자리가 거의 안 남습니다. 그때는
-     겹침을 받아들이고 기본 여백으로 둡니다. */
-  if (!(y > 0) || !(h > 0) || !Number.isFinite(highY) || y / h >= 0.6) return null
-  const t = currentTop >= 1 ? currentTop / h : currentTop
-  const d = (highY * (1 + t + BOTTOM_GAP)) / h - t
-  const next = (y * (1 + BOTTOM_GAP) - h * d) / (h - y)
-  return Math.max(1, next * h)
-}
-
-/* 시간 축이 늘 가져가는 높이. 아래 칸에 얼마를 줄지 셀 때 먼저 빼 둡니다. */
-const X_AXIS_HEIGHT = 26
-/* 아래 칸 하나가 넘지 않는 높이. 넓은 창에서 아래 칸만 계속 커지면 봉이
- * 눌립니다 — 거래량은 모양만 보면 되고 값은 범례에 적힙니다.
- * 확대에서는 세로가 넉넉하므로 칸도 그만큼 키웁니다. */
-const SUB_PANE_MAX = 96
-const SUB_PANE_MAX_EXPANDED = 180
-/* 라이브러리가 칸에 두는 기본 바닥. 칸 높이를 이보다 낮게 주려면 바닥도 같이
- * 내려야 합니다. 안 그러면 칸 셋이 자리를 넘겨 봉 칸이 0 이 됩니다. */
-const PANE_FLOOR = 30
-/* 아래 칸 전부가 가져갈 수 있는 몫. 나머지는 봉이 갖습니다 — 봉이 이 화면의
- * 주인이라 어떤 크기에서도 절반은 넘게 둡니다. */
-const SUB_PANE_SHARE = 0.45
-/* 봉 칸이 이보다 낮아지지 않습니다. 낮은 창에서 아래 칸이 먼저 바닥까지 줄고,
- * 그래도 모자라면 카드가 세로로 스크롤합니다 — 봉이 0 높이가 되어 거래량만
- * 남는 차트는 차트가 아닙니다. */
-const CANDLE_MIN = 160
-
-/** 아래 칸의 수와 높이 바닥을 정해 둔 차트의 규칙. 자리는 `order` 차례로 먼저
- *  나누고, 남는 자리에 나머지 켜진 지표를 정의 차례로 둡니다. */
-export interface BottomCap {
-  max: number
-  floor: number
-  order: string[]
-}
-
-/** 정해 둔 아래 칸 규칙대로 켜진 지표를 고릅니다. 칸 높이가 `floor` 를 못 넘으면 칸
- *  수를 하나씩 줄이고(하나까지), 자리를 못 받은 지표는 이 차트에서만 끕니다 —
- *  설정은 그대로라 자리가 나면 다시 섭니다. 높이를 아직 모르면 수만 맞춥니다. */
-function capBottom(
-  settings: IndicatorSettings,
-  cap: BottomCap,
-  height: number,
-): { settings: IndicatorSettings; overflow: string[] } {
-  const bottoms = allIndicatorDefs()
-    .filter((def) => def.group === 'bottom' && settings[def.name]?.on)
-    .map((def) => def.name)
-  const ranked = [...cap.order.filter((name) => bottoms.includes(name)), ...bottoms.filter((name) => !cap.order.includes(name))]
-  /* `fitPanes` 와 같은 셈으로 칸 하나의 높이를 냅니다. */
-  const fits = (count: number) => {
-    const room = height - X_AXIS_HEIGHT - count
-    const budget = Math.min(Math.floor(room * SUB_PANE_SHARE), room - CANDLE_MIN)
-    return Math.floor(budget / count) >= cap.floor
-  }
-  let count = Math.min(cap.max, ranked.length)
-  while (height > 0 && count > 1 && !fits(count)) count -= 1
-  const overflow = ranked.slice(count)
-  if (overflow.length === 0) return { settings, overflow }
-  const made = { ...settings }
-  for (const name of overflow) made[name] = { ...settings[name], on: false }
-  return { settings: made, overflow }
-}
-
-/* 현재가 표와 눈금 글자가 서로 닿기 시작하는 거리.
- * 표는 높이 20(글자 12 + 위아래 여백 4), 눈금 글자는 12 이고 둘 다 제 값의
- * 자리를 가운데로 삼으므로, 10 + 6 보다 가까우면 겹칩니다. */
-const LAST_MARK_HEIGHT = 16
-
-/* 사각형은 라이브러리에 없어 등록합니다. 두 점을 마주 보는 꼭짓점으로 씁니다. */
-let rectRegistered = false
-function ensureRectOverlay(): void {
-  if (rectRegistered) return
-  rectRegistered = true
-  registerOverlay({
-    name: 'rect',
-    totalStep: 3,
-    needDefaultPointFigure: true,
-    needDefaultXAxisFigure: true,
-    needDefaultYAxisFigure: true,
-    createPointFigures: ({ coordinates }) => {
-      if (coordinates.length < 2) return []
-      const [a, b] = coordinates
-      return [
-        {
-          type: 'rect',
-          attrs: {
-            x: Math.min(a.x, b.x),
-            y: Math.min(a.y, b.y),
-            width: Math.abs(b.x - a.x),
-            height: Math.abs(b.y - a.y),
-          },
-          styles: { style: 'stroke_fill' },
-        },
-      ]
-    },
-  })
-}
-
-/* 세션이 갈린 자리마다 구분선을 세웁니다. 봉을 새로 채울 때와 아래 칸이 생기거나
- * 없어질 때 지우고 다시 세우므로 앞 종목·앞 묶음의 선이 남지 않습니다. **칸마다
- * 하나씩**입니다 — 봉 칸에만 서면 거래량 칸에서는 끊겨 차트의 흠으로 읽힙니다.
- * 갈린 자리가 없으면 아무것도 안 세웁니다 — 한 세션뿐인 날과 해외가 그렇습니다. */
-function markSessionBreaks(chart: Chart, code: string, bars: readonly Bar[]): void {
-  chart.removeOverlay({ groupId: SESSION_GROUP })
-  const item = resolve(code)
-  const windows = item ? sessionWindows(item.market, item.product.exchangeNo, item.product.code) : []
-  const breaks = sessionBreaksOf(bars, windows)
-  if (breaks.length === 0 || !item) return
-  ensureSessionBreakOverlay()
-  const panes = (chart.getPaneOptions() as PaneOptions[]).filter((pane) => pane.id !== X_AXIS_PANE)
-  for (const pane of panes) {
-    for (const { timestamp } of breaks) {
-      chart.createOverlay({
-        name: 'sessionBreak',
-        groupId: SESSION_GROUP,
-        paneId: pane.id,
-        points: [{ timestamp }],
-      })
-    }
-  }
-  /* 이름표는 봉 칸에만, 이름이 있는 시장에서만 답니다. */
-  ensureSessionLabelOverlay()
-  breaks.forEach((at, index) => {
-    const label: SessionLabelData = {
-      before: sessionName(item.market, at.before),
-      after: sessionName(item.market, at.after),
-      /* 첫 경계의 앞 세션은 첫 봉에서 시작합니다. 칸 왼쪽 끝을 자리로 치면 봉이
-         없는 빈 자리에 이름표가 섭니다. */
-      prev: breaks[index - 1]?.timestamp ?? bars[0]?.timestamp ?? null,
-      next: breaks[index + 1]?.timestamp ?? null,
-    }
-    if (!label.before && !label.after) return
-    chart.createOverlay({
-      name: 'sessionLabel',
-      groupId: SESSION_GROUP,
-      paneId: CANDLE_PANE,
-      points: [{ timestamp: at.timestamp }],
-      extendData: label,
-    })
-  })
-}
-
-/* 현재가 표에 가리는 눈금 하나를 빼고 돌려줍니다.
- *
- * 라이브러리는 현재가 표를 눈금 위에 덮어 그립니다. 값이 눈금 자리에 가까우면
- * 눈금 글자가 반쯤 잘린 채로 남아, 읽을 수 없는 숫자가 축에 하나 생깁니다.
- * 표가 이미 그 자리의 값을 말하고 있으므로 눈금 쪽을 뺍니다. */
-function ticksClearOfLastMark(lastPrice: () => number | null) {
-  return ({ defaultTicks }: { defaultTicks: AxisTick[] }): AxisTick[] => {
-    const price = lastPrice()
-    if (price === null || defaultTicks.length < 2) return defaultTicks
-
-    /* 눈금은 값과 자리가 비례하므로 양 끝 둘이면 현재가의 자리가 나옵니다. */
-    const first = defaultTicks[0]
-    const last = defaultTicks[defaultTicks.length - 1]
-    const from = Number(first.value)
-    const to = Number(last.value)
-    if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) return defaultTicks
-
-    const at = first.coord + ((price - from) / (to - from)) * (last.coord - first.coord)
-    return defaultTicks.filter((tick) => Math.abs(tick.coord - at) >= LAST_MARK_HEIGHT)
-  }
-}
-
-/* 축 눈금 글자 크기(라이브러리 기본). 글자 폭을 잴 때 씁니다. */
-const AXIS_TEXT_SIZE = 12
-
-/* 0~100 사이를 오가는 지표. 축 눈금이 20·40 처럼 서므로 소수를 안 적습니다. */
-const OSCILLATORS = new Set(['RSI', 'KDJ', 'WR', 'DMI'])
-
-/* 아래 칸 축 글자의 자릿수. `null` 이면 라이브러리 글자 그대로입니다 — 거래량은
- * 라이브러리가 큰 수를 줄여 적는 것이 읽기 좋습니다. MACD 는 가격의 차이라 종목
- * 자릿수를 따르고, 나머지는 둘입니다. 범례 값의 자릿수(`precisionFor`)와는 따로
- * 둡니다 — 눈금은 대충의 높이를 말하고, 정확한 값은 범례가 말합니다. */
-function axisDecimals(name: string, decimals: number): number | null {
-  if (name === 'VOL' || name === 'OBV') return null
-  if (OSCILLATORS.has(name)) return 0
-  if (name === 'MACD') return decimals
-  return 2
-}
-
-function withDecimals(ticks: AxisTick[], decimals: number | null): AxisTick[] {
-  if (decimals === null) return ticks
-  return ticks.map((tick) => {
-    const value = Number(tick.value)
-    if (!Number.isFinite(value)) return tick
-    /* 반올림해서 0 이 되는 음수가 「-0」으로 서지 않게 합니다. */
-    const rounded = Number(value.toFixed(decimals)) || 0
-    return {
-      ...tick,
-      text: rounded.toLocaleString('ko-KR', {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-      }),
-    }
-  })
-}
-
-/* 분봉 축은 시각만 적습니다(「23:54」). 그래서 **날이 넘어가는 자리**에서 시각이
- * 뒤로 뛰는 것처럼 보입니다 — 해외 분봉은 밤을 건너 이어지므로 앞으로 받을수록
- * 그 자리가 자주 생깁니다.
- *
- * 그 자리의 **첫 눈금에만** 날짜를 붙입니다. 모든 눈금에 붙이면 축이 날짜로 덮여
- * 시각을 읽기 어렵고, 아무 데도 안 붙이면 지금처럼 뛰어 보입니다. 날짜 꼴은
- * 일봉 축과 같은 것을 씁니다. */
-function dayText(at: number): string {
-  const { month, day } = kstParts(at)
-  return `${month}/${day}`
-}
-
-/* 일봉 축은 날짜만 적습니다(「9/30」). 해는 **첫 눈금과 해가 바뀐 뒤 첫 눈금에만**
- * 붙입니다(「2026 1/2」) — 모든 눈금에 붙이면 축이 같은 해로 덮이고, 아무 데도 안
- * 붙이면 1월이 어느 해의 1월인지 모릅니다. 분봉의 날짜 표시는 여기 없습니다 —
- * 일봉 눈금은 이미 날짜라 한 번 더 붙이면 같은 날이 두 번 적힙니다. */
-/* 글자는 눈금 자리를 가운데로 섭니다. 칸 양 끝에 붙은 눈금은 글자 한쪽이 잘려
- * 「'30」·「18:3」처럼 다른 값으로 읽히므로, 온전히 안 들어가면 글자를 비웁니다
- * (격자선은 남습니다). */
-function fitsAxis(tick: AxisTick, text: string, width: number): boolean {
-  const room = Math.min(tick.coord, width - tick.coord) * 2
-  return room >= utils.calcTextWidth(text, AXIS_TEXT_SIZE)
-}
-
-/* 날짜와 해는 한국 달력으로 짓습니다. 봉의 날은 국내 장의 날이라, 이 PC 의
- * 시간대로 읽으면 하루씩 밀린 날짜가 적힐 수 있습니다. */
-function ticksWithYear({ defaultTicks, bounding }: AxisCreateTicksParams): AxisTick[] {
-  let year: number | null = null
-  return defaultTicks.map((tick) => {
-    const at = Number(tick.value)
-    if (!Number.isFinite(at)) return tick
-    const tickYear = kstParts(at).year
-    const text = dayText(at)
-    if (!fitsAxis(tick, text, bounding.width)) return { ...tick, text: '' }
-    if (tickYear === year) return { ...tick, text }
-    const withYear = `${tickYear} ${text}`
-    /* 해를 붙이면 안 들어가는 자리면 날짜만 적고 해는 다음 눈금으로 넘깁니다. */
-    if (!fitsAxis(tick, withYear, bounding.width)) return { ...tick, text }
-    year = tickYear
-    return { ...tick, text: withYear }
-  })
-}
-
-function ticksWithDayMark({ defaultTicks, bounding }: AxisCreateTicksParams): AxisTick[] {
-  /* **맨 왼쪽 눈금에는 안 붙입니다.** 거기서 날이 바뀐 것이 아니라 그림이
-     시작한 것이고, 축 끝에 붙은 글자는 칸 밖으로 잘립니다. */
-  const head = Number(defaultTicks[0]?.value)
-  let last = Number.isFinite(head) ? dayText(head) : ''
-  return defaultTicks.map((tick) => {
-    const at = Number(tick.value)
-    if (!Number.isFinite(at)) return tick
-    const clock = fitsAxis(tick, tick.text, bounding.width) ? tick.text : ''
-    const day = dayText(at)
-    if (day === last) return { ...tick, text: clock }
-    last = day
-    /* 눈금 하나에 날짜와 시각을 **한 줄로** 답니다. 칸 끝이라 날짜까지는 안
-       들어가면 시각만, 시각도 안 들어가면 비웁니다. */
-    const withDay = `${day} ${tick.text}`
-    return { ...tick, text: fitsAxis(tick, withDay, bounding.width) ? withDay : clock }
-  })
-}
-
-/* 아래 칸(거래량·MACD 등)의 높이를 지금 창에 맞춥니다.
- *
- * 라이브러리는 아래 칸에 100px 씩 고정으로 주고 남는 것을 봉에 줍니다. 그래서
- * 차트 자리가 좁은 창에서는 아래 칸이 자리를 다 먹고 봉 칸이 0 이 됩니다 —
- * 지표를 켰는데 봉이 사라지는 것으로 보입니다. */
-function fitPanes(chart: Chart, box: HTMLElement, expanded: boolean): void {
-  const panes = chart.getPaneOptions() as PaneOptions[]
-  const subs = panes.filter((pane) => pane.id !== CANDLE_PANE && pane.id !== X_AXIS_PANE)
-  if (subs.length === 0) return
-
-  const room = box.clientHeight - X_AXIS_HEIGHT - subs.length
-  /* 아래 칸 몫은 비율로 정하되, 봉 칸의 바닥을 먹지는 못합니다. */
-  const budget = Math.min(Math.floor(room * SUB_PANE_SHARE), room - CANDLE_MIN)
-  const cap = expanded ? SUB_PANE_MAX_EXPANDED : SUB_PANE_MAX
-  const each = Math.max(PANE_FLOOR, Math.min(cap, Math.floor(budget / subs.length)))
-
-  for (const pane of subs) {
-    chart.setPaneOptions({ id: pane.id, height: each, minHeight: Math.min(each, PANE_FLOOR) })
-  }
-}
-
-/** CSS 토큰을 라이브러리 스타일로 옮깁니다. 색을 두 곳에 적어 두지 않습니다. */
-function styleFromTokens(): Record<string, unknown> {
-  const css = getComputedStyle(document.documentElement)
-  const token = (name: string) => css.getPropertyValue(name).trim()
-  const up = token('--up')
-  const down = token('--down')
-  const upBar = token('--up-bar')
-  const downBar = token('--down-bar')
-  const label = token('--text-label')
-  const dim = token('--text-dim')
-  const grid = token('--divider')
-
-  return {
-    grid: {
-      horizontal: { color: grid },
-      vertical: { color: grid },
-    },
-
-    /* 국내 관례를 따릅니다 — 오르면 빨강, 내리면 파랑. 라이브러리 기본은
-       그 반대(초록·빨강)라 반드시 덮어써야 합니다. 앱의 다른 방향값과 같은
-       색이어야 화면을 옮겨도 같은 뜻입니다. */
-    candle: {
-      bar: {
-        upColor: up,
-        downColor: down,
-        noChangeColor: dim,
-        upBorderColor: up,
-        downBorderColor: down,
-        noChangeBorderColor: dim,
-        upWickColor: up,
-        downWickColor: down,
-        noChangeWickColor: dim,
-      },
-      priceMark: {
-        high: { color: label },
-        low: { color: label },
-        last: { upColor: up, downColor: down, noChangeColor: dim },
-      },
-      /* 값은 이 앱의 범례가 말합니다. 라이브러리 말풍선은 봉 위에 상자를 띄워
-         봉을 가립니다. */
-      tooltip: { showRule: 'none' },
-    },
-
-    /* 거래량 막대는 호가 잔량 막대와 같은 옅은 색을 씁니다. 봉과 같은 진한
-       색으로 칠하면 아래 칸이 위 칸만큼 눈에 들어와 주가를 가립니다.
-       선 색은 지표마다 사용자 설정이 덮어씁니다. */
-    indicator: {
-      ohlc: { upColor: upBar, downColor: downBar, noChangeColor: dim },
-      bars: [{ upColor: upBar, downColor: downBar, noChangeColor: dim }],
-      circles: [{ upColor: upBar, downColor: downBar, noChangeColor: dim }],
-      tooltip: { showRule: 'none' },
-      /* 마지막 값 표시는 켜면 모든 지표에 붙어 가격축이 이동평균 값으로
-         덮입니다. 아래 칸의 배지는 이 앱이 따로 그립니다. */
-      lastValueMark: { show: false },
-    },
-
-    xAxis: { axisLine: { color: grid }, tickLine: { color: grid }, tickText: { color: label } },
-    yAxis: { axisLine: { color: grid }, tickLine: { color: grid }, tickText: { color: label } },
-
-    crosshair: {
-      horizontal: { line: { color: dim }, text: { backgroundColor: label } },
-      vertical: { line: { color: dim }, text: { backgroundColor: label } },
-    },
-
-    /* 그린 도형의 기본색. 도형마다 사용자 색이 덮어씁니다. */
-    overlay: overlayStyles(lastDrawingStyle()),
-
-    separator: { color: grid },
-  }
-}
-
-/** 칸의 첫 선이 마지막 봉에서 갖는 값. 배지가 서는 자리입니다. */
-function lastLineValue(chart: Chart, paneId: string): number | null {
-  const indicator = chart.getIndicators({ paneId })[0]
-  if (!indicator || !indicator.visible) return null
-  const line = indicator.figures.find((figure) => figure.type === 'line')
-  const row = indicator.result[indicator.result.length - 1] as Record<string, unknown> | undefined
-  const value = line ? row?.[line.key] : undefined
-  return typeof value === 'number' ? value : null
-}
-
-/* 아래 칸 배지 높이의 절반(글자 11 의 줄 높이 + 위아래 여백 1). */
-const MARK_HALF = 9
-
-interface ValueMark {
-  name: string
-  top: number
-  color: string
-  text: string
-}
-
-/* 아래 칸마다 마지막 값 배지. 칸의 오른쪽 축 위에, 선 색으로 섭니다.
- * 선이 여럿이면 첫 선(가장 짧은 기간)의 값입니다 — 다 붙이면 서로 겹칩니다. */
-function collectMarks(
-  chart: Chart,
-  box: HTMLElement,
-  quote: Quote,
-  settings: IndicatorSettings,
-): ValueMark[] {
-  const data = chart.getDataList()
-  if (data.length === 0) return []
-  const last = data.length - 1
-  const marks: ValueMark[] = []
-
-  for (const indicator of chart.getIndicators()) {
-    if (indicator.paneId === CANDLE_PANE || !indicator.visible) continue
-    const setting = settings[indicator.name]
-    const line = indicator.figures.find((figure) => figure.type === 'line')
-    const color = setting?.lines[0]?.color
-    if (!line || !color) continue
-    const value = (indicator.result[last] as Record<string, unknown> | undefined)?.[line.key]
-    if (typeof value !== 'number') continue
-    const top = paneTop(chart, box, indicator.paneId)
-    if (top === null) continue
-    const y = (chart.convertToPixel({ value }, { paneId: indicator.paneId }) as { y?: number }).y
-    if (typeof y !== 'number' || !Number.isFinite(y)) continue
-    /* 배지는 제 칸 안에 둡니다. 값이 칸 끝에 붙으면 배지 반쪽이 이웃 칸으로
-       넘어가, 이웃 칸의 값처럼 읽힙니다. */
-    const height = chart.getSize(indicator.paneId)?.height ?? 0
-    const inside = height > MARK_HALF * 2 ? Math.min(Math.max(y, MARK_HALF), height - MARK_HALF) : y
-    marks.push({
-      name: indicator.name,
-      top: top + inside,
-      color,
-      text: value.toLocaleString('ko-KR', {
-        minimumFractionDigits: precisionFor(indicator.series, indicator.name, quote),
-        maximumFractionDigits: precisionFor(indicator.series, indicator.name, quote),
-      }),
-    })
-  }
-  return marks
-}
-
-/* ── 두 칸의 스크롤·확대 맞추기 ─────────────────────────── */
-
-interface SyncEntry {
-  id: number
-  code: string
-  chart: Chart
-}
-
-/** 같은 종목인 칸끼리 스크롤·확대를 전달합니다. 한 칸이 밀면 나머지가 따라갑니다. */
-export class SyncHub {
-  private entries: SyncEntry[] = []
-  /* 따라가는 중에 나는 액션은 다시 퍼뜨리지 않습니다. 퍼뜨리면 둘이 서로를
-     밀며 끝없이 돕니다. */
-  private busy = false
-
-  register(id: number, code: string, chart: Chart): void {
-    this.entries = this.entries.filter((entry) => entry.id !== id)
-    this.entries.push({ id, code, chart })
-  }
-
-  unregister(id: number): void {
-    this.entries = this.entries.filter((entry) => entry.id !== id)
-  }
-
-  /* 한 칸을 다른 칸의 자리에 맞춥니다. 거리(상대값)가 아니라 자리(절대값)로
-     맞춥니다 — 거리로 옮기면 처음 어긋난 만큼이 끝까지 남고, 마지막 봉 너머로
-     민 자리는 거리로는 전해지지 않습니다.
-     보이는 구간의 `realTo` 는 마지막 봉 너머까지 센 오른쪽 끝의 봉 번호라,
-     그 번호를 오른쪽 끝에 두면 같은 자리가 됩니다. */
-  private static align(source: Chart, target: Chart): void {
-    const bar = source.getBarSpace().bar
-    const sameBar = target.getBarSpace().bar === bar
-    /* 이미 같은 자리면 손대지 않습니다. 봉 번호는 반올림이라 두 칸이 한 봉만큼
-       다르게 셀 수 있는데, 그것을 「다르다」로 보고 서로 맞추면 끝이 없습니다. */
-    if (sameBar && Math.abs(source.getVisibleRange().realTo - target.getVisibleRange().realTo) <= 1) return
-    if (!sameBar) target.setBarSpace(bar)
-    target.scrollToDataIndex(source.getVisibleRange().realTo - 1, 0)
-  }
-
-  /* 맞추는 동안 상대 칸이 내는 스크롤·확대 액션은 이 코드가 만든 것이라 되받지
-     않습니다. 액션이 한 틱 뒤에 올 수도 있어 다음 틱까지 잠급니다. */
-  private lock(work: () => void): void {
-    if (this.busy) return
-    this.busy = true
-    try {
-      work()
-    } finally {
-      window.setTimeout(() => {
-        this.busy = false
-      }, 0)
-    }
-  }
-
-  /** 다른 같은 종목 칸의 자리를 이 칸에 맞춥니다. 칸이 새로 열리거나 종목이 바뀔 때 씁니다. */
-  adopt(id: number): void {
-    const target = this.entries.find((entry) => entry.id === id)
-    const source = this.entries.find((entry) => entry.id !== id && entry.code === target?.code)
-    if (!target || !source) return
-    this.lock(() => SyncHub.align(source.chart, target.chart))
-  }
-
-  /** 한 칸이 움직였습니다. 같은 종목인 나머지 칸을 그 자리에 맞춥니다. */
-  follow(from: number): void {
-    const source = this.entries.find((entry) => entry.id === from)
-    if (!source) return
-    this.lock(() => {
-      for (const entry of this.entries) {
-        if (entry.id !== from && entry.code === source.code) SyncHub.align(source.chart, entry.chart)
-      }
-    })
-  }
-}
-
-/* ── 도형 색·굵기 팝오버 ──────────────────────────────── */
-
-function DrawingStylePopover({
-  style,
-  left,
-  top,
-  onPick,
-  onRemove,
-  onClose,
-}: {
-  style: DrawingStyle
-  left: number
-  top: number
-  onPick: (style: DrawingStyle) => void
-  onRemove: () => void
-  onClose: () => void
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const onDown = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) onClose()
-    }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey, true)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey, true)
-    }
-  }, [onClose])
-
-  return (
-    <div
-      className="ind-picker draw-picker"
-      style={{ left, top }}
-      role="dialog"
-      aria-label="도형 색과 굵기"
-      ref={ref}
-      onMouseDown={(event) => event.stopPropagation()}
-    >
-      <p className="ind-picker-title">색</p>
-      <div className="ind-swatches">
-        {PALETTE[0].map((_, shade) =>
-          PALETTE.map((row, hue) => {
-            const hex = row[shade]
-            return (
-              <button
-                key={`${hue}-${shade}`}
-                type="button"
-                className="ind-swatch"
-                aria-label={`색 ${hue + 1}-${shade + 1}`}
-                aria-pressed={hex === style.color}
-                style={{ background: hex }}
-                onClick={() => onPick({ ...style, color: hex })}
-              />
-            )
-          }),
-        )}
-      </div>
-      <p className="ind-picker-title">굵기</p>
-      <div className="ind-sizes">
-        {LINE_SIZES.map((px) => (
-          <button
-            key={px}
-            type="button"
-            className="ind-size"
-            aria-pressed={px === style.size}
-            onClick={() => onPick({ ...style, size: px })}
-          >
-            <span className="ind-size-line" style={{ height: px, background: style.color }} />
-            {px}px
-          </button>
-        ))}
-      </div>
-      <button type="button" className="btn btn-quiet draw-picker-remove" onClick={onRemove}>
-        삭제
-      </button>
-    </div>
-  )
-}
 
 /* ── 차트 한 칸 ──────────────────────────────────────── */
 
@@ -787,54 +153,7 @@ export function ChartView({
     // 넘친 목록이 바뀔 때만 알립니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overflowKey])
-  /* 이 종목의 받아 온 분봉. 받는 일은 화면 쪽이 하고 여기서는 읽기만 합니다 —
-     같은 종목을 두 칸이 띄워도 요청은 한 번입니다. **조회 때만 바뀌는 참조**라
-     체결마다 차트가 다시 서지 않습니다 — 체결로 접은 봉은 아래 구독으로 흐릅니다. */
-  const served = useSyncExternalStore(
-    subscribeQuotes,
-    () => quoteEntry(quote.code).bars,
-    () => null,
-  )
-  /* 일봉은 일봉 탭에서만 받습니다 — 분봉을 보는 자리에서 일봉까지 받으면 종목마다
-     조회 하나가 더 나갑니다. 세션과 무관한 주간 일봉이고 체결로 접지 않습니다. */
-  const daily = useDailyBars(span === 'day' && !quote.withheld ? quote.code : '')
-  /* 물어봤는데 값을 못 세우면 **봉을 안 그립니다.** 임시 봉을 그리면 헤더는
-     「받지 못했습니다」인데 차트는 값을 말해, 한 화면이 두 말을 합니다. */
-  /* 모의투자라 현재가만 못 받은 것은 봉과 무관합니다 — 받은 봉은 그립니다. */
-  const missingAsked = useSyncExternalStore(
-    subscribeQuotes,
-    () => {
-      if (!quoteAsked(quote.code) || quoteHasValues(quote.code)) return false
-      const entry = quoteEntry(quote.code)
-      return !(entry.failure === 'paper' && entry.bars !== null)
-    },
-    () => false,
-  )
-  /* 인증 정보가 없어 안 물은 종목도 봉을 안 그립니다 — 까닭은 헤더가 한 번 말합니다. */
-  const missing = quote.withheld === true || missingAsked
-  /* 일봉 탭에서 봉을 못 세우는 까닭. 조회가 따로라 사정도 따로입니다 — 못 받았거나,
-     받았는데 봉이 없거나(저장해 둔 응답으로 도는 재생에서는 일봉이 0개입니다). */
-  const dailyMissing = span === 'day' && (daily.status !== 'ready' || (daily.bars?.length ?? 0) === 0)
-  /* **값을 담는 카드라 목적어를 안 붙입니다** — 이 카드가 무엇을 담는 자리인지는
-     카드 머리가 이미 말합니다. 불러오는 중에는 아직 할 말이 없어 비워 둡니다. */
-  const missingWord = (() => {
-    if (quote.withheld) return '조회 전'
-    if (span === 'day' && !missing) {
-      if (daily.status === 'failed') return '받지 못했습니다'
-      return daily.status === 'ready' ? '아직 일봉이 없습니다' : ''
-    }
-    const entry = quoteEntry(quote.code)
-    if (entry.failure) return '받지 못했습니다'
-    return entry.status === 'loading' ? '' : '아직 시세가 없습니다'
-  })()
-  /* 앞으로 이어 받은 날 가운데 **덜 받았을 수 있는 날**이 있었나. 경고가 아니라
-     적어 두는 말입니다 — 거래가 드문 먼 월물은 거의 늘 참이라 경고 얼굴로 세우면
-     그 종목에서는 늘 서 있게 되고, 그러면 아무도 안 읽습니다. */
-  const shortDays = useSyncExternalStore(
-    subscribeQuotes,
-    () => quoteEntry(quote.code).history.short,
-    () => false,
-  )
+  const { served, daily, missing, dailyMissing, missingWord, shortDays } = useChartQuote({ quote, span })
 
   /* 차트에 실린 마지막 봉. 실시간이 갈아 끼울 때마다 여기도 바뀌고, 현재가 표에
      가리는 눈금을 빼는 데 씁니다. */
@@ -1056,168 +375,18 @@ export function ChartView({
     }
   }, [bump, slot, sync])
 
-  // 종목·기간이 바뀌면 봉을 다시 넣고, 그 종목의 도형을 올립니다.
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-
-    chart.setSymbol({ ticker: quote.code, pricePrecision: quote.decimals, volumePrecision: 0 })
-    chart.setPeriod({ type: span, span: 1 })
-    /* 눈금 글자는 봉 종류를 따릅니다. 칸이 선 뒤에 분·일을 오가도 바뀌도록
-       봉 종류가 바뀔 때마다 다시 겁니다. */
-    chart.overrideXAxis({ createTicks: span === 'minute' ? ticksWithDayMark : ticksWithYear })
-
-    /* 봉을 안 그리기로 한 자리에서는 **눈금도 값을 말하면 안 됩니다.** 봉이
-       없으면 라이브러리가 제 기본 범위(0~10)로 눈금을 세우는데, 1,383 짜리
-       종목 옆에서 그 눈금은 「이 종목은 0에서 10 사이」라고 말합니다. 값을
-       안 말하기로 한 판단의 나머지 절반입니다. */
-    chart.setStyles({ yAxis: { tickText: { show: !(missing || dailyMissing) } } })
-    liveRef.current = null
-    sync.register(slot, drawKey, chart)
-
-    /* 봉을 처음 채우는 것과 실시간으로 잇는 것이 한 자리에 있습니다. `getBars` 는
-       저장소의 조회 봉과 그 위에 접힌 봉을 싣고, `subscribeBar` 는 저장소를 구독해
-       접힌 마지막 봉을 갈아 끼웁니다. */
-    let unsubscribe: (() => void) | undefined
-
-    chart.setDataLoader({
-      getBars: ({ type, callback }) => {
-        /* 라이브러리는 **왼쪽 끝에 닿으면 `forward`**(더 과거), 오른쪽 끝에 닿으면
-           `backward`(더 최근)를 부릅니다. 최근 쪽은 구독으로 흐르므로 여기서는
-           빈 응답을 줍니다 — 같은 봉을 또 주면 끝없이 불어납니다. */
-        if (type === 'forward') {
-          /* 분봉만 이어 받습니다. 못 이어 받는 자리에서는 「없다」로 답해야
-             라이브러리가 왼쪽 끝에서 다시 묻지 않습니다. */
-          if (span !== 'minute' || missing || blockedRef.current) {
-            callback([], { forward: false })
-            return
-          }
-          void loadHistory(quote.code).then(({ failed }) => {
-            const held = quoteEntry(quote.code)
-            /* 못 받았으면 **이 차트에서는** 닫습니다. 같은 자리에서 또 물어도
-               같은 답이 오는데, 왼쪽 끝은 손이 닿을 때마다 부르는 자리입니다. */
-            if (failed) {
-              blockedRef.current = true
-              setHistoryBlocked(true)
-              callback([], { forward: false })
-              return
-            }
-            /* **이 판에 아직 안 실린 것만** 넘깁니다 — 라이브러리가 제 목록 앞에
-               이어 붙이므로, 이미 실린 것을 또 주면 같은 시각의 봉이 두 벌 섭니다. */
-            const all = held.history.bars
-            const fresh = all.slice(0, Math.max(0, all.length - loadedRef.current))
-            loadedRef.current = all.length
-            callback(fresh, { forward: !held.history.done })
-            if (fresh.length === 0) return
-            shownRef.current = [...held.history.bars, ...(held.bars ?? []), ...held.live]
-            markSessionBreaks(chart, quote.code, shownRef.current)
-            bump()
-          })
-          return
-        }
-        if (type !== 'init') {
-          callback([], { backward: false })
-          return
-        }
-        /* 두 시장 다 서버 봉만 씁니다. 분봉은 조회 봉(주간·야간 한 벌) 뒤에 체결로
-           접은 봉을 잇고, 일봉은 조회 봉뿐입니다. 아직 안 왔으면 **비워 둡니다** —
-           지어낸 봉을 세우면 헤더는 「받는 중」인데 차트만 값을 말합니다. */
-        const held = quoteEntry(quote.code)
-        const bars = missing
-          ? []
-          : span === 'minute'
-            ? [...held.history.bars, ...(served ?? []), ...held.live]
-            : [...(daily.bars ?? []), ...held.dailyLive]
-        liveRef.current = bars[bars.length - 1] ?? null
-        shownRef.current = bars
-        /* 판을 세울 때 **앞 봉도 함께 싣습니다** — 그러니 이 판이 받은 수도 여기서
-           맞춰 둡니다. 안 맞추면 다음 한 번이 같은 봉을 또 싣습니다. */
-        loadedRef.current = missing || span !== 'minute' ? 0 : held.history.bars.length
-        /* **복사해서 넘깁니다.** 라이브러리는 받은 배열을 제 목록으로 그대로 쓰고
-           실시간 봉을 거기에 덧붙입니다 — 저장소의 배열을 그대로 주면 저장소가
-           든 봉이 차트 손에 늘어나, 같은 종목을 보는 다른 칸까지 그 봉을 읽습니다. */
-        /* 왼쪽 끝에서 더 받을 수 있다고 알려 둡니다 — 이 표시가 없으면 라이브러리가
-           왼쪽 끝에 닿아도 묻지 않습니다. */
-        callback([...bars], {
-          forward:
-            span === 'minute' &&
-            !missing &&
-            bars.length > 0 &&
-            !held.history.done &&
-            !blockedRef.current,
-          backward: false,
-        })
-        markSessionBreaks(chart, quote.code, bars)
-        bump()
-        /* 같은 종목을 이미 띄운 칸이 있으면 그 칸의 구간으로 맞춥니다 — 한 칸으로
-           접었다 다시 두 칸으로 펼 때 두 차트가 다른 자리에서 시작하면 안 됩니다. */
-        window.setTimeout(() => sync.adopt(slot), 0)
-      },
-
-      subscribeBar: ({ callback }) => {
-        if (missing) return
-        /* **일봉도 잇습니다.** 오늘 봉이 조회한 순간에 멈춰 있으면 분봉은 흐르는데
-           일봉만 낡은 종가를 말합니다. 접는 규칙은 저장소가 정합니다 — 주간 체결만
-           접고, 날이 바뀌면 새 봉입니다. */
-        const folded = () => {
-          const entry = quoteEntry(quote.code)
-          return span === 'minute' ? entry.live : entry.dailyLive
-        }
-        /* 저장소가 접은 봉 중 아직 안 실은 것을 순서대로 넘깁니다. 같은 열쇠면
-           라이브러리가 마지막 봉을 갈아 끼우고, 새 열쇠면 덧붙입니다. 새 봉이 서면
-           세션 창을 넘었을 수 있어 경계선도 다시 봅니다 — 체결마다는 아닙니다. */
-        let pushedKey = liveRef.current?.timestamp ?? 0
-        let pushed: Bar | null = liveRef.current
-        const push = (): boolean => {
-          const entry = quoteEntry(quote.code)
-          let changed = false
-          for (const bar of folded()) {
-            if (bar.timestamp < pushedKey || bar === pushed) continue
-            const started = bar.timestamp > pushedKey
-            pushedKey = bar.timestamp
-            pushed = bar
-            liveRef.current = bar
-            callback(bar)
-            changed = true
-            if (started && span === 'minute') {
-              shownRef.current = [...entry.history.bars, ...(entry.bars ?? []), ...entry.live]
-              markSessionBreaks(chart, quote.code, shownRef.current)
-            }
-          }
-          return changed
-        }
-        push()
-        /* 저장소는 어느 종목이 바뀌어도 알리므로, 이 종목의 봉이 실제로 바뀐 때만
-           범례를 다시 읽습니다. */
-        unsubscribe = subscribeQuotes(() => {
-          if (push()) bump()
-        })
-      },
-
-      unsubscribeBar: () => {
-        unsubscribe?.()
-        unsubscribe = undefined
-      },
-    })
-
-    /* 도형은 종목에 붙습니다. 이전 종목의 도형을 내리고 이 종목의 것을 올립니다. */
-    reloadDrawings(chart)
-
-    const box = boxRef.current
-    if (box) fitPanes(chart, box, expanded)
-
-    return () => unsubscribe?.()
-    // 확대는 아래 효과가 따로 맞춥니다. 여기서 봉을 다시 넣으면 안 됩니다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    /* **시세를 통째로 두지 않습니다.** 이 효과가 종목에서 쓰는 것은 신원과
-       자릿수뿐입니다. 통째로 두면 값이 바뀔 때마다 봉·도형·구간이 다시 실립니다.
-       조회 봉 참조(`served`·`daily.bars`)는 조회 때만 바뀝니다. */
-    quote.code,
-    quote.decimals,
+  useChartData({
+    chartRef,
+    boxRef,
+    liveRef,
+    shownRef,
+    blockedRef,
+    loadedRef,
+    setHistoryBlocked,
+    quote,
     span,
     served,
-    daily.bars,
+    daily,
     missing,
     dailyMissing,
     bump,
@@ -1225,7 +394,8 @@ export function ChartView({
     sync,
     reloadDrawings,
     drawKey,
-  ])
+    expanded,
+  })
 
   /* 다른 칸에서 도형이 바뀌었습니다. 같은 종목이면 여기도 다시 읽습니다. */
   useEffect(() => {
@@ -1396,83 +566,19 @@ export function ChartView({
     // 범례를 접고 펴면 머리 높이가 바뀌어 여백을 다시 셉니다.
   }, [legend, bump, legendFold?.open])
 
-  /* 그리기 도구. 주문 대상인 칸에만 걸립니다. 도구가 바뀌거나 풀리면 그리던
-     것을 지웁니다. */
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-    if (drawingRef.current) {
-      chart.removeOverlay({ id: drawingRef.current })
-      drawingRef.current = null
-    }
-    if (!tool || !active) return
-
-    const style = lastDrawingStyle()
-    const id = chart.createOverlay({
-      name: tool,
-      styles: overlayStyles(style),
-      /* 다 그리면 도구가 풀립니다. 같은 것을 여럿 그리려면 다시 고릅니다 —
-         도구가 걸린 채로 두면 차트를 누를 때마다 선이 생깁니다. */
-      onDrawEnd: ({ overlay }) => {
-        drawingRef.current = null
-        const drawing: Drawing = {
-          name: overlay.name,
-          points: overlay.points.map((p) => ({ timestamp: p.timestamp ?? 0, value: p.value ?? 0 })),
-          style,
-        }
-        /* 완성된 도형은 고른 상태로 남습니다 — 끝점과 축 라벨이 붙어 있어
-           아직 그리는 중처럼 보입니다. 같은 점으로 다시 만들어 고름을 풉니다.
-           그리기가 끝나는 이 콜백 안에서 지우면 라이브러리가 아직 그 도형을
-           들고 있어, 한 틱 뒤에 합니다. */
-        const doneId = overlay.id
-        window.setTimeout(() => {
-          chart.removeOverlay({ id: doneId })
-          const newId = mount(chart, drawing)
-          if (newId) drawingsRef.current.push({ id: newId, drawing })
-          persist()
-        }, 0)
-        onToolDone()
-      },
-    })
-    drawingRef.current = typeof id === 'string' ? id : null
-    // onToolDone·persist 는 이 효과를 다시 돌릴 이유가 아닙니다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, active])
-
-  /* 매매 표시를 올립니다.
-   *
-   * 넘어온 목록이 바뀌면 이 무리만 지우고 다시 답니다. 도형과 무리가 달라
-   * 서로를 건드리지 않습니다. */
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-    chart.removeOverlay({ groupId: MARK_GROUP })
-    if (!tradeMarks || tradeMarks.length === 0) return
-    ensureMarkOverlay()
-    /* 가까운 표끼리 겹치지 않게 층을 나눕니다. 층 셈은 이 목록 하나에 한 벌입니다. */
-    const stack = holdStack(tradeMarks)
-    for (const mark of tradeMarks) {
-      const data: MarkData = { mark, stack }
-      chart.createOverlay({
-        name: 'tradeMark',
-        groupId: MARK_GROUP,
-        points: [{ timestamp: mark.time, value: mark.price }],
-        extendData: data,
-        onClick: (event) => {
-          const rect = boxRef.current?.getBoundingClientRect()
-          const left = Math.max(
-            0,
-            Math.min((event.pageX ?? 0) - (rect?.left ?? 0) - window.scrollX, (rect?.width ?? 300) - 240),
-          )
-          const top = Math.max(0, (event.pageY ?? 0) - (rect?.top ?? 0) - window.scrollY + 12)
-          onMarkPick?.(mark, { left, top })
-        },
-      })
-    }
-    return () => dropStack(stack)
-    // onMarkPick 은 부르는 쪽의 고정 함수라 다시 올릴 이유가 아닙니다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tradeMarks])
+  useChartOverlays({
+    chartRef,
+    boxRef,
+    drawingRef,
+    drawingsRef,
+    tool,
+    active,
+    mount,
+    persist,
+    onToolDone,
+    tradeMarks,
+    onMarkPick,
+  })
 
   /* 모두 지우기. */
   useEffect(() => {

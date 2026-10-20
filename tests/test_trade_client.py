@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from backend.auth.auth_functions import TokenManager
-from backend.config import load_config
+from backend.config import ConfigError, load_config
 from backend.nh_api.catalog import Limit
 from backend.nh_api.client import TradeClient, business_failure
 from backend.nh_api import error_codes
@@ -192,7 +192,7 @@ def test_모르는_API_는_거부한다(config):
 
 def test_인증_정보가_없는_시장은_부르기_전에_걸린다(config):
     client, 서버_ = 만들기(config, {})
-    with pytest.raises(Exception):
+    with pytest.raises(ConfigError):
         client.call("overseas_price", {"sym": "MESU26"}, environment="real")
     assert 서버_.요청들 == []
 

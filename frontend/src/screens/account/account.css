@@ -74,13 +74,6 @@
   color: var(--warn);
 }
 
-.acct-summary {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
 /* 국내·해외는 둘 중 하나라 반반입니다. */
 .acct-market {
   min-width: 128px;
@@ -113,19 +106,6 @@
   margin: 0;
   font-size: 11px;
   color: var(--text-dim);
-}
-
-/* 합계가 어디서 왔는지를 값 옆에 답니다 — 서버가 준 합계와 이 앱이 더한
- * 합계가 화면에서 같아 보이면 안 됩니다. */
-.acct-sum {
-  font-size: 13px;
-  color: var(--text-label);
-  font-variant-numeric: tabular-nums;
-}
-
-.acct-sum .up,
-.acct-sum .down {
-  font-size: 13px;
 }
 
 .acct-note {
@@ -171,59 +151,6 @@
   height: 28px;
   padding: 0 10px;
   font-size: 12px;
-}
-
-/* ── 예수금 격자 ─────────────────────────────────────── */
-
-/* 항목 일곱 × 구분 넷. 두 축을 가진 값이라 스물여덟 칸이 한 표에 들어갑니다. */
-.acct-deposit {
-  table-layout: auto;
-  min-width: 720px;
-}
-
-.acct-deposit th,
-.acct-deposit td {
-  padding: 0 12px;
-}
-
-/* 행 이름은 표의 축입니다. 값보다 진하게 두어 세로로 읽힙니다. */
-.acct-kind {
-  font-weight: 600;
-  color: var(--text);
-}
-
-/* ── 해외 예수금 ─────────────────────────────────────── */
-
-.acct-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px 24px;
-  margin: 0;
-}
-
-.acct-grid > div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 32px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--divider);
-}
-
-.acct-grid dt {
-  font-size: 12px;
-  color: var(--text-label);
-  white-space: nowrap;
-}
-
-.acct-grid dd {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
 }
 
 /* ── 보유 포지션 ─────────────────────────────────────── */
@@ -498,12 +425,6 @@
   margin-left: 6px;
   font-size: 11px;
   font-weight: 400;
-}
-
-/* 잔고 요약 넷 — 포지션 단위 내역입니다. 나란히 놓아야 위 띠의 계좌 전체
- * 요약과 급이 다르다는 것이 모양으로 드러납니다. */
-.acct-sum-item {
-  margin-right: 20px;
 }
 
 

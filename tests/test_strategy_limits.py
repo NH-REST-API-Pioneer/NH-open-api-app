@@ -38,7 +38,7 @@ def test_처음에는_아무것도_안_걸려_있다(한도):
         "USD": {"dailyLoss": None},
         "domestic": {"dailyLoss": None},
         "overseas": {"dailyLoss": None},
-    }, "통화 칸과 앞 판의 두 이름(원·달러)을 함께 답합니다."
+    }, "통화 칸과 시장 이름 열쇠 둘(domestic = 원, overseas = 달러)을 함께 답합니다."
     assert not 한도.path.exists()
 
 

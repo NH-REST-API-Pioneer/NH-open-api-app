@@ -1,0 +1,38 @@
+{
+ "api_id": "overseas_product-expiry",
+ "collected_at": "2026-09-09T00:05:53.585048+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "overseas",
+ "method": "POST",
+ "path": "/trade/v1/overseas/product-expiry",
+ "record_id": "20260909T000553_8f1194267808",
+ "request": {
+  "fut_opt_div_cd": "O",
+  "nxt_key": "",
+  "rem_dy": "30",
+  "sym": "O_ESU26-C7600.0"
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_exch_cd": "CME",
+    "occurs1_exp_dt": "20260918",
+    "occurs1_fst_ntf_dt": "20260918",
+    "occurs1_lst_sett_dt": "20260918",
+    "occurs1_prd_cd": "O_ES",
+    "occurs1_rem_dy": "000009",
+    "occurs1_sett_nm": "인수도",
+    "occurs1_sym": "O_ESU26",
+    "occurs1_sym_nm": "미니 S&P 500 옵션"
+   }
+  ],
+  "nrec": "0001",
+  "nxt_key": ""
+ },
+ "scenario_id": "overseas_product-expiry__rem_dy_30",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

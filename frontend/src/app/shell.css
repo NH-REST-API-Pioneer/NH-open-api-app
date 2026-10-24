@@ -1,0 +1,988 @@
+/* 앱 셸 — 상단 띠 두 단, 최근 본 레일 */
+
+/* 접힘 기준은 창이 아니라 셸의 폭을 봅니다. 창 하나짜리 앱이라 배포에서는
+ * 둘이 같은 값이고, 브라우저에서 확인할 때는 창 크기에 매이지 않습니다. */
+.app-shell {
+  display: grid;
+  /* 하단 상태 바가 없습니다 — 연결 상태와 갱신 시각은 상단 띠 오른쪽에 있습니다. */
+  /* 브랜드 띠 · 상단 띠 · 안내 한 줄 · 화면 · 못 남긴 것 한 줄. 안내와 못 남긴
+   * 줄은 없을 때 0 으로 접히므로 평소 배치는 그대로입니다. */
+  grid-template-rows: 3px auto auto minmax(0, 1fr) auto;
+  /* 열은 창 폭 그대로입니다. 바닥을 두지 않으면(auto) 상단 띠처럼 내용 폭이
+   * 넓은 줄이 열을 창보다 넓게 벌려, 사이드바와 상태 바까지 창 밖으로
+   * 밀려 나갑니다. 폭이 모자란 줄은 각자 자기 안에서 밉니다. */
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  background: var(--bg);
+  container-type: inline-size;
+  container-name: app;
+}
+
+/* 창을 가로지르는 브랜드 띠. 값이 하나도 없는 자리라 무엇도 가리지 않고,
+ * 3px이라 면적이 작아 매수 빨강·매도 파랑과 다투지 않습니다. */
+.brand-bar {
+  grid-row: 1;
+  background-color: var(--brand);
+}
+
+/* ── 상단 띠 ──────────────────────────────────────────── */
+
+/* 이 줄에는 컨트롤만 둡니다. 정보는 섞지 않습니다.
+ *
+ * 브랜드와 페이지 탭이 왼쪽에 붙어 있습니다. 탭을 가운데 두면 브랜드와 탭
+ * 사이가 벌어져 둘이 다른 묶음처럼 보이는데, 탭은 이 앱 안을 옮겨 다니는
+ * 것이라 브랜드에 붙어 있는 편이 맞습니다. */
+/* 두 단입니다 — 1단은 브랜드·검색·상태·컨트롤, 2단은 화면 탭. */
+.topbar {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+}
+
+/* 브랜드 · 검색 · 오른쪽 덩어리. 검색이 남는 폭 한가운데 섭니다 —
+ * 어느 화면에서나 같은 자리라 화면을 옮겨도 찾을 필요가 없습니다. */
+.topbar-main {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 16px;
+  /* 창이 이 줄의 내용보다 좁으면 줄 안에서 밉니다. 막대는 그리지 않습니다 —
+   * 48px 띠 안에 막대가 서면 컨트롤을 가립니다. 앱 최소 창(1200)에서는
+   * 밀릴 일이 없고, 그보다 좁은 브라우저 창에서만 생기는 상태입니다. */
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+/* 2단 높이는 40 입니다. 초점 테두리가 2px 두께에 2px 띄워 그려져 **바깥으로
+ * 4px** 이 나가는데, 36 이면 그만큼이 잘립니다. */
+.topbar-tabs {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 16px;
+}
+
+/* 브랜드. 마크와 글자가 한 덩어리이고, 탭은 그 옆에 32 띄워 섭니다 —
+ * 탭 사이(24)보다 넓어야 「이름」과 「탭 다섯」이 다른 묶음으로 읽힙니다. */
+/* 로고 자리가 홈으로 가는 단추입니다. 생김새는 그대로 두고 눌리는 것만
+ * 더합니다 — 단추처럼 보이면 상단 띠에 눌리는 것이 여섯 개가 되어, 탭 다섯
+ * 사이에서 어느 것이 화면 이름인지 흐려집니다. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 눌리는 면이 글자에 붙지 않도록 여백을 주고, 그만큼 음수 마진으로 되돌려
+   * 놓습니다 — 자리는 단추가 아니었을 때와 같습니다. */
+  margin: -4px 16px -4px -8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* 눌리는 자리라는 것은 마우스를 올렸을 때만 말합니다. 홈에 있을 때도 모양은
+ * 같습니다 — 「지금 여기」는 상단 탭의 홈이 이미 말하고 있고, 한 화면에 그
+ * 표시가 둘이면 어느 쪽이 현재 위치인지 흐려집니다. */
+.brand:hover {
+  background-color: var(--hover);
+}
+
+/* 폭은 안 정합니다. 마크 비율이 세로로 길어서, 폭을 함께 박으면 찌그러집니다. */
+.brand-mark {
+  height: 24px;
+  width: auto;
+}
+
+/* 탭보다 한 단 굵습니다(탭 600 · 이름 700). 같은 무게면 앱 이름이 탭 다섯
+ * 사이에 섞여 여섯 번째 화면 이름으로 읽힙니다. */
+.brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+}
+
+/* 탭은 내용 폭에 맞추고 남는 자리를 비웁니다. 개수가 늘어도 안 깨집니다. */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 선택 표시는 두 가지뿐이고, 무엇을 하는 탭인지로 갈립니다.
+ *
+ *   알약   보고 있는 내용을 바꾸는 탭 (화면 안 탭)
+ *   밑줄   다른 화면으로 옮기는 탭 (홈·종목·일반주문·전략주문·계좌)
+ *
+ * 한 탭에 둘을 같이 붙이지 않습니다. 표시가 겹치면 두 종류가 무엇을 뜻하는지
+ * 알 수 없게 되고, 「내용을 바꾸는 것」과 「자리를 옮기는 것」이 섞여 보입니다.
+ *
+ * 트랙은 반투명입니다. 이 알약은 흰 카드 위에도 서고 페이지 배경 위에도
+ * 서는데, 불투명 회색 하나로는 두 배경 중 한쪽에서만 보입니다 —
+ * 잉크로 깔면 어느 배경 위에서든 같은 단차가 납니다. */
+.tabs-inline {
+  padding: 2px;
+  border-radius: 10px;
+  background-color: rgb(var(--ink) / var(--tab-track));
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-label);
+  white-space: nowrap;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tab[aria-current='true'] {
+  color: var(--text);
+}
+
+/* 알약 — 옅은 트랙 위에서 고른 것만 떠오릅니다. */
+.tabs-inline .tab[aria-current='true'] {
+  background-color: var(--surface);
+}
+
+.tabs-inline .tab {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.tab-page {
+  font-size: 15px;
+}
+
+/* 탭 이름 옆 건수. 0이면 그리지 않으므로 배지가 있다는 것 자체가 신호입니다. */
+.tab-badge {
+  height: 18px;
+  padding: 0 5px;
+}
+
+/* 밑줄 — 화면을 옮기는 탭에만 붙습니다.
+ * 라벨은 본문색을 유지해 작은 글자에서도 또렷합니다. */
+.tab-page[aria-current='true']::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brand);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text-label);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.icon-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* 글씨 크기 — 「가」 단추와 그 아래 작은 창. 창은 문서 맨 끝에 그리고 자리(top·left)는
+ * 단추를 재서 붙입니다(`TextSizeMenu`) — 머리 줄이 넘치는 것을 잘라 내기 때문입니다. */
+.text-size-btn {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.text-size-btn.is-open {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.text-size-pop {
+  position: fixed;
+  z-index: 50; /* 다른 뜨는 창과 같습니다 — 표의 고정 머리글보다 위 */
+  display: grid;
+  grid-template-columns: max-content;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+.text-size-title {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 안내 줄은 네 단 폭 안에서 꺾입니다 — 창 폭을 늘리지 않습니다(폭 0 + 최소 100%). */
+.text-size-note {
+  width: 0;
+  min-width: 100%;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+/* 고른 단. 세그먼트의 눌린 모양과 같습니다. */
+.text-size-pop .seg-item[aria-checked='true'] {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* 브라우저에서는 못 누릅니다. 까닭은 안내 줄이 말합니다. 손을 올려도 바뀌지 않습니다. */
+.text-size-pop .seg-item[aria-disabled='true'],
+.text-size-pop .seg-item[aria-disabled='true']:hover {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/* 묶음 머리 — 시장, 그리고 「최근 본」. 값이 아니라 묶음 이름이라 한 급 낮춥니다. */
+.search-head-row {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+/* 강조는 이 한 줄이 전부입니다. `:hover` 규칙을 따로 두지 마세요 — 마우스가
+ * 올라가면 고름이 그리로 옮겨 오므로, hover 가 제 배경을 가지면 화면이 두 곳을
+ * 가리키면서 Enter 로 열리는 것은 여전히 하나가 됩니다. */
+.search-row[data-active='true'] {
+  background: var(--hover);
+}
+
+/* 꺾쇠 자리. **안 펼쳐지는 줄에도 자리는 남깁니다** — 이름의 왼쪽 끝이 세
+ * 종류(품목·스프레드·종목) 다 같은 세로선에 서야, 꺾쇠 유무가 「펼쳐지나」만
+ * 말하고 줄이 밀려 보이지 않습니다. */
+.search-caret {
+  flex: 0 0 auto;
+  width: 10px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* 펼친 월물 줄. 이름 왼쪽 끝을 **품목 이름의 왼쪽 끝에** 맞춥니다 —
+ * 꺾쇠 폭 10 + 그 오른쪽 간격 8 만큼입니다. 한 단뿐이라 더 들일 이유가 없고,
+ * 560 안에서 긴 월물 이름이 잘릴 여지를 안 만듭니다. */
+.search-row-month {
+  padding-left: 26px;
+}
+
+/* 펼쳐 둔 품목 행은 목록 위에 붙습니다 — 서른여섯 줄을 훑는 동안 어느 품목의
+ * 월물을 보고 있는지 잃지 않습니다. 바탕이 있어야 밑을 가립니다. */
+.search-row-open {
+  position: sticky;
+  /* 목록 안쪽 여백만큼 위로 올려 붙입니다. 0 으로 두면 여백 6px 만큼 틈이 남고,
+     그 틈으로 아래 월물 줄이 지나가 「붙어 있는 줄」이 두 줄로 보입니다. */
+  top: -6px;
+  z-index: 1;
+  background: var(--surface);
+  /* 아래에 선 하나. 배경만 있으면 굴리는 동안 월물 줄이 그 밑으로 사라지는
+     것이 안 읽혀, 붙어 있는 줄과 이어지는 줄이 한 덩어리로 보입니다. */
+  box-shadow: 0 1px 0 var(--divider);
+}
+
+/* 그 품목에 월물이 몇인지. 꺾쇠를 누를지 정하는 데 쓰는 수라(서른여섯이면
+ * 알고 누릅니다) 라벨과 함께 적습니다 — 숫자만 두면 무엇의 수인지 안 읽힙니다. */
+.search-row-count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 둘러보기의 품목 줄. **글자가 서는 자리로 재서** 16씩 들어갑니다 —
+ * 시장 머리 14 · 상품군 이름 30 · 품목 이름 46. 상자 왼쪽으로 재면 꺾쇠가 있는
+ * 줄과 없는 줄의 단이 어긋나, 상품군 이름과 품목 이름이 같은 자리에 섭니다. */
+.search-row-deep {
+  padding-left: 40px;
+}
+
+.search-row-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.search-row-expiry {
+  flex: 0 0 auto;
+  color: var(--text-label);
+}
+
+.search-row-code {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 품목 코드. 이름 뒤에 붙는 보조 값이라 한 급 낮춥니다. */
+.search-row-sub {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 목록 대신 서는 한 줄 — 상태·안내·잘림. 누를 수 없는 글자입니다. */
+.search-note {
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* 상한을 넘은 만큼. 목록 끝에 붙으므로 위 여백만 둡니다. */
+.search-more {
+  padding: 10px 8px 6px;
+  font-size: 12px;
+}
+
+/* 연결 상태 — 점과 글자. 끊겼을 때만 눌립니다. */
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+.conn-error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.conn-error:hover {
+  background: var(--hover);
+}
+
+/* 받고는 있는데 한 시장이 아직 다 붙지 않음. 글자색만 바꿉니다 — 기다리면 붙는
+   일이라 끊김(빨강)과 갈라 둡니다. */
+.conn-lag {
+  color: var(--warn);
+}
+
+.conn-again {
+  color: var(--brand-text);
+  font-weight: 400;
+  text-decoration: underline;
+}
+
+/* 갱신 시각. 값이 아니라 기준이라 한 급 낮추고, 자리 수는 고정폭입니다. */
+.conn-updated {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+.conn-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 장이 열려 있는데 새 시세가 2분 넘게 없음. 글자 색만 바꿉니다 — 자리가 움직이면
+   옆의 연결 표시까지 밀립니다. */
+.conn-time.is-stalled {
+  color: var(--warn);
+}
+
+/* ── 본문 ─────────────────────────────────────────────── */
+
+/* 「고정폭 여럿 + 늘어나는 것 하나」 — 좌측 내비와 우측 레일은 폭이 고정이고
+ * 창이 넓어지면 본문만 늘어납니다. 최대폭을 두지 않습니다. */
+/* 행 번호를 못 박습니다. 조건부로 들어오는 줄이 생겨도 본문과 상태 바가
+ * 제자리에 남습니다 — 자동 배치에 맡기면 줄이 하나 빠질 때 아래가 통째로
+ * 위로 밀리고 상태 바가 화면 바닥에서 떨어집니다. */
+.app-main {
+  grid-row: 4;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+}
+
+/* 화면이 차지하는 자리 — 남는 폭을 전부 먹습니다.
+ *
+ * 이 앱의 화면은 **접히지 않습니다.** 폭이 모자라면 배치를 바꾸는 대신
+ * 가로로 스크롤합니다. 호가와 주문 폼처럼 폭이 못 박힌 것이 나란히 서는
+ * 화면이라, 접어서 만든 좁은 배치는 결국 「같은 것을 두 군데에서 찾는」
+ * 화면이 됩니다.
+ *
+ * 스크롤은 여기까지만입니다. 상단 띠와 상태 바는 이 칸 밖이라 창 폭을
+ * 그대로 따르고, 화면이 밀려도 탭과 상태 표시는 제자리에 있습니다. */
+.app-screen {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  /* 가로만 밀립니다. 한쪽만 `auto` 로 두면 다른 쪽도 따라 `auto` 가 되어,
+   * 필요 없는 세로 스크롤 막대가 생깁니다. */
+  overflow-y: hidden;
+}
+
+/* 화면은 받은 폭 안에서 눕습니다.
+ *
+ * 바닥을 두지 않습니다. 바닥을 두면 그보다 좁은 자리(사이드바를 연 본문)에서
+ * 화면 전체가 그 폭으로 잡히고, 오른쪽 끝에 있는 주문 폼이 밖으로 나갑니다 —
+ * 매수 단추가 밀려나면 주문을 낼 수 없습니다.
+ *
+ * 폭이 모자란 것은 요소 하나(일반주문 헤더 띠)뿐이고, 미는 것은 그 띠가
+ * 자기 안에서 합니다. */
+.app-screen > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ── 화면 오류 안내 ───────────────────────────────────── */
+
+/* 화면 하나를 그리지 못했을 때 그 자리에 서는 안내(`ScreenBoundary`). 앱이 고장
+ * 난 것처럼 보이지 않게 빨강은 쓰지 않습니다. */
+.screen-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 96px 24px;
+  text-align: center;
+  overflow-y: auto;
+}
+
+.screen-error-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.screen-error-text,
+.screen-error-draft {
+  max-width: 420px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+.screen-error-text {
+  color: var(--text-label);
+}
+
+.screen-error-draft {
+  font-weight: 400;
+  color: var(--warn);
+}
+
+.screen-error-reload {
+  margin-top: 12px;
+}
+
+.screen-error-detail {
+  margin-top: 16px;
+}
+
+.screen-error-detail summary {
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.screen-error-detail pre {
+  max-width: 560px;
+  max-height: 160px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-label);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── 최근 본 레일 ────────────────────────────────────── */
+
+/* 오른쪽 끝 아이콘 열 + 열리는 패널.
+ *
+ * 아이콘 열은 폭이 늘 48 이라 창을 줄여도 본문 폭이 튀지 않습니다.
+ * 패널은 본문을 덮지 않고 밉니다 — 덮으면 패널 아래에 무엇이 있는지 보이지
+ * 않아, 종목을 고르는 동안 지금 보던 값이 가려집니다. */
+.sidebar {
+  display: flex;
+  flex: 0 0 auto;
+  align-self: stretch;
+  /* 열린 패널의 폭. 패널은 본문을 밀어서, 이 폭만큼 화면이 쓸 폭이 줄어듭니다. */
+  --panel-width: 240px;
+}
+
+/* 창 폭 1280 미만에서는 패널을 160 으로 줄입니다. 최소 창에서 패널을 연 채로
+ * 전략 설정의 편집기(620 + 300 + 간격 12 = 932)와 일반주문의 기본 배치가 가로로
+ * 넘치지 않게 돌려받는 80 입니다 — 두 화면의 바닥 폭은 값을 읽을 수 있는
+ * 하한이라 줄이지 않고 패널이 내놓습니다. 앱 틀 1200 에서 화면 폭은 952,
+ * 앱 틀 1187 에서는 939 로 둘 다 편집기와 기본 배치가 들어갑니다. 1280 이상에서는
+ * 넘치지 않아 240 그대로입니다.
+ *
+ * 문턱은 창 폭이 아니라 **앱 틀의 폭**(`container app`)으로 적습니다. 창과 앱 틀의
+ * 폭 차이는 환경마다 다릅니다 — 개발 브라우저(Chrome)에서 잰 차이는 0 이고,
+ * 창 1200 에서 앱 틀이 1187(차이 13)이었다는 기록도 있습니다. 두 경우 모두 창
+ * 1280 이 240 이도록 앱 틀 1267 이상을 240 으로 둡니다. 차이가 0 인 환경에서는
+ * 창 1267~1279 도 240 인데, 그 가장 좁은 폭(앱 틀 1267, 화면 폭 939)에서도 두
+ * 화면이 넘치지 않습니다. 문턱을 넘나들 때 폭이 바뀌는 것도 위의 140ms
+ * 트랜지션을 탑니다. */
+@container app (max-width: 1266px) {
+  .sidebar {
+    --panel-width: 160px;
+  }
+}
+
+.sidebar-icons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 48px;
+  padding: 8px 0;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.sidebar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0 4px;
+  border-radius: 8px;
+  font-size: 17px;
+  color: var(--text-label);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.sidebar-icon:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* 열려 있는 항목. 「지금 여기」는 화면 전체에서 초록 하나로 읽힙니다. */
+.sidebar-icon[aria-pressed='true'] {
+  background: var(--brand-soft);
+  color: var(--brand-text);
+}
+
+/* 아이콘 열 왼쪽에 붙어 열립니다. 폭이 0 에서 자라고, 그만큼 본문이
+ * 줄어듭니다. 안쪽은 폭을 못 박아 두어 자라는 동안 글자가 다시 접히지
+ * 않습니다 — 접히면 열리는 내내 글이 출렁입니다. */
+.sidebar-panel {
+  flex: 0 0 auto;
+  overflow: hidden;
+  transition: width 140ms ease-out;
+}
+
+/* 여는 도중에 본문 폭이 바뀌므로 트랜지션을 짧게 둡니다. 손이 기다리는
+ * 시간이 아니라 눈이 따라가는 시간만큼입니다.
+ * 움직임을 줄이도록 설정한 사용자에게는 바로 열고 닫습니다. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-panel {
+    transition: none;
+  }
+}
+
+.sidebar-panel-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin-right: 8px;
+  padding: 16px 12px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.sidebar-panel-head {
+  padding: 0 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 줄 하나 — 여는 단추와 빼는 단추를 감쌉니다. 마우스가 오른 줄의 바탕은 이
+ * 자리가 칠합니다(빼는 단추 위에 있어도 줄 전체가 같은 바탕). */
+.recent-row {
+  position: relative;
+  /* 목록이 넘쳐 스크롤할 때 줄이 눌려 줄지 않습니다. 줄어들면 이름이 여러 줄인
+     줄의 코드가 다음 줄 위로 넘쳐 겹칩니다. */
+  flex: 0 0 auto;
+  border-radius: 8px;
+  transition: background-color 120ms ease-out;
+}
+
+.recent-row:hover,
+.recent-row:focus-within {
+  background: var(--hover);
+}
+
+.recent-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+/* 최근 본에서 빼는 단추. 이름 칸에 자리를 비워 두지 않고 **줄 바탕과 같은 불투명
+ * 바탕으로 첫 줄 끝을 덮습니다** — 좁은 패널에서 자리를 비우면 긴 이름이 한 줄
+ * 더 꺾여 잘립니다. 전체 이름은 줄의 title 에 있습니다. 평소에는 투명이라
+ * 보이지 않지만 키보드 초점은 받습니다. */
+.recent-remove {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  background: var(--hover);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.recent-row:hover .recent-remove,
+.recent-row:focus-within .recent-remove {
+  opacity: 1;
+}
+
+.recent-remove:hover,
+.recent-remove:focus-visible {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+/* 이름이 길면 세 줄까지 보여주고 그 뒤에 말줄임입니다.
+ * 무엇인지 모르면 되돌아가는 목록 구실을 못 합니다. */
+.recent-name {
+  display: -webkit-box;
+  /* 세 줄까지 둡니다. 좁은 패널에서 띄어쓰기로만 꺾으면 스프레드처럼 긴 이름이
+     세 줄이 되는데, 두 줄에서 자르면 하필 월물(「…27년…」)이 가려 어느 종목인지
+     못 가립니다. 대부분의 이름은 두 줄 안이라 목록이 크게 길어지지 않습니다. */
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  /* 띄어쓰기에서만 꺾습니다. 한글은 기본 규칙이 낱말 가운데도 끊어, 좁은
+     패널에서 「12월 / 물」처럼 월물이 갈라지면 만기를 한눈에 못 읽습니다. */
+  word-break: keep-all;
+}
+
+.recent-code {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 지금 보고 있는 종목. 좌측 품목 내비와 같은 모양·같은 색이라
+ * 「지금 여기」 표시가 화면 전체에서 한 종류로 읽힙니다. */
+.recent-item[aria-current='true'] {
+  color: var(--text);
+}
+
+.recent-item[aria-current='true']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background-color: var(--brand);
+}
+
+.recent-empty {
+  padding: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* 연결 점. 정상에는 색을 쓰지 않고 글자로 말합니다. */
+.conn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-dim);
+}
+
+.conn-dot-error {
+  background: var(--error);
+}
+
+/* ── 모달 ────────────────────────────────────────────── */
+
+/* 뒤를 덮는 면. 어두운 화면에서는 이 덮개가 대비를 못 냅니다(검정 위 검정).
+ * 그때 카드를 띄우는 것은 그림자입니다. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50; /* 표의 고정 머리글보다 위에 섭니다 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  /* 뒤를 얼마나 죽이는가.
+   *
+   * 덮개가 옅으면 뒤에 남은 채운 단추가 여전히 「다음 걸음」으로 읽힙니다 —
+   * 전략 검증에서 머리의 「검증 추가」와 패널의 「검증 시작」이 둘 다 초록으로
+   * 보이는 자리가 그렇습니다. 못 누른다는 것과 다음 걸음으로 안 보인다는 것은 다르고,
+   * 뒷막이는 이미 화면 전체를 덮으므로 정할 것은 세기입니다.
+   *
+   * 50% 면 덮인 초록이 패널 안 초록보다 아래로 내려갑니다. 대비 값은 이렇습니다 —
+   * 덮인 단추 2.16(어두움) · 2.18(밝음), 패널 안 단추 5.58 · 3.19.
+   * 밝은 화면에서 벌어짐이 작은 것은 덮개 탓이 아니라 흰 바탕 위 초록이
+   * 원래 3.19 라서입니다. 모달 안 글자는 15.4 · 16.6 으로 둘 다 그대로
+   * 읽힙니다 — 이 값을 올려도 읽는 데는 지장이 없습니다.
+   * 값 하나라 모든 모달에서 같은 뜻이 됩니다. */
+  background: rgb(0 0 0 / 50%);
+  animation: modal-in-backdrop 150ms ease-out;
+}
+
+/* 모달이 떠 있는 동안 **뒤에 남는 채운 단추**의 채움을 벗깁니다.
+ *
+ * 뒷막이는 화면 전체를 덮고 초점은 카드 안에 갇혀 있어 뒤의 단추는 이미 못
+ * 누릅니다. 문제는 눌리는지가 아니라 **읽히는 무게**입니다 — 이 앱에서 초록
+ * 채움은 「다음 걸음」이라, 덮인 단추가 그대로 초록이면 한 화면에 다음 걸음이
+ * 둘로 보입니다. 덮개를 진하게 해도 밝은 화면에서는 잘 갈리지 않습니다(흰 바탕
+ * 위 초록의 대비가 원래 3.19 라 덮어도 크게 안 벌어짐).
+ *
+ * 그래서 두 화면 모두에서 같은 규칙으로 벗깁니다. 모달 안 단추는 건드리지
+ * 않습니다 — 지금 답해야 하는 자리라 채움이 거기 하나만 남습니다.
+ * 잠깐 막히는 자리라 `aria-disabled` 와 이유 문구는 붙이지 않습니다: 왜 못
+ * 누르는지가 화면에 이미 떠 있고, 창을 닫으면 곧 돌아옵니다. */
+body[data-modal-open] .btn-primary:not(.modal-backdrop *),
+body[data-modal-open] .btn-heavy:not(.modal-backdrop *) {
+  background-color: var(--surface-muted);
+  color: var(--text-dim);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-height: 80vh;
+  background: var(--surface);
+  border-radius: 12px;
+  /* 잉크 토큰이라 밝기에 따라 저절로 뒤집힙니다. 사이드바 패널과 같은 값입니다. */
+  box-shadow: 0 8px 24px rgb(var(--ink) / 0.12);
+  overflow: hidden;
+  animation: modal-in-card 150ms ease-out;
+}
+
+/* 탭이 있는 모달은 높이를 못 박습니다. 탭을 바꿀 때마다 카드가 뛰면 방금
+ * 누른 탭이 손가락 밑에서 사라집니다. 아래가 좀 비는 편이 낫습니다. */
+.modal-tall {
+  height: 500px;
+}
+
+@keyframes modal-in-backdrop {
+  from {
+    opacity: 0;
+  }
+}
+
+/* 확대하지 않습니다 — 확대하면 글자가 잠깐 흐려집니다. 8px 올라오는 것으로
+ * 「방금 떴다」는 충분히 읽힙니다. */
+@keyframes modal-in-card {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .modal {
+    animation: none;
+  }
+}
+
+/* 머리 줄은 스크롤하지 않습니다. 아래를 훑다가 다른 탭으로 가려는데 탭이
+ * 위로 사라져 있으면 안 됩니다. */
+.modal-head {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--divider);
+}
+
+/* 제목 한 줄짜리 모달에서 씁니다. 탭이 있는 모달은 탭이 곧 제목입니다. */
+.modal-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font-size: 16px;
+  color: var(--text-label);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  background-color: var(--hover);
+  color: var(--text);
+}
+
+/* 모달 안의 찾기 칸. 팔레트 입력칸과 같은 높이라 두 창이 같은 급으로
+ * 읽힙니다 — 다만 여기는 카드 안이라 아래 선 대신 테두리를 씁니다. */
+.modal-search {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+/* 못 연 종목 한 줄. 누른 자리가 화면마다 달라 그 옆에 붙일 수 없어 화면 위에
+ * 섭니다 — 조용히 아무 일도 안 하면 「눌렀는데 안 열린다」가 되고, 사용자는
+ * 무엇이 잘못됐는지 알 길이 없습니다. */
+.app-missing {
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 13px;
+}
+
+/* 화면 상태를 파일에 못 남겼을 때 서는 줄.
+ *
+ * **오류색이 아니라 경고색입니다.** 지금 화면은 안 깨졌고, 잃는 것은 앞으로의
+ * 일입니다. 게다가 이 줄은 성공할 때까지 서 있는데, 시세 화면은 빨강·파랑이
+ * 이미 값의 방향에 쓰여 상주하는 빨강 띠가 세 번째 빨강이 됩니다.
+ *
+ * **닫는 단추를 두지 않습니다.** 닫는 것과 값이 남는 것은 다른 일인데, 닫고
+ * 나면 「처리했다」로 읽혀 이 줄이 막으려던 위험이 그대로 돌아옵니다. 다음
+ * 저장이 성공하면 저절로 사라집니다. */
+.app-warn {
+  grid-row: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  /* 이 대비(밝은 테마 4.51:1)는 문턱에 붙어 있어 글자를 줄이면 안 됩니다. */
+  font-size: 13px;
+}
+
+.app-warn strong {
+  font-weight: 600;
+}
+
+.app-missing .btn {
+  margin-left: auto;
+  color: inherit;
+}

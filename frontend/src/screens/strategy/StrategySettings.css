@@ -1,0 +1,464 @@
+/* 전략 설정(StrategySettings)만 쓰는 스타일입니다. 공용 규칙은 strategy.css 에 있고, StrategyScreen.tsx 가 strategy.css 바로 뒤에 불러옵니다. */
+
+.set {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 12px;
+}
+
+/* 도는 실행 안내가 설 때만 머리가 한 줄 더 내려갑니다. 안내가 카드 폭 전체를
+ * 차지하도록 줄을 접고, 위 두 덩어리는 전과 같은 한 줄에 둡니다(왼쪽 덩어리가
+ * 남는 폭을 다 먹는 것은 같습니다). */
+.stg .set-head.has-runs {
+  flex-wrap: wrap;
+  /* 줄 사이는 좁게 — 안내는 위 덩어리에 딸린 한 줄입니다. */
+  row-gap: 4px;
+}
+
+.stg .set-head.has-runs > .set-head-main {
+  flex-basis: 0;
+}
+
+.set-runs-note {
+  flex: 0 0 100%;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 머리는 「이 전략이 무엇인가」 넷입니다. 칸마다 최소 폭이 있고, 그 아래로는
+ * 줄이지 않고 **줄을 접어 내립니다** — 잘린 글자보다 두 줄이 낫습니다. 가로로
+ * 미는 띠는 쓰지 않습니다. */
+.set-head-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.set-head-acts {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* 못 하는 일의 이유가 모이는 줄. 단추 아래 한 줄을 차지합니다 — 단추와 같은
+ * 줄에 두면 줄이 길어져 머리가 두 단이 됩니다.
+ *
+ * **폭이 0 에서 시작합니다.** 이 줄이 제 글 길이만큼 자리를 요구하면 머리줄의
+ * 오른쪽 묶음이 그만큼 넓어지고, 왼쪽의 전략명·품목 칸이 밀려 이름이 잘립니다.
+ * 폭을 0 으로 두고 줄 전체(100%)를 채우게 하면, 자리는 단추가 정하고 글은 그
+ * 안에서 감깁니다. 한글은 기본 규칙이 낱말 가운데도 끊으므로 낱말을 지킵니다. */
+.set-note {
+  flex: 1 0 100%;
+  width: 0;
+  min-width: 100%;
+  margin: 0;
+  font-size: 12px;
+  text-align: right;
+  color: var(--text-label);
+  word-break: keep-all;
+}
+
+/* 「저장하려면 —」 뒤의 묶음 이름. 누르면 그 자리로 가는 글자 단추입니다 — 단추
+   꼴로 두면 머리줄의 단추들과 같은 무게가 됩니다. */
+.set-note-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.set-field-label {
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 남는 폭은 전략명이 받습니다 — 이 판에서 가장 큰 글자이고 가장 긴 값입니다.
+ * 최소 폭 188 은 넷(188 + 96 + 200 + 140 + 간격 36 = 660)이 1280 창의 머리에
+ * 한 줄로 서는 값입니다. 그보다 좁은 창에서는 월물이 아랫줄로 접힙니다. */
+.set-name {
+  flex: 1 1 188px;
+  min-width: 188px;
+}
+
+.set-version {
+  flex: 0 0 96px;
+}
+
+.set-month {
+  flex: 0 0 140px;
+}
+
+/* **전략명을 고치는 자리는 여기 하나**입니다. 목록은 고르는 자리라 거기서도
+ * 고쳐지면 잘못 눌러 이름이 바뀝니다. 이름이 이 판에서 가장 큰 글자라 칸도
+ * 그 무게로 둡니다 — 옆 칸들과 같은 크기면 무엇의 설정인지가 묻힙니다.
+ *
+ * **본문색입니다.** 메모 칸(`.set-text`)은 적어 둔 말이라 흐림색인데, 이름은
+ * 이 전략이 무엇인가를 말하는 값이라 흐리면 아직 안 적은 것처럼 읽힙니다 —
+ * 흐린 것은 자리표시(placeholder)뿐입니다. */
+.set-name-value {
+  height: 34px;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  /* 칸보다 긴 이름은 말줄임으로 섭니다. 전체는 칸의 `title` 에 있습니다. */
+  text-overflow: ellipsis;
+}
+
+/* 품목 칸. 고르개가 이 칸 아래에 떠야 해서 자리를 잡아 둡니다. */
+.set-instrument {
+  position: relative;
+  flex: 0 0 200px;
+  min-width: 0;
+}
+
+/* 품목을 여는 단추. **칸처럼 보입니다** — 옆의 월물·메모와 나란히 서는
+   자리라, 단추 얼굴을 하면 이 줄에서 혼자 눌러야 할 것처럼 읽힙니다.
+   다만 **여는 칸이라는 표시**는 답니다(오른쪽 꺾쇠) — 월물 셀렉트와 같은
+   꼴이라야 둘이 같은 갈래로 읽힙니다. */
+.set-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.set-pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 꺾쇠를 **그려서** 달아 둡니다. 글자(▾)로 두면 글꼴이 정하는 대로 작게
+   그려져, 나란히 선 월물 칸의 꺾쇠와 크기가 달라집니다 — 둘은 같은 갈래의
+   칸이라 같은 꼴로 보여야 합니다. 색도 값과 같은 본문색입니다. */
+.set-pick-mark {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-right: 3px;
+  border-right: 1.5px solid var(--text);
+  border-bottom: 1.5px solid var(--text);
+  /* 마름모 꼴로 돌리면 보이는 꺾쇠가 칸의 가운데보다 조금 아래에 서기에
+     그만큼 올려 준다. */
+  transform: translateY(-2px) rotate(45deg);
+}
+
+/* 메모는 누를 것이 아니라 적어 둔 말이라 흐림색 본문입니다. */
+.set-text {
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* 두 열 다 바닥을 둡니다. 바닥이 없으면 좁은 폭에서 조건 행의 셀렉트가
+ * 줄어들어 「EMA(2…」처럼 값을 못 읽는 칸이 됩니다 — 목록 표와 같은 이유로
+ * 접지 않고 가로로 밉니다.
+ *
+ * 가운데 8px 열은 폭 손잡이입니다. 양옆 틈 2px 와 합쳐 두 칸 사이가 12px 로
+ * 섭니다. 손잡이를 끌면 화면이 셋째 열을 그 폭으로 못 박습니다
+ * (`StrategySettings` 의 MAIN_MIN·SIDE_MIN·SPLIT_GUTTER 와 같은 값). */
+.set-body {
+  display: grid;
+  grid-template-columns: minmax(620px, 2fr) 8px minmax(300px, 1fr);
+  column-gap: 2px;
+  row-gap: 12px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.set-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 지표의 매개변수 칸(기간·배수·단기…). 셀렉트 줄 바로 아래 한 줄이고, 칸이
+ * 여럿이라 넘치면 줄 안에서 다음 줄로 감깁니다. 왼쪽 값의 칸은 값·조건 열 아래,
+ * 견줄 값의 칸은 견줄 값 열 아래(오른쪽 맞춤)입니다. */
+.set-params {
+  display: flex;
+  flex-wrap: wrap;
+  align-self: start;
+  gap: 6px;
+  margin-top: -2px;
+}
+
+.set-params-left {
+  grid-column: 2 / 4;
+}
+
+.set-params-right {
+  grid-column: 4 / 7;
+  justify-content: flex-end;
+}
+
+/* 막아 둔 칸과 그 이유. 이유가 칸 아래 붙어야 「왜 못 고치나」를 찾아다니지
+   않습니다 — 값이 아니라 설명이라 흐립니다. */
+.set-off {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.set-off-why {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── 자연어 요약 ─────────────────────────────────────── */
+
+/* 조건을 사람 말로 다시 적은 자리. **자리는 하나**이고 그 안에 단계마다 한
+ * 문장이 섭니다 — 단계는 차례로 보는 별개의 관문이라 하나로 이어 붙이면
+ * 어디까지가 첫 관문인지 문장 안에서 흐려집니다.
+ *
+ * 색을 쓰지 않습니다. 문장 속 한 낱말에 방향색을 얹으면 그 말이 값처럼
+ * 읽히고, 이 앱에서 빨강·파랑은 매수·매도라는 값의 임자입니다. */
+.set-summary {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.set-summary-line {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+.set-summary-line + .set-summary-line {
+  margin-top: 2px;
+}
+
+.set-summary-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* 이대로는 안 도는 설정 한 줄. **막는 말이 아니라 알려 주는 말**이라 경고색을
+   쓰되 저장 단추 위에는 두지 않습니다. 글자는 본문과 같은 크기로 둡니다 —
+   더 줄이면 읽히지 않고, 안 읽히는 경고는 없는 것과 같습니다. */
+.set-summary-warn {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  /* 바탕을 함께 깝니다 — 글자색만으로는 밝은 테마에서 본문과 겨우 갈립니다.
+     주문 결과의 「확인 필요」와 같은 장치입니다. */
+  background: var(--warn-bg);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--warn);
+  word-break: keep-all;
+}
+
+.set-summary-warn + .set-summary-warn {
+  margin-top: 4px;
+}
+
+/* 저장이 막힌 까닭 한 줄. 저장 단추 바로 아래에 오류색으로 섭니다. */
+.set-fail {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--error);
+  text-align: right;
+  word-break: keep-all;
+}
+
+/* 아직 안 정한 값 한 줄. 문장이 아니라 **남은 할 일**이라 한 급 낮춥니다. */
+.set-summary-missing {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+.set-aux {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.set-acc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  text-align: left;
+}
+
+.set-acc-title {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* 접힌 채로도 무엇으로 정해졌는지 보입니다. 펴야만 알 수 있으면 접는 것이
+ * 화면을 줄이는 대신 값을 숨기는 일이 됩니다. */
+.set-acc-sum {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.set-acc-bad {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.set-acc-mark {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.set-acc-sum ~ .set-acc-mark {
+  margin-left: 0;
+}
+
+.set-acc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 16px 14px;
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+}
+
+.set-row-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.set-unit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 수 칸과, 못 받은 값일 때 그 아래 서는 까닭. 테두리가 어느 칸인지 가리키고
+ * 까닭은 칸 아래 한 줄이 말합니다 — 색만으로는 이유를 전하지 못합니다(주문
+ * 화면의 가격 칸과 같은 규칙). 값 열에 붙여 오른쪽으로 맞춥니다. */
+.set-bad {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+.set-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  /* 긴 안내가 낱말 가운데서 꺾이지 않게 어절 단위로 넘깁니다. */
+  word-break: keep-all;
+}
+
+.set-unit-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.set-unit-note.is-off {
+  visibility: hidden;
+}
+
+/* 세션 끝 정리 한 줄 — 「☐ 세션 끝 [10] 분 전에 모두 청산하고 새 진입 막기」. 판정 줄은
+   그 아래 한 줄입니다. */
+.set-session-end {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 34px;
+}
+
+.set-session-end-text {
+  padding-left: 22px;
+}
+
+/* 이름을 위에 두는 줄. 칸들은 이름 아래에서 왼쪽부터 섭니다. */
+.set-row.set-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.set-bad.set-bad-start {
+  align-items: flex-start;
+}
+
+.set-window {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.set-filter-text {
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+.set-filter-dim {
+  color: var(--text-dim);
+}
+
+.set-filter-note {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 두 칸 사이에 서는 세로 손잡이. 그리드의 한 열을 차지합니다. */
+.split-handle-x {
+  cursor: col-resize;
+}
+
+.split-handle-x::after {
+  width: 4px;
+  height: 44px;
+}

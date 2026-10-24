@@ -1,0 +1,31 @@
+{
+ "api_id": "domestic_chart-daily",
+ "collected_at": "2026-09-09T00:00:40.665825+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "POST",
+ "path": "/trade/v1/domestic/chart-daily",
+ "record_id": "20260909T000040_690cb812212a",
+ "request": {
+  "cidx_yn": "1",
+  "fut_cidx_exp_mod": "0",
+  "inq_ed_dt": "20260909",
+  "inq_strt_dt": "20260909",
+  "nght_tp": "1",
+  "nxt_key": "99999999",
+  "req_qty": "300",
+  "sym": "A7569000"
+ },
+ "response": {
+  "nght_tp": "1",
+  "nrec": "0",
+  "nxt_key": "0",
+  "sym": "17500000"
+ },
+ "scenario_id": "domestic_chart-daily__cidx_yn_1",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

@@ -1,0 +1,703 @@
+/* 전략 분석(StrategyAnalysis)만 쓰는 스타일입니다. 공용 규칙은 strategy.css 에 있고, StrategyScreen.tsx 가 strategy.css 바로 뒤에 불러옵니다. */
+
+/* 거래 내역 머리 줄 끝 — 셈에서 뺀 거래 수. */
+.ana-uncounted {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ana {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 12px;
+
+  /* 곡선의 두 선. **색이 아니라 무채색 농도와 선 모양으로 가릅니다** — 이
+   * 앱에서 색에는 임자가 있고(빨강 매수·상승, 파랑 매도·하락, 초록 선택),
+   * 남는 색으로 계열을 만들면 색각 이상에서 서로 무너집니다. */
+  --ana-total: #2f3138;
+  --ana-pick: #5a5d67;
+}
+
+:root[data-theme='dark'] .ana {
+  --ana-total: #e6e8ee;
+  --ana-pick: #b6bac4;
+}
+
+/* 필터 칩 하나. 테두리 안 앞머리에 이름을, 그 뒤에 고르개를 둡니다. 고르개는
+ * 칩이 테두리를 지니므로 제 테두리·바탕을 걷고 값만 굵게 섭니다. */
+.ana-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding-left: 8px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+/* 세그먼트를 든 칩. 세그먼트의 회색 트랙이 칩 바탕까지 이어져 한 덩어리로
+ * 읽힙니다. */
+.ana-chip-seg {
+  gap: 0;
+  box-shadow: none;
+  background: var(--surface-muted);
+}
+
+/* 기간 칩과 그 아래 까닭 한 줄. */
+.ana-period {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 서버가 조회 조건을 물린 까닭. 방금 요청이 막혔다는 말이라 다른 자리의
+ * 막힌 글(저장·시작·동작)과 같은 오류색입니다. */
+.ana-refused {
+  margin: 0;
+  font-size: 11px;
+  color: var(--error);
+}
+
+/* 기간 칩 끝의 날짜 범위. 해를 뺀 짧은 글이고, 올리면 전체 날짜가 보입니다. */
+.ana-value {
+  margin-right: 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「직접」 기간의 범위 단추와, 누르면 그 아래 뜨는 날짜 칸 둘. */
+.ana-range-box {
+  position: relative;
+  display: inline-flex;
+  margin-right: 2px;
+}
+
+.ana-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 4px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.ana-range:hover,
+.ana-range[aria-expanded='true'] {
+  background: var(--hover);
+}
+
+/* 달력 모양 — 윗변이 두꺼운 네모. */
+.ana-cal {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--text-label);
+  border-top-width: 3px;
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+
+.ana-range-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+  white-space: nowrap;
+}
+
+.ana-range-pop[hidden] {
+  display: none;
+}
+
+.ana-date {
+  height: 28px;
+  width: 132px;
+}
+
+/* 줄 오른쪽 끝의 전략·종목. 감기면 둘이 함께 다음 줄로 내려갑니다. */
+.ana-scope {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* 고르개는 가장 긴 선택지 폭으로 자라므로 폭을 묶습니다. 넘치는 이름은 잘리고,
+ * 칩에 올리면 전체가 보입니다. */
+.ana-select {
+  max-width: 128px;
+}
+
+/* 필터와 전략·종목 사이 빈자리의 「받는 중」. 남는 폭만 쓰고, 모자라면 잘립니다 —
+ * 잠깐 서는 글이 필터 줄을 감기게 하면 그때마다 아래 화면이 들썩입니다. 이 글이
+ * 서면서 늘어나는 칸 사이 간격 하나를 오른쪽 음수 여백으로 되돌립니다(`.ana-head`
+ * 의 gap 과 같은 값). */
+.ana-busy {
+  container: anabusy / inline-size;
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  align-self: center;
+  min-width: 0;
+  margin: 0 -8px 0 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* 해외·통화·직접 범위처럼 칸이 많아 남는 폭이 글보다 좁을 때 서는 점. */
+.ana-busy-dot {
+  display: none;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-dim);
+}
+
+@container anabusy (max-width: 47px) {
+  .ana-busy-text {
+    display: none;
+  }
+
+  .ana-busy-dot {
+    display: block;
+  }
+}
+
+/* 필터 줄 맨 뒤 제 줄의 안내(잘린 답·읽는 사이 바뀐 파일). 드물게 서는 경고라
+ * 줄여 적지 않습니다. 값이 아니라 값의 범위를 말하는 글이라 중립색입니다. */
+.ana-notes {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ana-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-label);
+  word-break: keep-all;
+}
+
+.ana-cards {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.stg .ana-metric {
+  gap: 2px;
+  padding: 10px 14px;
+}
+
+.ana-metric-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-label);
+}
+
+.ana-metric-value {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 해외 「전체」에서 통화가 여럿일 때 카드 값은 통화마다 한 줄입니다(더하지 않음). 줄이
+   늘어도 카드 높이가 크게 흔들리지 않게 한 단계 작은 글자입니다. */
+.ana-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 16px;
+}
+
+/* 통화가 여럿인 「전체」의 본문 자리 — 통화를 고르라는 한 줄만 섭니다. */
+.ana-pick-note {
+  padding: 12px 16px;
+}
+
+.ana-pick-note .ana-foot {
+  margin: 0;
+}
+
+/* 값이 없는 자리. 0 과 다른 말이라 굵기도 값의 것을 쓰지 않습니다. */
+.ana-none {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.ana-metric-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ana-tabs {
+  flex: 0 0 auto;
+}
+
+/* 곡선이 왼쪽 2/3, 비용·상세가 오른쪽 1/3 입니다. 비용 요약을 곡선 아래로
+ * 내리면 그 카드 높이와 간격이 통째로 세로에서 빠져나가고, 그만큼 곡선이
+ * 낮아집니다. */
+.ana-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(250px, 1fr);
+  flex: 1 1 auto;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* 「곡선 읽는 법」 단추와 글이 이 카드를 기준으로 섭니다. */
+.stg .ana-chart {
+  position: relative;
+  padding: 8px 12px;
+}
+
+.ana-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.stg .ana-pane {
+  padding: 10px 14px;
+  gap: 6px;
+}
+
+/* 옆 칸은 곡선과 세로를 나눠 쓰므로 여백이 한 급 좁습니다 — 여기서 아낀
+ * 만큼이 곡선의 높이가 됩니다. */
+.stg .ana-cost {
+  padding: 8px 14px;
+  gap: 4px;
+}
+
+.ana-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ana-sheet {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.ana-sheet-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.ana-sheet-row dt {
+  color: var(--text-label);
+}
+
+.ana-sheet-row dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 합이 나오는 줄. 위의 두 줄에서 나온 값이라 선 하나로 묶어 줍니다. */
+.ana-sheet-sum {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--row-line);
+}
+
+/* 이름과 값이 한 줄의 양 끝에 서므로, 줄이 넓어지면 둘 사이가 벌어져 눈이
+ * 건너뛸 거리가 됩니다. 자리는 카드가 넓어져도 이만큼만 씁니다. */
+.ana-sheet-wide {
+  max-width: 560px;
+}
+
+.ana-sheet-wide .ana-sheet-row {
+  gap: 24px;
+}
+
+.ana-sheet-wide .ana-sheet-row dd {
+  font-weight: 400;
+  text-align: right;
+}
+
+.ana-foot {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.ana-col-pick {
+  width: 52px;
+}
+
+.ana-pick {
+  vertical-align: middle;
+}
+
+/* 곡선에 선 모양 조각. 색 점을 쓰지 않는 이유는 곡선이 색으로 갈리지
+ * 않기 때문입니다 — 표가 색으로 말하면 곡선에서 찾을 색이 없습니다. */
+.ana-pick-mark,
+.ana-solid {
+  display: inline-block;
+  width: 16px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* 고른 전략 — 곡선의 가늘고 흐린 실선과 같은 모양입니다. */
+.ana-pick-mark {
+  border-top: 1.5px solid var(--ana-pick);
+  opacity: 0.7;
+}
+
+.ana-solid {
+  border-top: 2.5px solid var(--ana-total);
+}
+
+.ana-ver {
+  color: var(--text-label);
+}
+
+/* 버전이 둘 이상인 전략의 묶음 줄. 합이라 굵고, 아래 버전 줄은 들여씁니다. */
+.ana-group td {
+  font-weight: 700;
+}
+
+.data-table td.ana-sub {
+  padding-left: 24px;
+}
+
+/* 기록 파일에 아직 남지 않는 값. 「—」(값이 없음)와 다른 말입니다. */
+.ana-sheet-wide .ana-sheet-row dd.ana-unkept {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 서버가 적은 체결 품질 글자. 분자·분모가 함께 서서 자릿수를 맞춥니다. */
+.ana-sheet-wide .ana-sheet-row dd.ana-served {
+  font-variant-numeric: tabular-nums;
+}
+
+.ana-unkept-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+/* 합계 줄은 화면 바닥에 붙어 늘 보입니다 — 좁은 창에서 표가 화면 아래로
+ * 밀려도 합계와 그 고르개는 남습니다. 표가 다 보이면 제자리에 그대로 섭니다.
+ * 바탕이 있어야 밑으로 지나가는 줄을 가립니다. 고른 줄의 강조는 바탕색을
+ * 갈아치우지 않고 잉크 한 겹(background-image)이라 이 바탕 위에 그대로 섭니다. */
+.ana-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  font-weight: 700;
+  background-color: var(--surface);
+  box-shadow: inset 0 1px 0 var(--row-line);
+}
+
+/* 다른 줄 위에 떠 있는 동안만 위쪽 경계를 진하게 하고 그림자를 드리웁니다.
+ * 「떠 있음」은 표의 아래 끝이 화면 바닥을 아직 넘지 않은 구간(entry-crossing)
+ * 이라 스크롤 위치로 바로 갈립니다. 화면이 밀리지 않으면 이 구간이 생기지
+ * 않아 그림자도 없습니다. 이 기능이 없는 환경에서는 그림자 없이 선만 섭니다. */
+@supports (animation-timeline: view()) {
+  .ana-table table {
+    view-timeline: --ana-table-view block;
+  }
+
+  .ana-table tfoot td {
+    animation: ana-total-afloat linear;
+    animation-timeline: --ana-table-view;
+    /* 끝을 2px 당겨 둡니다. 화면 배율에 따라 스크롤 끝이 표 아래 끝에 1px 못
+     * 미쳐, 끝까지 내려도 그림자가 남는 일을 막습니다. */
+    animation-range: entry-crossing 0% entry-crossing calc(100% - 2px);
+  }
+}
+
+/* 표 안의 빈 상태. `.data-table td` 가 오른쪽 정렬이라 셀렉터를 한 급
+ * 올리지 않으면 가운데 정렬이 지고 글이 오른쪽 끝에 붙습니다. */
+.data-table td.ana-empty-row {
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.ana-bars {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  gap: 4px;
+  list-style: none;
+}
+
+.ana-bars li {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ana-bar-label {
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.ana-bar-track {
+  display: block;
+  height: 10px;
+  background: rgb(var(--ink) / 0.05);
+  border-radius: 3px;
+}
+
+/* 손익은 방향값이라 색이 붙습니다. 곡선의 계열색과는 다른 자리입니다. */
+.ana-bar {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.ana-bar-value {
+  text-align: right;
+}
+
+/* 곡선 읽는 법. 곡선 오른쪽 아래, 날짜 축 줄 높이에서 선 끝 이름표 칸의 빈
+ * 바닥에 섭니다. 카드 흐름 밖이라 곡선의 세로를 먹지 않습니다. */
+.ana-help {
+  position: absolute;
+  right: 10px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  font-size: 12px;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+/* 곡선이 무엇을 쌓았는지 늘 보이는 꼬리표. 단추 글자와 같은 크기·색입니다. */
+.ana-help-tag {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-label);
+}
+
+.ana-help-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.ana-help-btn:hover,
+.ana-help-btn[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ana-help-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  font-style: normal;
+  line-height: 1;
+}
+
+/* 글은 곡선 위에 뜹니다. 카드 안에 두어 카드와 함께 움직입니다. */
+.ana-help-pop {
+  position: absolute;
+  right: 8px;
+  bottom: 30px;
+  z-index: 50;
+  display: grid;
+  gap: 6px;
+  width: 340px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+.ana-help-pop[hidden] {
+  display: none;
+}
+
+/* 글 아래 끝과 단추 위 끝 사이의 틈(단추 bottom 6 + 높이 20 = 26, 글 bottom 30 에서
+ * 테두리 1 을 뺀 5)을 덮는 보이지 않는 다리. 포인터가 틈에 머물러도 글 위로
+ * 셈해 닫히지 않습니다. 단추나 글의 위치를 바꾸면 높이를 함께 맞춥니다. */
+.ana-help-pop::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: 5px;
+}
+
+.ana-help-pop-title {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.ana-help-pop .ana-foot {
+  color: var(--text);
+  line-height: 1.5;
+}
+
+/* 카드 안의 둘째 묶음. 앞 묶음과 선으로 갈라 「다른 이야기가 시작된다」를
+ * 말합니다 — 제목만 두면 위 값들의 꼬리처럼 읽힙니다. */
+.ana-sub-title {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--row-line);
+}
+
+/* 옆 칸은 줄어들지 않습니다. 줄어들면 글자가 잘리는데, 좁은 창에서 할 일은
+ * 뭉개는 것이 아니라 미는 것입니다(1200×720 에서는 세로 스크롤을 허용합니다).
+ * 그래서 가운데 칸도 「늘어나되 줄지는 않는」 자리로 둡니다. */
+.ana-body {
+  flex-grow: 1;
+  flex-shrink: 0;
+}
+
+/* 곡선 높이를 끌어 정한 때. 줄은 더 늘지 않고 곡선이 그 높이로 섭니다. 옆 칸은
+ * 줄 높이를 정하는 데 끼지 않고(`contain: size`) 곡선 줄 높이 안에서 구릅니다 —
+ * 그러지 않으면 곡선을 낮춰도 비용 카드 높이에 걸려 줄이 안 줄어듭니다. */
+.ana-body.ana-body-sized {
+  flex: 0 0 auto;
+}
+
+.ana-body-sized .ana-side {
+  contain: size;
+  overflow-y: auto;
+}
+
+/* 위아래 사이에 서는 가로 손잡이. 위아래 음수 여백으로 앞뒤 간격(12px) 안에
+ * 들어앉아, 손잡이가 생겨도 카드 사이가 벌어지지 않습니다. */
+.split-handle-y {
+  flex: 0 0 8px;
+  margin: -10px 0;
+  cursor: row-resize;
+}
+
+.split-handle-y::after {
+  width: 44px;
+  height: 4px;
+}
+
+/* 좁은 창에서는 화면이 밀립니다. 미는 자리는 여기 한 곳입니다. */
+.ana {
+  overflow-y: auto;
+}
+
+/* 비교표의 열 폭. 표가 `table-layout: fixed` 라 값 열을 못 박지 않으면 여섯
+ * 열이 폭을 똑같이 나눠 갖고, 전략 이름이 먼저 말줄임에 걸립니다. */
+.ana-table th:nth-child(3),
+.ana-table td:nth-child(3),
+.ana-table th:nth-child(4),
+.ana-table td:nth-child(4) {
+  width: 84px;
+}
+
+.ana-table th:nth-child(5),
+.ana-table td:nth-child(5),
+.ana-table th:nth-child(6),
+.ana-table td:nth-child(6) {
+  width: 140px;
+}
+
+/* 한글은 기본 규칙이 낱말 가운데도 끊습니다. 좁은 카드 안의 문장은 낱말을
+ * 지킵니다. */
+.ana-foot {
+  word-break: keep-all;
+}
+
+/* 방향 표와 거래 내역 표의 값 열. 여기도 `table-layout: fixed` 라 못 박지
+ * 않으면 금액이 먼저 잘립니다. */
+.ana-side-table th:nth-child(2),
+.ana-side-table td:nth-child(2),
+.ana-side-table th:nth-child(3),
+.ana-side-table td:nth-child(3) {
+  width: 90px;
+}
+
+.ana-side-table th:last-child,
+.ana-side-table td:last-child {
+  width: 150px;
+}
+
+/* 거래 내역 표의 열 폭. 종목 열이 섰다 접혔다 해서 차례가 아니라 열 이름으로
+ * 못 박습니다. 합이 `CODE_FITS` 의 셈과 같습니다. */
+.ana-col-at {
+  width: 140px;
+}
+
+/* 종목 열은 「마이크로 S&P 500 26년 12월물」처럼 긴 월물 이름이 만기까지 드는
+ * 폭입니다. 잘리는 자리가 월물이면 다른 종목으로 읽힙니다. 이보다 긴 이름
+ * (스프레드)은 말줄임과 title 로 섭니다. */
+.ana-col-code {
+  width: 224px;
+}
+
+.ana-col-side,
+.ana-col-qty {
+  width: 80px;
+}
+
+.ana-col-net {
+  width: 150px;
+}
+
+.ana-body-even {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}

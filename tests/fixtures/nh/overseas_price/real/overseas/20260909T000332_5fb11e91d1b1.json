@@ -1,0 +1,56 @@
+{
+ "api_id": "overseas_price",
+ "collected_at": "2026-09-09T00:03:32.117548+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "overseas",
+ "method": "POST",
+ "path": "/trade/v1/overseas/price",
+ "record_id": "20260909T000332_5fb11e91d1b1",
+ "request": {
+  "Iccurs1": [
+   {
+    "iccurs1_exch_cd": "FCME",
+    "iccurs1_sym": "MESU26"
+   }
+  ]
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_ask_pric": "7680.75",
+    "occurs1_ask_qty": "000000000042",
+    "occurs1_bid_pric": "7680.50",
+    "occurs1_bid_qty": "000000000011",
+    "occurs1_biz_dt": "20260909",
+    "occurs1_cum_trd_qty": "17642",
+    "occurs1_diff_rt": "0.00",
+    "occurs1_exch_cd": "CME",
+    "occurs1_fal_trd_qty": "14601",
+    "occurs1_high_pric": "7682.75",
+    "occurs1_last_pric": "7680.50",
+    "occurs1_life_high_dt": "20260813",
+    "occurs1_life_high_pric": "7838.50",
+    "occurs1_life_low_dt": "20260330",
+    "occurs1_life_low_pric": "6401.50",
+    "occurs1_low_pric": "7672.75",
+    "occurs1_open_pric": "7680.25",
+    "occurs1_pre_close_pric": "7680.50",
+    "occurs1_pre_sett_dy": "20260908",
+    "occurs1_real_sym": "MESU26",
+    "occurs1_ris_trd_qty": "3041",
+    "occurs1_rt": "0.00",
+    "occurs1_sett_pric": "7680.50",
+    "occurs1_sym": "MESU26",
+    "occurs1_sym_nm": "Micro E-mini S&P500",
+    "occurs1_trd_tm": "090331"
+   }
+  ],
+  "nrec": "1"
+ },
+ "scenario_id": "overseas_price__base",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

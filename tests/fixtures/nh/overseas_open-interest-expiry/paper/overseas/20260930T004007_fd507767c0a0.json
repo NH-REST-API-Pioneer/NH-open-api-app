@@ -1,0 +1,37 @@
+{
+ "api_id": "overseas_open-interest-expiry",
+ "collected_at": "2026-09-30T00:40:07.528277+00:00",
+ "environment": "paper",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "overseas",
+ "method": "POST",
+ "path": "/trade/v1/overseas/open-interest-expiry",
+ "record_id": "20260930T004007_fd507767c0a0",
+ "request": {
+  "nxt_key": "000"
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_cd_nm": "매수",
+    "occurs1_cur_cd": "USD",
+    "occurs1_dlv_sett_div_nm": "현금",
+    "occurs1_exec_dt": "20260930",
+    "occurs1_exec_pric": "7,745.25",
+    "occurs1_exp_dt": "20261218",
+    "occurs1_fst_ntf_dt": "20261218",
+    "occurs1_pstn_qty": "00000000000001.000000000",
+    "occurs1_rem_dy": "000079",
+    "occurs1_sym": "MESZ26",
+    "occurs1_sym_nm": "Micro E-mini S&P500"
+   }
+  ],
+  "nrec": "0001",
+  "nxt_key": ""
+ },
+ "scenario_id": "overseas_open-interest-expiry__single",
+ "status": "response_received",
+ "test_group": "모의만기조회_20260930_094007",
+ "transport": "HTTP"
+}

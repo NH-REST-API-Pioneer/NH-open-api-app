@@ -1,0 +1,19 @@
+{
+ "api_id": "web-socket-key",
+ "collected_at": "2026-09-08T23:59:27.536026+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "GET",
+ "path": "/permission/v1/web-socket-key",
+ "record_id": "20260908T235927_15468918333f",
+ "request": {},
+ "response": {
+  "access_key": "FIXTURE_SECRET"
+ },
+ "scenario_id": "web-socket-key__base",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

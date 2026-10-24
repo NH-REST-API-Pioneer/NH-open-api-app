@@ -1,0 +1,131 @@
+/* 전략 실행 알림 — 본문 영역 오른쪽 아래의 토스트 묶음.
+ * 모달보다 아래에 섭니다: 모달이 떠 있는 동안 묻는 것은 모달입니다. */
+.toasts {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* 묶음의 빈 자리는 아래 화면의 클릭을 막지 않습니다. */
+  pointer-events: none;
+}
+
+.toasts > * {
+  pointer-events: auto;
+}
+
+/* 무게는 왼쪽 띠 하나입니다 — 보통은 테두리색, 경고는 경고색. 색은 띠와
+ * 본문의 방향 조각에만 씁니다. */
+.toast {
+  box-sizing: border-box;
+  width: 320px;
+  max-width: 360px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(var(--ink) / 0.12);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.toast.is-warn {
+  border-left-color: var(--warn);
+}
+
+.toast-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toast-kind {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+/* 전략 이름은 길면 줄입니다 — 종류와 시각은 늘 보여야 합니다. */
+.toast-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-label);
+}
+
+.toast-count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.toast-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  color: var(--text);
+}
+
+/* 낱말 가운데서 끊지 않습니다. 아주 긴 낱말(코드 등)만 넘칠 때 끊습니다. */
+.toast-body {
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.toast-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+/* 글자 단추 — 「보기」와 「모두 닫기」. */
+.toast-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-label);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.toast-link[aria-disabled='true'] {
+  color: var(--text-dim);
+  text-decoration: none;
+  cursor: default;
+}
+
+/* 넷째부터 맨 위에 서는 한 줄. */
+.toast-more {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text-label);
+}

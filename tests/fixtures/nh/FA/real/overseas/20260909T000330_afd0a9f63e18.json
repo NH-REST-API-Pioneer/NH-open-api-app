@@ -1,0 +1,23 @@
+{
+ "api_id": "FA",
+ "collected_at": "2026-09-09T00:03:30.003811+00:00",
+ "environment": "real",
+ "events": [],
+ "format": "nh-fixture-1",
+ "market": "overseas",
+ "record_id": "20260909T000330_afd0a9f63e18",
+ "request": {
+  "body": {
+   "action_code": "FA",
+   "action_sym": "MESU26"
+  },
+  "header": {
+   "action": "A",
+   "api_ver": "1"
+  }
+ },
+ "scenario_id": "FA__base",
+ "status": "transport_or_capture_error",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "WEBSOCKET"
+}

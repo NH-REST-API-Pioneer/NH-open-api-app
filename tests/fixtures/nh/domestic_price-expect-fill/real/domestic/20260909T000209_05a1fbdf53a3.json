@@ -1,0 +1,726 @@
+{
+ "api_id": "domestic_price-expect-fill",
+ "collected_at": "2026-09-09T00:02:09.434469+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "POST",
+ "path": "/trade/v1/domestic/price-expect-fill",
+ "record_id": "20260909T000209_05a1fbdf53a3",
+ "request": {
+  "sym": "B0169A34"
+ },
+ "response": {
+  "Occurs1": [
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084459"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084459"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084459"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084457"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084439"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084437"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084435"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084433"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084431"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084429"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084421"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084404"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084357"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084356"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084336"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084327"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084322"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084318"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084313"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084304"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084245"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084244"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084230"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084158"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084140"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084129"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084124"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084113"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084045"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084040"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "084013"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083932"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083929"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083900"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083900"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083847"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083846"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083802"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083755"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083749"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083740"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083658"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083643"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083636"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083622"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083619"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083614"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083613"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083544"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083537"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083529"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083522"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083520"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083515"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083500"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083500"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083441"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083430"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083418"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083414"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083356"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083351"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083307"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083305"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083239"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083235"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083233"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083228"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083224"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083224"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083214"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083211"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083203"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083119"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083117"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083113"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083013"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083011"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083008"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083001"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083001"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083001"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   },
+   {
+    "occurs1_chg": "0.00",
+    "occurs1_chg_sign": "",
+    "occurs1_est_exec_pric": "0.00",
+    "occurs1_est_exec_qty": "0",
+    "occurs1_tm": "083000"
+   }
+  ],
+  "nrec": "100",
+  "ref_pric": "16.95",
+  "sym_exch": "B0169A34",
+  "sym_nm": "코스피200 C 202609 1,100.0"
+ },
+ "scenario_id": "domestic_price-expect-fill__base",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

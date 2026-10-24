@@ -1,0 +1,30 @@
+{
+ "api_id": "overseas_chart-daily",
+ "collected_at": "2026-09-09T00:03:46.918365+00:00",
+ "environment": "real",
+ "format": "nh-fixture-1",
+ "http_status": 400,
+ "market": "overseas",
+ "method": "POST",
+ "path": "/trade/v1/overseas/chart-daily",
+ "record_id": "20260909T000346_61e14265114e",
+ "request": {
+  "cidx_yn": "1",
+  "exch_cd": "OCME",
+  "inq_ed_dt": "20260909",
+  "inq_strt_dt": "20260909",
+  "nxt_key": "99999999",
+  "req_qty": "300",
+  "sym": "O_ESU26-C7600.0"
+ },
+ "response": {
+  "errorMessage": "[OCME:]종목을 찾을수 없습니다. [PIBO7503@fts]",
+  "errorPath": "/trade/v1/overseas/chart-daily",
+  "errorStatus": 400,
+  "errorTime": "2026-09-09 09:03:47"
+ },
+ "scenario_id": "overseas_chart-daily__cidx_yn_1",
+ "status": "response_received",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "HTTP"
+}

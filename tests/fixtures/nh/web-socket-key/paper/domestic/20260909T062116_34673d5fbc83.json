@@ -1,0 +1,19 @@
+{
+ "api_id": "web-socket-key",
+ "collected_at": "2026-09-09T06:21:16.406461+00:00",
+ "environment": "paper",
+ "format": "nh-fixture-1",
+ "http_status": 200,
+ "market": "domestic",
+ "method": "GET",
+ "path": "/permission/v1/web-socket-key",
+ "record_id": "20260909T062116_34673d5fbc83",
+ "request": {},
+ "response": {
+  "access_key": "FIXTURE_SECRET"
+ },
+ "scenario_id": "web-socket-key__base",
+ "status": "response_received",
+ "test_group": "모의왕복_20260909_152001",
+ "transport": "HTTP"
+}

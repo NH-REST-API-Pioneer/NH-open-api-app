@@ -1,0 +1,92 @@
+{
+ "api_id": "KC",
+ "collected_at": "2026-09-08T23:59:12.415184+00:00",
+ "environment": "real",
+ "events": [
+  {
+   "direction": "sent",
+   "offset_ms": 33.876,
+   "payload": {
+    "body": {
+     "action_code": "session_init",
+     "session_token": "FIXTURE_SECRET"
+    },
+    "header": {
+     "action": "0",
+     "api_ver": "1"
+    }
+   },
+   "seq": 1
+  },
+  {
+   "direction": "received",
+   "offset_ms": 46.121,
+   "payload": {
+    "code": "INIT",
+    "msg": "INIT_SUCCESS"
+   },
+   "seq": 2
+  },
+  {
+   "direction": "sent",
+   "offset_ms": 47.169,
+   "payload": {
+    "body": {
+     "action_code": "KC",
+     "action_sym": "B0169A34"
+    },
+    "header": {
+     "action": "A",
+     "api_ver": "1"
+    }
+   },
+   "seq": 3
+  },
+  {
+   "direction": "received",
+   "offset_ms": 67.708,
+   "payload": {
+    "code": "RT_INIT",
+    "data": {
+     "action": "A",
+     "action_code": "KC",
+     "action_sym": "B0169A34"
+    },
+    "msg": ""
+   },
+   "seq": 4
+  },
+  {
+   "direction": "sent",
+   "offset_ms": 15055.223,
+   "payload": {
+    "body": {
+     "action_code": "KC",
+     "action_sym": "B0169A34"
+    },
+    "header": {
+     "action": "D",
+     "api_ver": "1"
+    }
+   },
+   "seq": 5
+  }
+ ],
+ "format": "nh-fixture-1",
+ "market": "domestic",
+ "record_id": "20260908T235912_5d10791f5f43",
+ "request": {
+  "body": {
+   "action_code": "KC",
+   "action_sym": "B0169A34"
+  },
+  "header": {
+   "action": "A",
+   "api_ver": "1"
+  }
+ },
+ "scenario_id": "KC__base",
+ "status": "stream_window_finished",
+ "test_group": "조회실행_20260909_085746",
+ "transport": "WEBSOCKET"
+}

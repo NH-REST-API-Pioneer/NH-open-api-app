@@ -1,6 +1,6 @@
 # NH-open-api-app
 
-NH선물 REST API Pioneer 1기 팀 저장소입니다. 운영자 프로그램 [NH FUTURES API](https://github.com/PetterChanHyuk/nh-futures-open-api)(원본 `ec7fe0d`)를 포크해 고쳐 씁니다.
+NH선물 REST API Pioneer 1기 6팀 저장소입니다. 운영자 프로그램 [NH FUTURES API](https://github.com/PetterChanHyuk/nh-futures-open-api)(원본 `ec7fe0d`)를 포크해 고쳐 씁니다.
 
 **데스크톱 실행 파일 대신, 로컬에서 백엔드 서버를 띄우고 브라우저로 `http://localhost:8000` 에 접속해 씁니다.** 브라우저를 닫아도 백엔드는 계속 돕니다.
 

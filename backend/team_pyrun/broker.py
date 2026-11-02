@@ -6,19 +6,21 @@
 
 **주문은 한 번만 보냅니다.** 여기서도, 아래 `api.market_order` 에서도 다시 보내지 않습니다.
 
-- 응답을 못 받았거나(`TransportError`) 처리 여부를 모르는 거절(`GatewayError` 등)이면 `order` 줄에
-  `ok=False, unknown=True` 를 남기고 `None` — 접수됐는지는 실행기가 바로 잔고(`position`)로 확인합니다.
-- 업무 거부(`BusinessError`)는 서버가 「안 받았다」고 한 것이라 `unknown` 이 아닙니다.
-- 주문은 받았는데 15초 안에 체결도 거부도 확인되지 않으면 역시 `unknown` 입니다(늦게 체결될 수 있음).
-  그 주문번호를 `unresolved` 로 들고 있다가, **다음 주문을 내기 전에 주문내역에서 그 주문을 다시 봅니다.**
-  살아 있을지 모르는 주문 위에 주문을 겹쳐 내지 않기 위해서입니다(아래 관문 2).
+- 업무 거부(`BusinessError`)는 서버가 「안 받았다」고 한 것 — 결과를 아는 실패입니다.
+- **번호 없이 결과를 모름**(`TransportError`·`GatewayError`·그 밖의 예외, 또는 응답에 주문번호 없음):
+  `order` 줄에 `ok=False, unknown=True`, 그리고 `blind` 표시. 잔고 한 번이 주문 전 보유와 같다는 건 「안 들어갔다」는
+  증거가 아니라(반영이 늦을 수 있음) 증거가 없는 것이므로, **잔고가 그 주문 체결 뒤 보유를 보일 때까지 이 실행의
+  모든 주문을 막습니다.** 그 사이 주문하려 했는데 잔고가 여전히 주문 전 보유면 실행을 멈춥니다(확인 필요).
+- **번호는 있는데 15초 안에 체결도 거부도 확인 안 됨**: `unresolved`(번호·방향)로 들고 있다가 다음 주문 전에
+  주문내역에서 다시 봅니다. 거부·취소면 풀고, 같은 방향 주문이 체결됐으면 보내지 않습니다(잔고가 그대로면 멈춤).
 
 주문을 내기 전 관문 (fill 한 번마다, 순서대로 — 하나라도 걸리면 **아무것도 보내지 않고** None)
 
-1. 결과를 모르는 주문 뒤 10초 안이면 안 냄(응답 없는 주문이 접수돼 잔고 반영이 늦을 수 있음).
-2. `unresolved` 가 있으면 주문내역에서 다시 봄. 번호가 안 보이거나 세 번째에도 결과가 없으면 실행을 멈춤(`halt`).
+1. `blind` 가 있으면 잔고를 봄 — 체결 뒤 보유면 표시를 풀고 다음 관문으로, 주문 전 보유 그대로면 멈춤, 그 밖이면 막음.
+2. `unresolved` 가 있으면 주문내역에서 다시 봄. 번호가 안 보이거나 세 번째에도 결과가 없으면 멈춤(`halt`).
 3. **잔고 관문**: 잔고(`position`)가 실행기가 아는 주문 전 보유(`expected()`)와 정확히 같아야 보냄. 못 읽어도 안 냄.
-   앞선 주문이 사실은 접수돼 있었다면 여기서 드러나고, 실행기는 None 을 받아 잔고를 따릅니다.
+   앞선 주문이 사실은 접수돼 있었다면 여기서 드러나고, 실행기는 None 을 받아 잔고를 따릅니다
+   (청산 재시도인데 잔고가 0 이면 주문 없이 청산으로 기록).
 
 `expected`·`halt` 는 실행(`live.py`)이 꽂습니다. `needs_check`(None 을 돌려줌)·`unknown` 은 실행이 읽고 바로
 잔고를 대조한 뒤 지웁니다. `had_unknown` 은 지우지 않습니다 — 한 번이라도 결과를 모르는 주문이 있었으면
@@ -45,14 +47,7 @@ FILL_POLL_SECONDS = 0.5  # 체결 확인 간격 (초) — 30 × 0.5 = 15초
 FEE_RECHECK_SECONDS = 1.0  # 예수금 fee 반영이 늦을 때 한 번 더 보기 전 쉬는 시간
 FILLED = "6"            # 주문내역 `ord_sts`: 전체체결
 REJECTED = ("8", "9")   # 주문내역 `ord_sts`: 거부·취소 — 체결 안 됨이 확인된 것
-QUIET_SECONDS = 10      # 결과를 모르는 주문 뒤 새 주문을 내지 않는 시간 (청산 재시도 간격과 같음)
 UNRESOLVED_MAX_WAITS = 2  # 결과를 모르는 앞선 주문을 이만큼 더 기다려도 모르면 실행을 멈춤
-
-
-def _plus_seconds(clock: str, seconds: int) -> str:
-    """HHMMSS + 초 → HHMMSS."""
-    sec = int(clock[:2]) * 3600 + int(clock[2:4]) * 60 + int(clock[4:6]) + seconds
-    return f"{sec // 3600:02d}{sec % 3600 // 60:02d}{sec % 60:02d}"
 
 
 def error_text(e: BaseException) -> str:
@@ -80,7 +75,9 @@ class MockAccountBroker:
         self.had_unknown = False    # 이 실행에서 결과를 모른 주문이 한 번이라도 있었음 (지우지 않음)
         self.unresolved: str | None = None  # 접수됐지만 체결·거부가 확인 안 된 주문번호
         self.unresolved_checks = 0          # 그 주문을 다시 봤는데도 결과를 모른 횟수
-        self.quiet_until = ""               # 결과를 모르는 주문 뒤 이 시각(HHMMSS)까지 새 주문 없음
+        self.unresolved_side: str | None = None
+        #: 번호 없이 결과를 모르는 주문 {"side","pre","post"} — 잔고가 post 를 보일 때까지 모든 주문을 막는다
+        self.blind: dict | None = None
         self.needs_check = False            # fill 이 None 을 돌려줌 → 실행이 바로 잔고를 대조하고 지운다
         #: 실행이 꽂는 갈고리 — 실행기가 아는 보유(주문 전)와 멈춤. 없으면 잔고 관문을 건너뛴다(단독 시험용)
         self.expected: Callable[[], int] | None = expected
@@ -126,10 +123,10 @@ class MockAccountBroker:
         self.unknown = True
         self.had_unknown = True
 
-    def _sent_but_unknown(self, clock: str) -> None:
-        """보낸 주문의 결과를 모름 — 접수돼 잔고 반영이 늦을 수 있으니 10초 동안 새 주문을 내지 않는다."""
-        self._mark_unknown()
-        self.quiet_until = _plus_seconds(clock, QUIET_SECONDS)
+    @staticmethod
+    def _post(pre: int | None, side: str) -> int | None:
+        """주문 전 보유 pre 에서 side 1계약이 체결되면 될 보유."""
+        return None if pre is None else pre + (1 if side == "buy" else -1)
 
     def _halt(self, reason: str) -> None:
         """실행을 멈추게 한다(실행이 `halt` 를 꽂아 둔 경우). 없으면 기록만."""
@@ -138,13 +135,45 @@ class MockAccountBroker:
         else:
             self.j.write("event", text=f"멈춰야 함 · {reason}")
 
-    def _blocked_by_unresolved(self, clock: str) -> bool:
-        """결과를 모르던 앞선 주문을 주문내역에서 다시 봅니다. 새 주문을 내면 안 되면 True.
+    def blind_landed(self, held: int | None) -> bool:
+        """잔고 held 가 번호 없는 결과 모름 주문(`blind`)이 체결된 뒤의 보유와 같은가 — 그 주문이 들어갔다는 증거."""
+        return self.blind is not None and held is not None and held == self.blind["post"]
+
+    def lift_blind(self, clock: str, held: int) -> None:
+        """번호 없는 결과 모름 주문이 잔고에 반영된 것을 확인 — 표시를 지운다."""
+        b, self.blind = self.blind, None
+        self.j.write("event", clock=clock, text=f"결과를 모르던 {b['side']} 주문이 잔고({held:+d})에 반영됨 — 주문 막음 해제")
+
+    def _blocked_by_blind(self, clock: str) -> bool:
+        """번호 없는 결과 모름 주문이 있으면, 잔고가 그 주문 체결 뒤 보유를 보일 때까지 어떤 주문도 내지 않는다.
+
+        - 잔고 = 그 주문 체결 뒤 보유 → 들어간 것이 확인됨: 표시를 지우고, 지금 주문은 잔고 관문에 맡긴다
+          (청산 재시도인데 잔고 0 이면 관문이 막고 실행기가 청산으로 기록)
+        - 잔고 = 그 주문 전 보유(실행기가 아는 보유) → 안 들어간 건지 반영이 늦는 건지 모른다: 멈춤(확인 필요)
+        - 그 밖·못 읽음 → 보내지 않음(실행기가 잔고를 따른다)"""
+        if self.blind is None:
+            return False
+        held = self.position()
+        if self.blind_landed(held):
+            self.lift_blind(clock, held)
+            return False
+        self._mark_unknown()
+        exp = self.expected() if self.expected is not None else None
+        got = "확인 안 됨" if held is None else f"{held:+d}"
+        if held is not None and held == exp:
+            self._halt(f"결과를 모르는 {self.blind['side']} 주문 뒤 잔고가 그대로({got}) — 들어갔는지 알 수 없어 새 주문 안 냄")
+        else:
+            self.j.write("event", clock=clock, text=f"결과를 모르는 주문이 있어 새 주문 안 냄 · 잔고 {got}")
+        return True
+
+    def _blocked_by_unresolved(self, side: str, clock: str) -> bool:
+        """결과를 모르던 앞선 주문(번호 있음)을 주문내역에서 다시 봅니다. 새 주문을 내면 안 되면 True.
 
         - 거부·취소(8·9) → 막지 않음
-        - 전체체결(6) → 막지 않음. 대신 바로 뒤 잔고 관문이 잔고가 기대와 같을 때만 내보낸다
-        - 주문내역에 그 번호가 없음 → 실행을 멈춤(첫 쪽에 안 보이면 영영 못 찾을 수 있어 손절이 조용히 막히지 않게)
-        - 아직 결과 없음·조회 실패 → 막음. 세 번째에도 그러면 실행을 멈춤"""
+        - 전체체결(6), **방향이 다름**(예: 늦게 체결돼 받아들인 진입 뒤의 청산) → 막지 않음. 잔고 관문이 판단
+        - 전체체결(6), **같은 방향** → 보내지 않음. 잔고가 아직 주문 전 보유면 주문내역과 잔고가 어긋난 것이라 멈춤
+        - 주문내역에 그 번호가 없음 → 멈춤(첫 쪽에 안 보이면 영영 못 찾을 수 있어 손절이 조용히 막히지 않게)
+        - 아직 결과 없음·조회 실패 → 막음. 세 번째에도 그러면 멈춤"""
         if not self.unresolved:
             return False
         no, key = self.unresolved, self.unresolved.lstrip("0")
@@ -162,12 +191,25 @@ class MockAccountBroker:
                 self._halt(f"결과를 모르는 주문 {no} 을 주문내역에서 찾지 못함 — 새 주문 안 냄")
                 return True
             sts = str(mine[0].get("ord_sts", "")).strip()
-            if sts in REJECTED or sts == FILLED:
+            if sts in REJECTED:
                 self.unresolved = None
-                text = ("앞선 주문이 늦게 체결됨 — 잔고가 기대와 같을 때만 새 주문" if sts == FILLED
-                        else f"앞선 주문 {mine[0].get('ord_sts_nm')} 확인 — 체결 안 됨")
-                self.j.write("event", clock=clock, ord_no=no, text=text)
+                self.j.write("event", clock=clock, ord_no=no, text=f"앞선 주문 {mine[0].get('ord_sts_nm')} 확인 — 체결 안 됨")
                 return False
+            if sts == FILLED:
+                prev_side, self.unresolved = self.unresolved_side, None
+                if prev_side != side:
+                    self.j.write("event", clock=clock, ord_no=no,
+                                 text=f"앞선 {prev_side} 주문이 늦게 체결됨 — 방향이 다른 새 주문은 잔고 관문에 맡김")
+                    return False
+                self._mark_unknown()
+                held = self.position()
+                exp = self.expected() if self.expected is not None else None
+                if held is not None and held == exp:
+                    self._halt(f"주문내역은 {side} 주문 {no} 체결, 잔고는 그대로({held:+d}) — 새 주문 안 냄")
+                else:
+                    self.j.write("event", clock=clock, ord_no=no,
+                                 text="같은 방향 앞선 주문이 늦게 체결됨 — 새 주문 안 냄, 잔고로 확인")
+                return True
         self._mark_unknown()
         self.unresolved_checks += 1
         self.j.write("event", clock=clock, ord_no=no, error=failed,
@@ -177,7 +219,7 @@ class MockAccountBroker:
         return True
 
     def _balance_gate(self, clock: str) -> bool:
-        """주문 직전 잔고가 실행이 아는 보유(주문 전)와 정확히 같을 때만 True. 못 읽어도 False.
+        """주문 직전 잔고가 실행기가 아는 보유(주문 전)와 정확히 같을 때만 True. 못 읽어도 False.
 
         앞선 주문이 사실은 접수돼 잔고가 바뀌었다면 여기서 걸린다 — 그때 실행기는 None 을 받고 잔고를 따른다
         (청산 재시도인데 잔고가 0 이면 청산된 것으로 기록)."""
@@ -204,14 +246,13 @@ class MockAccountBroker:
         return px
 
     def _fill(self, side: str, clock: str, why: str) -> float | None:
-        if clock < self.quiet_until:
-            self._mark_unknown()
-            self.j.write("event", clock=clock, text=f"결과를 모르는 주문 뒤 {QUIET_SECONDS}초 안 — 새 주문 안 냄 ({why})")
+        if self._blocked_by_blind(clock):
             return None
-        if self._blocked_by_unresolved(clock):
+        if self._blocked_by_unresolved(side, clock):
             return None
         if not self._balance_gate(clock):
             return None
+        pre = self.expected() if self.expected is not None else None
         try:
             with purpose("진입" if why.startswith("진입") else "청산"):
                 res = self.api.market_order(self.sym, side, 1, self.exec_cnd)
@@ -221,18 +262,23 @@ class MockAccountBroker:
             return None
         except Exception as e:
             # 응답 없음(TransportError)·처리 여부 모름(GatewayError)·그 밖 — 접수됐을 수 있다. 다시 보내지 않는다.
-            self._sent_but_unknown(clock)
+            self._sent_blind(side, pre)
             self.j.write("order", clock=clock, side=side, ok=False, unknown=True,
-                         text=f"주문 결과 모름 · {why} — 잔고로 확인", error=error_text(e))
+                         text=f"주문 결과 모름 · {why} — 잔고로 확인될 때까지 새 주문 없음", error=error_text(e))
             return None
         res = res if isinstance(res, dict) else {}
         ord_no = str(res.get("ord_no") or "").strip()
         self.j.write("order", clock=clock, side=side, ord_no=ord_no, msg_cd=res.get("msg_cd"),
                      msg_cntn=res.get("msg_cntn"), ok=bool(ord_no), text=f"시장가 1계약 · {why}")
         if not ord_no:
-            self._sent_but_unknown(clock)     # 응답은 왔지만 주문번호가 없다 — 접수 여부는 잔고로
+            self._sent_blind(side, pre)     # 응답은 왔지만 주문번호가 없다 — 접수 여부는 잔고로
             return None
         return self._confirm(side, ord_no, clock)
+
+    def _sent_blind(self, side: str, pre: int | None) -> None:
+        """번호 없이 결과를 모르는 주문 — 잔고가 그 주문 체결 뒤 보유를 보일 때까지 모든 주문을 막는 표시."""
+        self._mark_unknown()
+        self.blind = {"side": side, "pre": pre, "post": self._post(pre, side)}
 
     def _confirm(self, side: str, ord_no: str, clock: str) -> float | None:
         """주문내역에서 이 주문번호가 전체체결(6)이 될 때까지 0.5초씩 최대 30번 봅니다."""
@@ -265,8 +311,8 @@ class MockAccountBroker:
                 self.j.write("event", clock=clock, ord_no=ord_no, text=f"주문 {last.get('ord_sts_nm')}",
                              reject=last.get("ord_rejt_rsn"), raw=last)
                 return None
-        self._sent_but_unknown(clock)
-        self.unresolved, self.unresolved_checks = ord_no, 0
+        self._mark_unknown()
+        self.unresolved, self.unresolved_side, self.unresolved_checks = ord_no, side, 0
         self.j.write("event", clock=clock, ord_no=ord_no, text="15초 안에 전체체결 확인 안 됨 — 잔고로 확인",
                      raw=last)
         return None

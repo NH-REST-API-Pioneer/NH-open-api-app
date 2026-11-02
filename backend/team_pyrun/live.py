@@ -296,8 +296,10 @@ class LiveRun:
         - fill 이 None 을 돌려줬거나(`broker.needs_check`) 결과를 모르는 주문이 있었으면(`broker.unknown`) 바로 한 번
         - 기대 보유가 바뀌면(진입·청산, 0 이 된 때 포함) 5초 뒤 한 번
         - 보유 중이거나 결과를 모른 주문이 있었던 실행이면, 마지막 대조 뒤 30초마다
-        - 청산 재시도를 기다리는 중(`retry_after` 전)인데 계좌가 0 이면 멈추지 않는다 — 앞선 청산이 반영된 것이고,
-          재시도 때 잔고 관문이 0 을 보고 주문 없이 청산으로 기록한다"""
+        - 잔고가 번호 없이 결과를 모르던 주문(`broker.blind`)의 체결 뒤 보유와 같으면 그 주문이 들어간 증거:
+          실행기 보유와도 같으면(늦게 체결돼 받아들인 진입) 표시를 풀고, 청산 재시도를 기다리는 중이면
+          (`retry_after` 전) 멈추지 않는다 — 재시도 때 브로커가 표시를 풀고 주문 없이 청산으로 기록한다.
+          알려진 거절(업무 거부·8·9) 뒤의 청산 재시도에는 이 예외가 없다 — 계좌 0 이면 불일치로 멈춘다(R20)"""
         r, b = self.runner, self.broker
         if not self.orders or r.halted or not isinstance(b, MockAccountBroker):
             return
@@ -317,10 +319,14 @@ class LiveRun:
             self._recheck_at = None
         self._last_check = now
         held = b.position()         # purpose 「잔고확인」, 실패는 broker 가 기록하고 None
-        if held is None or held == exp:
+        if held is None:
             return
-        if held == 0 and r.pos is not None and clock < r.retry_after:
-            self.j.write("event", clock=clock, text="계좌 0 — 앞선 청산 주문이 반영된 것으로 보임. "
+        if held == exp:
+            if b.blind_landed(held):
+                b.lift_blind(clock, held)
+            return
+        if b.blind_landed(held) and r.pos is not None and clock < r.retry_after:
+            self.j.write("event", clock=clock, text=f"계좌 {held:+d} — 결과를 모르던 청산 주문이 반영됨. "
                                                     "재시도 때 주문 없이 청산으로 기록")
             return
         r.halt(f"잔고 불일치 · 기대 {exp:+d} · 계좌 {held:+d}")

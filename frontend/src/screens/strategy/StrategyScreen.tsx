@@ -28,6 +28,8 @@ import { StrategyList } from './StrategyList'
 import { blankDraft } from './strategyListParts'
 import { StrategySettings } from './StrategySettings'
 import { StrategyVerify } from './StrategyVerify'
+// 팀: 전략주문 › 「파이썬 전략」 탭
+import { PyRunScreen } from '../team/PyRunScreen'
 import { StrategyRun } from './StrategyRun'
 import { StrategyAnalysis } from './StrategyAnalysis'
 import { LeaveGuard } from './LeaveGuard'
@@ -252,6 +254,9 @@ export function StrategyScreen() {
           <StrategyVerify onOpenRun={(runId) => openRunsTab('run', { runId })} />
         ) : tab === '전략 진행' ? (
           <StrategyRun />
+        ) : tab === '파이썬 전략' ? (
+          /* 팀: 파이썬 전략 실행 화면(팀 코드) */
+          <PyRunScreen />
         ) : (
           <StrategyAnalysis />
         )}

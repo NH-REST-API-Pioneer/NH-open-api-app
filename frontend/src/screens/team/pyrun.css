@@ -1,0 +1,254 @@
+/* 팀: 전략주문 › 「파이썬 전략」만 쓰는 스타일.
+ *
+ * 자리·글자·색은 「전략 진행」(`StrategyRun.css`, `strategy.css` 의 `.run-*`)을 그대로 빌리고,
+ * 여기에는 그 화면에 없는 조각(파일 줄·차트·지금 판단)만 둡니다. 색과 간격은 기존 변수만 씁니다. */
+
+/* 왼쪽 카드 안의 짧은 안내(폴더 경로). 경로는 길어 낱말 단위가 아니라 아무 데서나 접습니다. */
+.pyrun-folder {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.pyrun-folder code {
+  color: var(--text-label);
+}
+
+/* 전략 파일 줄 — 실행 줄과 같은 얼굴이고, 못 쓰는 파일은 흐리게 섭니다. */
+.pyrun-file.is-broken .run-name-text {
+  color: var(--text-dim);
+}
+
+.pyrun-file-why {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--warn);
+  word-break: break-all;
+}
+
+.pyrun-side-acts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 실행 줄의 「⬇ 결과」. 줄 몸(보기 단추) 옆에 따로 섭니다 — 단추 안에 링크를 넣지 않습니다. */
+.pyrun-row-dl {
+  flex: 0 0 auto;
+  align-self: center;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+/* 진행 중 배지 — 「지금 여기」라 브랜드 바탕(`badge-brand`), 오류는 오류색 바탕입니다. */
+.badge.pyrun-state-error {
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+/* 머리 줄: 이름 · 배지 · 곁글, 오른쪽 끝에 단추들. */
+.pyrun-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.pyrun-head .vrf-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.pyrun-head > .badge {
+  flex: 0 0 auto;
+}
+
+.pyrun-head-acts {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.pyrun-head-acts .btn {
+  text-decoration: none;
+}
+
+.pyrun-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 결과를 모르는 주문이 남았다는 줄. 막지는 않고 알리는 경고색 글자입니다. */
+.pyrun-unresolved {
+  margin: 0;
+  font-size: 12px;
+  color: var(--warn);
+  word-break: break-all;
+}
+
+/* 차트와 지금 판단을 나란히 — 시안과 같은 비율(오른쪽 300). 좁으면 위아래입니다. */
+.pyrun-mid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+@container stg (max-width: 980px) {
+  .pyrun-mid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.stg .pyrun-mid > .card {
+  padding: 12px;
+}
+
+.pyrun-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pyrun-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+.pyrun-legend-marks {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+.pyrun-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.pyrun-chart-frame {
+  position: relative;
+}
+
+.pyrun-chart-box {
+  height: 380px;
+}
+
+.pyrun-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+/* 지금 판단 — 마지막 판정 봉의 까닭과 값, 그리고 Params. */
+.pyrun-decide-at {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pyrun-decide-why {
+  margin: 2px 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  word-break: keep-all;
+}
+
+.pyrun-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
+.pyrun-kv > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.pyrun-kv dt {
+  color: var(--text-label);
+}
+
+.pyrun-kv dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-all;
+}
+
+.run-card-title.pyrun-kv-title {
+  margin: 12px 0 6px;
+}
+
+.pyrun-kv-note {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 아래 표 위의 한 줄(꼬리만 보인다는 안내). */
+.pyrun-table-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 표 칸 — 숫자 열은 고정 폭 숫자, 글 열은 접힙니다. */
+.pyrun-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.pyrun-table td.pyrun-wrap {
+  text-align: left;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.pyrun-dim {
+  color: var(--text-dim);
+}
+
+.pyrun-warn {
+  color: var(--warn);
+}
+
+.pyrun-table .badge {
+  margin-right: 4px;
+}
+
+/* 확인창의 본문 한 단락. */
+.pyrun-confirm-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  word-break: keep-all;
+}

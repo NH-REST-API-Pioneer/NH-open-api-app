@@ -163,3 +163,4 @@ secrets*
 claude.md
 # 브레인스토밍 시안(superpowers) — 대화 중에만 쓰는 임시 화면
 .superpowers/
+.gstack/

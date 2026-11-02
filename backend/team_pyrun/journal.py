@@ -22,9 +22,12 @@ from backend.sessions.hours import now_kst
 
 #: 기록에 남기지 않는 칸 이름(소문자). 앞에 `occurs1_` 가 붙은 꼴도 같이 지웁니다.
 PRIVATE_KEYS = frozenset({
-    "ac_no", "ac_nm", "user_ip_addr", "ord_id",
+    "ac_no", "ac_nm", "user_ip_addr", "ord_id", "user_id", "ip_addr", "action_acnt",
     "access_token", "authorization", "app_key", "app_secret", "appkey", "appsecret",
 })
+# 팀: 해외·실시간 응답은 같은 뜻의 칸을 다르게 이름 붙입니다(예: `cust_acnt_no`, `user_ip_addr`).
+# 정확한 이름 목록으로는 빠지므로, 끝말이 이 꼴이면 가립니다.
+PRIVATE_SUFFIXES = ("ip_addr", "user_id", "ac_no", "ac_nm", "acnt_no", "acnt")
 _OCCURS = "occurs1_"
 
 
@@ -34,7 +37,7 @@ def _private(key: Any) -> bool:
     name = key.lower()
     if name.startswith(_OCCURS):
         name = name[len(_OCCURS):]
-    return name in PRIVATE_KEYS
+    return name in PRIVATE_KEYS or name.endswith(PRIVATE_SUFFIXES)
 
 
 def scrub(obj: Any) -> Any:

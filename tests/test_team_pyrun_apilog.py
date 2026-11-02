@@ -230,3 +230,14 @@ def test_오류_문구의_토큰과_키는_가려서_쓴다(tmp_path):
     row = json.loads(text)
     assert "Bearer ***" in row["error"] and "'access_token': '***'" in row["error"]
     assert len(row["error"]) <= 500 and row["ok"] is False and row["error"].startswith("TransportError: ")
+
+
+def test_해외_주문_응답의_사용자_IP_칸은_남지_않는다(tmp_path):
+    log = ApiLog(tmp_path / "a.jsonl", "r1")
+    log.record({"api_id": "overseas_order", "env": "paper", "request": {}, "http": 200, "ms": 1, "waited_ms": 0,
+                "reissued": False, "error": None, "code": None, "message": None,
+                "body": {"ord_no": "7", "Occurs1": [{"occurs1_user_id": "hong123", "occurs1_ip_addr": "1.2.3.4"}]}})
+    text = (tmp_path / "a.jsonl").read_text(encoding="utf-8")
+    assert "user_id" not in text and "ip_addr" not in text
+    assert "hong123" not in text and "1.2.3.4" not in text
+    assert _rows(tmp_path / "a.jsonl")[0]["body"]["ord_no"] == "7"

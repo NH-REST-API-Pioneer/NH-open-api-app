@@ -100,3 +100,13 @@ def test_요약_파일도_쓰는_순간_계좌_식별정보를_지운다(tmp_pat
     p = write_summary(tmp_path, {"account_start": {"occurs1_ac_no": "1", "fee": "690"}})
     text = p.read_text(encoding="utf-8")
     assert "ac_no" not in text and '"fee": "690"' in text
+
+
+def test_해외_응답의_사용자_IP_계좌_칸은_접미사로도_지운다(tmp_path):
+    j = Journal(tmp_path / "journal.jsonl")
+    j.write("event", raw={"occurs1_user_id": "u", "occurs1_ip_addr": "1.2.3.4", "action_acnt": "123",
+                          "cust_acnt_no": "9", "ord_no": "7", "fee": "690"})
+    text = (tmp_path / "journal.jsonl").read_text(encoding="utf-8")
+    for k in ("user_id", "ip_addr", "action_acnt", "acnt_no", "1.2.3.4"):
+        assert k not in text
+    assert '"ord_no": "7"' in text and '"fee": "690"' in text

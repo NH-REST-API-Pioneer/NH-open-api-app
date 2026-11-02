@@ -131,3 +131,45 @@ def test_모듈_이름들을_훑는_동안_다른_스레드가_import_해도_오
         t.join()
         for k in [k for k in list(sys.modules) if k.startswith("_churn_")]:
             sys.modules.pop(k, None)
+
+
+def test_future_import_없는_전략_파일은_주석이_문자열로_바뀌지_않는다(tmp_path):
+    import dataclasses
+
+    (tmp_path / "plain.py").write_text(
+        '''from dataclasses import dataclass
+
+TICK = 0.1
+TICK_VALUE = 1000
+TITLE = "t"
+NAME = "plain"
+
+
+@dataclass(frozen=True)
+class Params:
+    hold_min: int = 1
+    session_start: str = "090000"
+    session_end: str = "153500"
+    entry_start: str = "093000"
+    entry_end: str = "150000"
+    flatten_at: str = "153000"
+
+
+class S:
+    def __init__(self, p):
+        self.p = p
+        self.day = None
+        self.target = None
+
+    def on_minute(self, m): return []
+    def end_of_day(self): return []
+    def on_entry(self, *a): pass
+    def on_exit(self, *a): pass
+
+
+STRATEGY = S
+''',
+        encoding="utf-8",
+    )
+    got = load(tmp_path, "plain.py")
+    assert dataclasses.fields(got.params_cls)[0].type is int   # 문자열 "int" 가 아니다

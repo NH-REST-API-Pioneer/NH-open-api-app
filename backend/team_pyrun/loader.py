@@ -7,7 +7,7 @@ week02 처럼 **파일 하나가 전략 하나**이고, 파일 끝에 `STRATEGY`
 앱에도 `backend.strategy` 가 있어 이름이 겹칠 수 있습니다. 그래서 **불러오는 동안만**
 `sys.path`·`sys.modules` 를 바꿨다가 끝나면 그대로 되돌립니다(모듈 전역 잠금 안에서).
 같은 파일을 두 번 불러오면 서로 다른 모듈이 됩니다 — 파일을 고쳐도 돌던 실행은 처음 것 그대로입니다.
-대상 파일은 **해시한 바이트 그대로** 컴파일해 실행합니다(pyc 캐시를 쓰지 않아 해시와 코드가 어긋나지 않고, 폴더에 `__pycache__` 도 안 생깁니다. 옆 모듈의 pyc 도 쓰지 않습니다).
+대상 파일은 **해시한 바이트 그대로** 컴파일해 실행합니다(이 파일의 `from __future__` 를 물려주지 않습니다. pyc 캐시를 쓰지 않아 해시와 코드가 어긋나지 않고, 폴더에 `__pycache__` 도 안 생깁니다. 옆 모듈의 pyc 도 쓰지 않습니다).
 
 **전략 파일은 옆 모듈을 맨 위에서 import 해야 합니다.** 메서드 안에서 하는 import 는 불러온 뒤 폴더의 모듈이
 `sys.modules` 에서 빠지므로 실패합니다.
@@ -99,19 +99,21 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
     with _LOCK:
         saved_path = list(sys.path)
         saved_dwb = sys.dont_write_bytecode
-        sys.dont_write_bytecode = True   # 옆 모듈을 불러올 때도 폴더에 pyc 를 쓰지 않는다
-        # 폴더 안 파일 이름과 같은 이름의 모듈(앱·다른 곳에서 온 것)은 잠시 치워 둔다.
-        names = {p.stem for p in folder.glob("*.py")}
-        saved_mods = {n: sys.modules.pop(n) for n in names if n in sys.modules}
+        saved_mods: dict[str, ModuleType] = {}
         modname = f"team_pyrun_{uuid.uuid4().hex}"
-        try:
+        try:   # 아래 준비 중 어디서 실패해도 finally 가 전부 되돌린다
+            sys.dont_write_bytecode = True   # 옆 모듈을 불러올 때도 폴더에 pyc 를 쓰지 않는다
+            # 폴더 안 파일 이름과 같은 이름의 모듈(앱·다른 곳에서 온 것)은 잠시 치워 둔다.
+            for n in {p.stem for p in folder.glob("*.py")}:
+                if n in sys.modules:
+                    saved_mods[n] = sys.modules.pop(n)
             sys.path.insert(0, str(folder))
             spec = importlib.util.spec_from_file_location(modname, path)
             if spec is None or spec.loader is None:
                 raise LoadError(f"불러올 수 없는 파일입니다: {file}")
             module = importlib.util.module_from_spec(spec)
             sys.modules[modname] = module   # dataclass 등이 모듈을 이름으로 찾는다
-            exec(compile(data, str(path), "exec"), module.__dict__)   # 해시한 바이트 그대로
+            exec(compile(data, str(path), "exec", dont_inherit=True), module.__dict__)   # 해시한 바이트 그대로
             return module, sha
         except LoadError:
             raise

@@ -133,7 +133,7 @@ class FakeApi:
         self.fill = True
         self.order_error: Exception | None = None
         self.tick = ("0.1", "1000")
-        self.held_seq: list = []      # 있으면 잔고 조회마다 하나씩 꺼내 잔고로 씀 (반영이 늦는 잔고 흉내)
+        self.held_seq: list = []      # 있으면 잔고 조회마다 하나씩 꺼내 잔고로 씀 (반영이 늦는 잔고 흉내, 예외면 그 조회 실패)
         self.oi_error: Exception | None = None
 
     def _seen(self, api_id: str, body=None) -> None:
@@ -171,7 +171,10 @@ class FakeApi:
         if self.oi_error is not None:
             raise self.oi_error
         if self.held_seq:
-            self.held = self.held_seq.pop(0)
+            v = self.held_seq.pop(0)
+            if isinstance(v, Exception):      # 이 한 번만 조회 실패
+                raise v
+            self.held = v
         if not self.held:
             return []
         return [{"sym": SYM, "trd_div": "1" if self.held > 0 else "2", "opint_qty": str(abs(self.held)),
@@ -730,16 +733,25 @@ def test_브로커는_결과_없는_주문을_두_번까지_기다리고_세_번
     assert len(fake.orders) == 1 and len(halts) == 1 and "3번" in halts[0]
 
 
-def test_브로커는_앞선_주문이_늦게_체결됐어도_잔고가_기대와_같으면_주문을_낸다(tmp_path):
+def test_브로커는_앞선_주문이_늦게_체결됐어도_잔고가_그_주문_체결_뒤_보유이고_기대와_같으면_주문을_낸다(tmp_path):
+    # 수정 4회차: 방향이 달라도 그 주문의 pre·post 로 판단한다. 진입 매수(pre 0 → post 1)가 15초 안에 확인 안 됐지만
+    # 잔고 +1 을 보고 실행기가 보유로 받아들인(기대 +1) 뒤의 청산 매도 — 잔고 = post = 기대 → 보냄
     fake = FakeApi()
     fake.fill = False
-    b, halts = _hooked(fake, tmp_path, expected=1)
-    fake.held = 1                            # 늦게 체결된 진입이 지금 보유와 같다
-    b.fill("buy", 1335.0, "100000", "진입 (buy)")
+    exp = {"v": 0}
+    halts: list[str] = []
+    b = MockAccountBroker(fake, SYM, Journal(tmp_path / "j.jsonl"), sleep=lambda s: None, today=TODAY,
+                          expected=lambda: exp["v"], halt=halts.append)
+    assert b.fill("buy", 1335.0, "100000", "진입 (buy)") is None
+    assert (b.unresolved, b.unresolved_pre, b.unresolved_post) == ("0000000001", 0, 1)
+    fake.held = 1                            # 늦게 체결된 진입이 잔고에 보임
+    exp["v"] = 1                             # 실행기가 잔고 +1 을 보고 보유로 받아들임
     fake.history = [{"ord_no": "1", "ord_sts": "6", "exec_pric": "1335.0"}]
     fake.fill = True
     assert b.fill("sell", 1335.0, "100010", "청산 · 손절") == 1334.9
-    assert len(fake.orders) == 2 and b.unresolved is None and halts == []
+    assert len(fake.orders) == 2 and b.unresolved is None and b.blind is None and halts == []
+    assert any("앞선 buy 주문 체결이 잔고(+1)에 반영됨" in r.get("text", "")
+               for r in Journal(tmp_path / "j.jsonl").read())
 
 
 def test_브로커는_앞선_주문이_늦게_체결돼_잔고가_달라졌으면_주문하지_않는다(tmp_path):
@@ -1114,3 +1126,92 @@ def test_전체체결인데_체결가가_비고_잔고가_10초_넘게_늦어도
         run.step(at(x))
     assert [o[1] for o in fake.orders] == ["buy", "sell"]           # 같은 청산을 두 번 내지 않는다
     assert len(run.runner.trades) == 1
+
+
+# ---------------------------------------------------------------- 수정 4회차: 체결(6)로 보인 결과 모름 주문은 방향과 상관없이 pre·post 로만
+def test_같은_방향_체결인데_잔고를_못_읽고_계속_그대로면_두_번째_매도는_없다(tmp_path):
+    """A: 손절 매도 #2 가 15초 안에 확인 안 됨(pre +1 → post 0). 재시도 자리에서 주문내역은 #2 체결인데
+    그때 잔고 조회가 한 번 실패하고, 그 뒤 잔고는 두 재시도 자리를 넘겨 +1 로 늦는다."""
+    run, fake, out = entered(tmp_path)
+    fake.fill = False
+    fake.last = "1334.0"
+    run.step(at("090110"))
+    assert [o[1] for o in fake.orders] == ["buy", "sell"] and run.runner.retry_after == "090120"
+    assert (run.broker.unresolved, run.broker.unresolved_pre, run.broker.unresolved_post) == ("0000000002", 1, 0)
+    fake.history = [{"ord_no": "2", "ord_sts": "6", "exec_pric": "1334.0"}]
+    fake.fill = True                         # 두 번째 매도가 나가면 체결돼 보이게
+    real_hist = fake.order_history
+    failed = {"done": False}
+
+    def hist_then_balance_fails_once():
+        rows = real_hist()
+        if not failed["done"]:
+            failed["done"] = True
+            fake.held_seq = [TransportError("domestic_open-interest", "시간 초과")]   # 바로 다음 잔고 조회만 실패
+        return rows
+    fake.order_history = hist_then_balance_fails_once
+    run.step(at("090120"))                   # 주문내역 6 · 잔고 못 읽음 → 막고 표시는 남김
+    assert len(fake.orders) == 2 and failed["done"]
+    for x in ("090121", "090130", "090131", "090140", "090150"):
+        run.step(at(x))
+    assert [o[1] for o in fake.orders] == ["buy", "sell"]           # 같은 청산을 두 번 내지 않는다
+    assert run.runner.halted and run.state == "확인 필요"
+    assert run.broker.blind == {"side": "sell", "pre": 1, "post": 0, "ord_no": "0000000002"}   # 표시는 남아 있음
+    run.finish("중지")
+    assert len(fake.orders) == 2
+    s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert s["unresolved_order"]["ord_no"] == "0000000002"
+
+
+def test_다른_방향_앞선_매수가_체결로_보여도_잔고가_그_전_그대로면_매도하지_않고_멈춘다(tmp_path):
+    """B: 진입 매수 #1 이 15초 안에 확인 안 됨, 그때 잔고 0 → 신호 건너뜀(기대 0 = pre). 대조가 +1 을 보기 전에
+    매도 신호 — 주문내역은 #1 체결, 잔고는 아직 0. 실행기가 모르는 매수 체결이 있으니 매도를 보내면 안 된다."""
+    fake = FakeApi()
+    fake.fill = False
+    run, fake, out = entered(tmp_path, fake=fake)
+    assert len(fake.orders) == 1 and run.runner.pos is None
+    assert (run.broker.unresolved, run.broker.unresolved_pre, run.broker.unresolved_post) == ("0000000001", 0, 1)
+    fake.history = [{"ord_no": "1", "ord_sts": "6", "exec_pric": "1335.1"}]
+    fake.fill = True
+    run.runner.strat.script["090100"] = "sell"
+    fake.chart = [bar("090000"), bar("090100")]
+    run.step(at("090204"))
+    assert [o[1] for o in fake.orders] == ["buy"]                    # 매도 없음
+    assert run.state == "확인 필요" and "주문내역은 buy 주문 0000000001 체결" in run.runner.halted
+
+
+def test_브로커_다른_방향_체결인데_잔고를_못_읽으면_체결_뒤_보유가_보일_때까지_막는다(tmp_path):
+    """B 의 잔고 못 읽음 갈래: 표시를 버리지 않고 blind 로 바꿔 계속 막는다."""
+    fake = FakeApi()
+    fake.fill = False
+    b, halts = _hooked(fake, tmp_path, expected=0)
+    b.fill("buy", 1335.0, "100000", "진입 (buy)")
+    fake.history = [{"ord_no": "1", "ord_sts": "6", "exec_pric": "1335.1"}]
+    fake.fill = True
+    fake.held_seq = [TransportError("domestic_open-interest", "시간 초과")]
+    assert b.fill("sell", 1335.0, "100010", "진입 (sell)") is None
+    assert len(fake.orders) == 1 and halts == []
+    fake.oi_error = TransportError("domestic_open-interest", "시간 초과")
+    assert b.fill("sell", 1335.0, "100020", "진입 (sell)") is None   # 또 못 읽음 → 막음
+    assert len(fake.orders) == 1 and halts == []
+    fake.oi_error = None
+    fake.held = 0
+    assert b.fill("sell", 1335.0, "100030", "진입 (sell)") is None   # 잔고 그대로(= 기대) → 멈춤
+    assert len(fake.orders) == 1 and len(halts) == 1
+    assert b.unresolved is None and b.blind == {"side": "buy", "pre": 0, "post": 1, "ord_no": "0000000001"}
+
+
+def test_다른_방향_앞선_매수_체결이_잔고에_보이지만_실행기가_모르면_관문이_막고_대조가_멈춘다(tmp_path):
+    """잔고 = 그 주문 체결 뒤 보유(+1) 면 표시는 풀리지만, 실행기 기대(0)와 다르니 잔고 관문이 막고 대조가 멈춘다."""
+    fake = FakeApi()
+    fake.fill = False
+    run, fake, out = entered(tmp_path, fake=fake)
+    fake.history = [{"ord_no": "1", "ord_sts": "6", "exec_pric": "1335.1"}]
+    fake.fill = True
+    run.runner.strat.script["090100"] = "sell"
+    fake.chart = [bar("090000"), bar("090100")]
+    fake.held_seq = [0, 1]                   # 30초 대조는 아직 0, 주문 직전엔 +1 이 보임
+    run.step(at("090204"))
+    assert [o[1] for o in fake.orders] == ["buy"]                    # 매도 없음
+    assert run.broker.unresolved is None and run.broker.blind is None
+    assert run.state == "확인 필요" and "잔고 불일치" in run.runner.halted

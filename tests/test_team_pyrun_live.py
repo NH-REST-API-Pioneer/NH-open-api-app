@@ -133,6 +133,8 @@ class FakeApi:
         self.fill = True
         self.order_error: Exception | None = None
         self.tick = ("0.1", "1000")
+        self.held_seq: list = []      # 있으면 잔고 조회마다 하나씩 꺼내 잔고로 씀 (반영이 늦는 잔고 흉내)
+        self.oi_error: Exception | None = None
 
     def _seen(self, api_id: str, body=None) -> None:
         self.calls.append(api_id)
@@ -166,6 +168,10 @@ class FakeApi:
 
     def open_interest(self):
         self._seen("domestic_open-interest")
+        if self.oi_error is not None:
+            raise self.oi_error
+        if self.held_seq:
+            self.held = self.held_seq.pop(0)
         if not self.held:
             return []
         return [{"sym": SYM, "trd_div": "1" if self.held > 0 else "2", "opint_qty": str(abs(self.held)),
@@ -452,11 +458,12 @@ def test_업무_거부는_알려진_거절로_적는다(tmp_path):
 
 def test_보유_중_잔고가_어긋나면_확인_필요로_멈춘다(tmp_path):
     run, fake, out = entered(tmp_path)
+    run.step(at("090110"))                 # 진입 5초 뒤 한 번 대조 (맞음)
     n_oi = fake.count("domestic_open-interest")
-    run.step(at("090120"))                 # 30초 안 됨 → 대조 안 함
+    run.step(at("090120"))                 # 그 뒤 30초 안 됨 → 대조 안 함
     assert fake.count("domestic_open-interest") == n_oi
     fake.held = 2                          # 남의 주문이 섞임
-    run.step(at("090134"))
+    run.step(at("090140"))
     assert run.state == "확인 필요" and run_json(out)["state"] == "확인 필요"
     assert "잔고 불일치" in run.runner.halted and "+2" in run.runner.halted
     assert any("멈춤" in r.get("text", "") for r in journal(out))
@@ -688,17 +695,74 @@ def test_브로커_avg_exec_pric_가_있으면_그걸_쓴다(tmp_path):
     assert b.fill("buy", 1335.0, "090104", "진입 (buy)") == 1335.25
 
 
-def test_브로커는_결과를_모르는_앞선_주문이_있으면_새_주문을_내지_않는다(tmp_path):
+def _hooked(fake, tmp_path, expected=0):
+    """실행처럼 기대 보유·멈춤 갈고리를 꽂은 브로커와, 멈춤 까닭 목록."""
+    halts: list[str] = []
+    b = MockAccountBroker(fake, SYM, Journal(tmp_path / "j.jsonl"), sleep=lambda s: None, today=TODAY,
+                          expected=lambda: expected, halt=halts.append)
+    return b, halts
+
+
+def test_브로커는_결과를_모르는_주문이_주문내역에_없으면_멈춘다(tmp_path):
     fake = FakeApi()
-    fake.fill = False                       # 접수됐지만 주문내역에 결과가 안 나타남
-    b = MockAccountBroker(fake, SYM, Journal(tmp_path / "j.jsonl"), sleep=lambda s: None, today=TODAY)
+    fake.fill = False                       # 접수됐지만 주문내역에 안 나타남 (첫 쪽에 없을 수도)
+    b, halts = _hooked(fake, tmp_path)
     assert b.fill("sell", 1335.0, "100000", "청산 · 손절") is None
     assert b.unresolved == "0000000001"
     assert b.fill("sell", 1335.0, "100010", "청산 · 손절") is None      # 10초 뒤 재시도 자리
-    assert len(fake.orders) == 1 and b.unknown is True
-    fake.history = [{"ord_no": "1", "ord_sts": "6", "exec_pric": "1335.0"}]   # 늦게 체결됨
-    assert b.fill("sell", 1335.0, "100020", "청산 · 손절") is None
-    assert len(fake.orders) == 1 and b.unresolved is None               # 잔고로 확인하라고 None
+    assert len(fake.orders) == 1 and b.unknown is True and b.needs_check is True
+    assert len(halts) == 1 and "찾지 못함" in halts[0]                   # 손절이 조용히 막히지 않게 멈춤
+
+
+def test_브로커는_결과_없는_주문을_두_번까지_기다리고_세_번째엔_멈춘다(tmp_path):
+    fake = FakeApi()
+    fake.fill = False
+    b, halts = _hooked(fake, tmp_path)
+    b.fill("sell", 1335.0, "100000", "청산 · 손절")
+    fake.history = [{"ord_no": "1", "ord_sts": "1", "ord_sts_nm": "접수"}]      # 아직 결과 없음
+    for i, t in enumerate(("100010", "100020")):
+        assert b.fill("sell", 1335.0, t, "청산 · 손절") is None and halts == [], i
+    assert b.fill("sell", 1335.0, "100030", "청산 · 손절") is None
+    assert len(fake.orders) == 1 and len(halts) == 1 and "3번" in halts[0]
+
+
+def test_브로커는_앞선_주문이_늦게_체결됐어도_잔고가_기대와_같으면_주문을_낸다(tmp_path):
+    fake = FakeApi()
+    fake.fill = False
+    b, halts = _hooked(fake, tmp_path, expected=1)
+    fake.held = 1                            # 늦게 체결된 진입이 지금 보유와 같다
+    b.fill("buy", 1335.0, "100000", "진입 (buy)")
+    fake.history = [{"ord_no": "1", "ord_sts": "6", "exec_pric": "1335.0"}]
+    fake.fill = True
+    assert b.fill("sell", 1335.0, "100010", "청산 · 손절") == 1334.9
+    assert len(fake.orders) == 2 and b.unresolved is None and halts == []
+
+
+def test_브로커는_앞선_주문이_늦게_체결돼_잔고가_달라졌으면_주문하지_않는다(tmp_path):
+    fake = FakeApi()
+    fake.fill = False
+    b, halts = _hooked(fake, tmp_path, expected=1)
+    fake.held = 1
+    b.fill("sell", 1335.0, "100000", "청산 · 손절")
+    fake.history = [{"ord_no": "1", "ord_sts": "6", "exec_pric": "1335.0"}]
+    fake.held = 0                            # 그 청산이 늦게 체결돼 계좌는 0
+    assert b.fill("sell", 1335.0, "100010", "청산 · 손절") is None
+    assert len(fake.orders) == 1
+
+
+def test_브로커_잔고_관문_기대와_다르거나_못_읽으면_보내지_않는다(tmp_path):
+    fake = FakeApi()
+    b, halts = _hooked(fake, tmp_path, expected=0)
+    fake.held = 1                            # 진입 전인데 계좌에 +1 (앞선 주문이 늦게 들어옴)
+    assert b.fill("buy", 1335.0, "100000", "진입 (buy)") is None
+    assert fake.orders == [] and b.needs_check is True and b.unknown is True
+    fake.held = 0
+    fake.oi_error = TransportError("domestic_open-interest", "시간 초과")
+    assert b.fill("buy", 1335.0, "100100", "진입 (buy)") is None
+    assert fake.orders == []
+    fake.oi_error = None
+    assert b.fill("buy", 1335.0, "100200", "진입 (buy)") == 1335.1
+    assert len(fake.orders) == 1
 
 
 def test_브로커는_앞선_주문이_거부로_확인되면_새_주문을_낸다(tmp_path):
@@ -717,6 +781,134 @@ def test_청산이_15초_안에_확인_안_되면_재시도해도_겹쳐_주문�
     fake.last = "1334.0"
     run.step(at("090110"))
     assert [o[1] for o in fake.orders] == ["buy", "sell"] and run.runner.retry_after == "090120"
-    run.step(at("090120"))                  # 10초 뒤 재시도 자리 — 앞선 주문 결과를 모르니 새 주문 없음
+    run.step(at("090120"))                  # 10초 뒤 재시도 자리 — 앞선 주문이 주문내역에 없으니 멈춤
     run.step(at("090131"))
-    assert len(fake.orders) == 2 and run.runner.halted is None and run.runner.pos is not None
+    assert len(fake.orders) == 2 and run.runner.pos is not None
+    assert "찾지 못함" in run.runner.halted and run.state == "확인 필요"
+
+
+# ---------------------------------------------------------------- 수정 1회차: 결과를 모르는 주문 뒤 겹쳐 주문하지 않기
+def _exit_unknown(tmp_path):
+    """09:01:10 손절 청산 주문이 응답 없음(TransportError) — 실제로는 접수됐지만 잔고 반영이 늦어 +1 로 읽힘."""
+    run, fake, out = entered(tmp_path)
+    fake.fill = False
+    fake.order_error = TransportError("domestic_order", "시간 초과")
+    fake.last = "1334.0"
+    run.step(at("090110"))
+    assert [o[1] for o in fake.orders] == ["buy", "sell"] and run.runner.retry_after == "090120"
+    assert run.runner.pos is not None and run.runner.halted is None
+    fake.order_error = None
+    return run, fake, out
+
+
+def test_청산_응답이_없고_잔고가_늦게_0이_되면_재시도에서_주문없이_청산으로_기록한다(tmp_path):
+    run, fake, out = _exit_unknown(tmp_path)
+    fake.held = 0                           # 앞선 청산이 이제 잔고에 반영됨
+    run.step(at("090115"))
+    run.step(at("090120"))                  # 재시도 자리: 잔고 관문이 0 을 보고 보내지 않음
+    assert len(fake.orders) == 2
+    assert run.runner.pos is None and len(run.runner.trades) == 1 and run.runner.trades[0]["exit"] == 1334.0
+    assert run.runner.halted is None and run.state == "진행 중"
+    run.step(at("090200"))
+    assert len(fake.orders) == 2
+
+
+def test_청산_재시도_대기_중_계좌가_0으로_읽혀도_멈추지_않고_재시도에서_기록한다(tmp_path):
+    run, fake, out = entered(tmp_path)
+    fake.fill = False
+    fake.order_error = TransportError("domestic_order", "시간 초과")
+    fake.last = "1334.0"
+    # 090110: 대조(5초 뒤) +1 · 관문 +1 · 주문 뒤 실행기 확인 +1 · 바로 대조 0(이제 반영됨)
+    fake.held_seq = [1, 1, 1, 0]
+    run.step(at("090110"))
+    assert run.runner.halted is None and run.runner.pos is not None
+    fake.order_error = None
+    run.step(at("090120"))
+    assert len(fake.orders) == 2 and run.runner.pos is None and run.runner.halted is None
+
+
+def test_청산_재시도_대기_중_정리_요청도_새_주문을_내지_않는다(tmp_path):
+    run, fake, out = _exit_unknown(tmp_path)  # 잔고는 아직 +1 로 읽힘
+    run.request_flatten()
+    run.step(at("090112"))
+    assert len(fake.orders) == 2 and run.runner.pos is not None
+    fake.held = 0
+    run.step(at("090122"))
+    assert len(fake.orders) == 2 and run.runner.pos is None and len(run.runner.trades) == 1
+
+
+def test_진입_응답이_없어_신호를_버린_뒤_늦게_체결되면_새_진입을_내지_않는다(tmp_path):
+    fake = FakeApi()
+    fake.fill = False
+    fake.order_error = TransportError("domestic_order", "시간 초과")
+    run, fake, out = entered(tmp_path, fake=fake)
+    assert len(fake.orders) == 1 and run.runner.pos is None           # 잔고 0 → 신호 버림
+    fake.order_error = None
+    fake.fill = True
+    fake.held = 1                                                     # 앞선 진입이 늦게 체결됨
+    run.runner.strat.script["090100"] = "buy"
+    fake.chart = [bar("090000"), bar("090100")]
+    run.step(at("090204"))                                            # 새 진입 신호
+    assert len(fake.orders) == 1
+    assert run.runner.halted and "잔고 불일치" in run.runner.halted and run.state == "확인 필요"
+
+
+def test_업무_거부로_주문이_None_이어도_바로_잔고를_대조한다(tmp_path):
+    fake = FakeApi()
+    fake.fill = False
+    fake.order_error = BusinessError("domestic_order", "1234", "주문 가능 수량 부족", {})
+    run, fake, out = make_run(tmp_path, fake=fake)
+    run.prepare()
+    run.runner.strat.script = {"090000": "buy"}
+    fake.chart = [bar("090000")]
+    fake.held_seq = [0, 0, -1]               # 관문 0 · 실행기 확인 0 · 바로 대조 -1 (남의 주문)
+    run.step(at("090104"))
+    assert run.runner.halted and "-1" in run.runner.halted and len(fake.orders) == 1
+
+
+def test_보유가_바뀌면_5초_뒤_한_번_대조한다_청산으로_0이_된_때도(tmp_path):
+    run, fake, out = entered(tmp_path)
+    n = fake.count("domestic_open-interest")
+    run.step(at("090108"))
+    assert fake.count("domestic_open-interest") == n
+    run.step(at("090109"))
+    assert fake.count("domestic_open-interest") == n + 1
+    fake.last = "1334.0"
+    run.step(at("090150"))                   # 손절 청산 → 기대 0
+    assert run.runner.pos is None
+    fake.held = 1                            # 계좌엔 아직(또는 남의 주문으로) +1
+    fake.last = "1335.0"
+    run.step(at("090154"))
+    assert run.runner.halted is None
+    run.step(at("090155"))                   # 0 이 되고 5초 뒤 대조
+    assert run.runner.halted and "기대 +0" in run.runner.halted and "+1" in run.runner.halted
+
+
+def test_끝_잔고가_기대와_다르면_확인_필요로_남긴다(tmp_path):
+    run, fake, out = entered(tmp_path)
+    real = fake.market_order
+
+    def flatten_then_someone_buys(*a, **k):
+        res = real(*a, **k)
+        fake.held = 1                        # 정리는 체결됐지만 계좌엔 +1 이 남음
+        return res
+    fake.market_order = flatten_then_someone_buys
+    run.finish("중지")
+    assert len(fake.orders) == 2 and run.state == "끝"
+    assert run.ended_reason == "중지 · 정리 안 함 — 확인 필요: 끝 잔고 불일치 · 기대 +0 · 계좌 +1"
+    s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert "끝 잔고 불일치" in s["halted"] and "끝 잔고 불일치" in run_json(out)["halted"]
+
+
+def test_끝_잔고를_못_읽으면_확인_필요로_남긴다(tmp_path):
+    run, fake, out = entered(tmp_path)
+    real = fake.market_order
+
+    def flatten_then_balance_fails(*a, **k):
+        res = real(*a, **k)
+        fake.oi_error = TransportError("domestic_open-interest", "시간 초과")
+        return res
+    fake.market_order = flatten_then_balance_fails
+    run.finish("장 끝")
+    assert len(fake.orders) == 2
+    assert "확인 필요: 끝 잔고 불일치" in run.ended_reason and "확인 안 됨" in run.ended_reason

@@ -16,10 +16,12 @@ week02 와 다른 점
 
 - 시작할 때 이 종목 잔고가 있으면 **정리하지 않고 시작을 거부**합니다(누구의 잔고인지 모르므로).
 - 전략 파일의 sha256 과 Params 를 처음 기록에 남깁니다.
-- 보유 중엔 30초마다 계좌 잔고를 대조해, 실행이 아는 보유와 다르면 **주문을 멈추고 「확인 필요」**로 둡니다.
-  결과를 모르는 주문(응답 없음 등)이 있었으면 그 즉시 한 번, 그리고 보유가 없어도 30초마다 대조합니다.
+- 계좌 잔고를 대조해 실행이 아는 보유와 다르면 **주문을 멈추고 「확인 필요」**로 둡니다: 보유 중 30초마다,
+  보유가 바뀌고 5초 뒤, 체결을 못 받은 주문 바로 뒤. 결과를 모르는 주문이 있었으면 보유가 없어도 30초마다.
+  대조는 주문이 나갈 수 있는 현재가·정리 요청보다 **먼저** 합니다. 주문 직전엔 브로커가 잔고 관문을 한 번 더 봅니다.
 - 멈춘(`halted`) 채로 끝나면 보유를 정리하지 않습니다 — 끝 까닭에 「정리 안 함 — 확인 필요」를 붙입니다.
 - 끝낼 때(orders) 정리 주문 전에 잔고를 한 번 대조합니다. 다르면 정리하지 않고 「확인 필요」.
+  정리 뒤 끝 잔고가 기대(보통 0)와 다르거나 못 읽어도 「확인 필요」를 붙입니다.
 - 조회 실패는 기록하고 다음 초에 다시. 전략 코드 예외는 실행을 「오류」로 끝냅니다(보유는 정리).
 
 시각은 생성자에 넣은 `now()`(한국시간)만 씁니다. 상태(`대기` `진행 중` `확인 필요` `끝` `오류`)가 바뀔 때마다
@@ -37,7 +39,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal
@@ -55,6 +57,7 @@ WARMUP_BARS = 1500          # 준비 봉 개수
 LIVE_BARS = 10              # 장중 1분봉 조회 개수
 MINUTE_DELAY_SECONDS = 3    # 분이 바뀌고 이만큼 뒤에 막 끝난 1분봉을 받음
 RECONCILE_SECONDS = 30      # 보유 중 잔고 대조 간격
+RECHECK_SECONDS = 5         # 기대 보유가 바뀐 뒤 잔고를 한 번 더 대조하기까지
 STEP_SECONDS = 1.0          # step 간격
 
 #: `status()` 에 들어가는 실행기 상태 칸(`Runner.snapshot`) — 읽다 실패하면 이 칸들을 None 으로 채웁니다.
@@ -120,6 +123,7 @@ class LiveRun:
         self._seen_minute = ""                         # 1분봉을 받아 넣은 마지막 분 (HHMM)
         self._last_check: datetime | None = None       # 마지막 잔고 대조 시각
         self._last_exp = 0                             # 마지막 step 의 기대 보유
+        self._recheck_at: datetime | None = None       # 기대 보유가 바뀐 뒤 한 번 더 대조할 시각
         self._day_obj: object | None = None            # 앞선 손절 수를 넣어 둔 전략의 하루 상태 객체
 
     # ------------------------------------------------------------ 시작
@@ -165,7 +169,8 @@ class LiveRun:
         self._write_run()
         # 3. 모의계좌: 시작 잔고가 0 이어야 한다
         if self.orders:
-            broker = MockAccountBroker(api, sym, j, sleep=self.sleep, today=today)
+            broker = MockAccountBroker(api, sym, j, sleep=self.sleep, today=today,
+                                       expected=r.expected_position, halt=r.halt)
             held = broker.position()
             if held is None:
                 raise StartRefused("시작 잔고를 확인하지 못했습니다")
@@ -223,17 +228,18 @@ class LiveRun:
             return
         self._set_state("확인 필요" if r.halted else "진행 중")
         try:
-            # 조회 실패는 아래 두 함수가 안에서 잡는다 — 여기까지 올라오는 예외는 전략·실행기 코드에서 난 것
+            # 조회 실패는 아래 함수들이 안에서 잡는다 — 여기까지 올라오는 예외는 전략·실행기 코드에서 난 것
             self._feed_minutes(now, clock)
+            self._reconcile(now, clock)     # 주문이 나갈 수 있는 현재가·정리 요청보다 먼저 대조
             self._feed_price(clock)
             if self._flatten_requested:
                 self._flatten_requested = False
                 self.j.write("event", clock=clock, text="정리 요청 — 보유가 있으면 정리")
                 r.force_flat(clock)
+            self._reconcile(now, clock)     # 체결을 못 받은 주문(fill → None)이 있었으면 바로 한 번 더
         except Exception as e:
             self._finish(f"오류: {error_text(e)}", now)
             return
-        self._reconcile(now, clock)
         if r.halted:
             self._set_state("확인 필요")
 
@@ -287,9 +293,11 @@ class LiveRun:
     def _reconcile(self, now: datetime, clock: str) -> None:
         """모의계좌 잔고와 실행이 아는 보유를 대조한다. 다르면 멈춤(이후 주문 없음) → 「확인 필요」.
 
-        - 결과를 모르는 주문이 막 있었으면(`broker.unknown`) 바로 한 번
+        - fill 이 None 을 돌려줬거나(`broker.needs_check`) 결과를 모르는 주문이 있었으면(`broker.unknown`) 바로 한 번
+        - 기대 보유가 바뀌면(진입·청산, 0 이 된 때 포함) 5초 뒤 한 번
         - 보유 중이거나 결과를 모른 주문이 있었던 실행이면, 마지막 대조 뒤 30초마다
-        - 보유가 막 바뀐 때는 잔고 반영을 기다리느라 30초를 새로 센다"""
+        - 청산 재시도를 기다리는 중(`retry_after` 전)인데 계좌가 0 이면 멈추지 않는다 — 앞선 청산이 반영된 것이고,
+          재시도 때 잔고 관문이 0 을 보고 주문 없이 청산으로 기록한다"""
         r, b = self.runner, self.broker
         if not self.orders or r.halted or not isinstance(b, MockAccountBroker):
             return
@@ -297,15 +305,23 @@ class LiveRun:
         if exp != self._last_exp:
             self._last_exp = exp
             self._last_check = now
-        urgent = b.unknown
+            self._recheck_at = now + timedelta(seconds=RECHECK_SECONDS)
+        urgent = b.unknown or b.needs_check
+        soon = self._recheck_at is not None and now >= self._recheck_at
         due = ((exp != 0 or b.had_unknown) and self._last_check is not None
                and (now - self._last_check).total_seconds() >= RECONCILE_SECONDS)
-        if not (urgent or due):
+        if not (urgent or soon or due):
             return
-        b.unknown = False
+        b.unknown = b.needs_check = False
+        if soon:
+            self._recheck_at = None
         self._last_check = now
         held = b.position()         # purpose 「잔고확인」, 실패는 broker 가 기록하고 None
         if held is None or held == exp:
+            return
+        if held == 0 and r.pos is not None and clock < r.retry_after:
+            self.j.write("event", clock=clock, text="계좌 0 — 앞선 청산 주문이 반영된 것으로 보임. "
+                                                    "재시도 때 주문 없이 청산으로 기록")
             return
         r.halt(f"잔고 불일치 · 기대 {exp:+d} · 계좌 {held:+d}")
         self.j.write("event", clock=clock, text="확인 필요 — 계좌 잔고가 실행과 달라 주문을 멈춤. 계좌를 직접 확인하세요")
@@ -352,13 +368,18 @@ class LiveRun:
                 r.halt(f"정리 중 오류 — {error_text(e)}")
             if r.pos is not None and not r.halted:
                 r.halt(f"끝낼 때 청산되지 않음 · 보유 {r.expected_position():+d}")
+        if isinstance(b, MockAccountBroker):
+            held = b.position()
+            got = "확인 안 됨" if held is None else f"{held:+d}"
+            j.write("event", clock=clock, text=f"끝 잔고 {self.sym} {got}계약")
+            if not r.halted and held != r.expected_position():
+                # 정리했는데도 계좌가 실행이 아는 보유와 다르다(못 읽은 경우 포함) — 깨끗한 끝으로 보이지 않게
+                r.halt(f"끝 잔고 불일치 · 기대 {r.expected_position():+d} · 계좌 {got}")
         if r.halted:
             reason = f"{reason} · 정리 안 함 — 확인 필요: {r.halted}"
             j.write("event", clock=clock, text=f"정리하지 않고 끝냄 — 보유는 그대로 남겨 두었습니다. "
                                                f"계좌에서 직접 확인하세요 ({r.halted})")
         if isinstance(b, MockAccountBroker):
-            held = b.position()
-            j.write("event", clock=clock, text=f"끝 잔고 {self.sym} {'확인 안 됨' if held is None else f'{held:+d}'}계약")
             self.account_end = b.account(clock, "끝 (수수료·확정손익은 하루 누적)")
         data: dict[str, Any] = {
             "sym": self.sym, "trades": r.trades, "summary": summarize(r.trades),

@@ -1,0 +1,2 @@
+STRATEGY = (
+def oops(:

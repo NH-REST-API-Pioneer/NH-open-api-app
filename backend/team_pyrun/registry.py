@@ -20,14 +20,20 @@
   (`run.json` 의 `name` 은 그대로).
 - 같은 이름이 이미 있으면(폴더든 도는 실행이든) `_2`, `_3` …
 
+준비 중인 실행(`prepare()` 가 `LiveRun` 의 잠금을 쥐고 네트워크를 부르는 동안)에는 `stop`·`stop_all` 이 `request_stop()` 만 합니다 —
+직접 `finish()` 를 부르면 그 잠금에서 기다리게 되므로. 준비가 끝난 `start()` 가 중지 요청을 보면 스레드를 시작하지 않고
+스스로 끝냅니다(주문 없음).
+
 스레드 규칙: `LiveRun.finish()` 는 체결 확인 때문에 15초 넘게 걸릴 수 있어, 실행 스레드가 살아 있는 동안엔 요청·종료
 스레드에서 직접 부르지 않고 `request_stop()` 만 합니다. 스레드가 없는 실행(`start_thread=False`, 시험)만 바로 `finish("중지")`.
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -44,10 +50,14 @@ from backend.team_pyrun.apilog import ApiLog, bind, purpose
 from backend.team_pyrun.broker import error_text
 from backend.team_pyrun.journal import Journal, count_stops, summarize, write_summary
 from backend.team_pyrun.live import END_TIME, LiveRun, RunSpec, StartRefused
-from backend.team_pyrun.loader import load, strategies_dir
+from backend.team_pyrun.loader import LoadError, load, strategies_dir
 
 #: 실행 id(= 폴더 이름)·종목 코드가 쓸 수 있는 글자 — 경로 문자가 섞이지 못하게 한다.
 ID_PATTERN = re.compile(r"[0-9A-Za-z_]+")
+logger = logging.getLogger(__name__)
+
+#: `RunSpec.mode` 로 쓸 수 있는 값 — 폴더 이름에 들어가므로 이 둘만 받는다.
+MODES = ("orders", "paper")
 #: 같은 종목의 주문 실행이 이미 있다고 보는 상태.
 BUSY_STATES = ("대기", "진행 중", "확인 필요")
 #: 끝난 상태 — `recover()` 가 건드리지 않는다.
@@ -75,10 +85,14 @@ class Registry:
         self._lock = threading.Lock()                  # 시작 검사 + 폴더 정하기를 한 줄로
         self._runs: dict[str, LiveRun] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._preparing: set[str] = set()              # 준비 중(스레드를 시작하기 전)인 실행 id
+        self._stop_asked: set[str] = set()             # 준비 중에 중지 요청이 들어온 실행 id
 
     # ------------------------------------------------------------ 시작
     def start(self, spec: RunSpec) -> dict:
-        """실행을 세우고 그 `status()` 를 돌려준다. 거부되면 `StartRefused`(전략 파일 문제는 `LoadError`)."""
+        """실행을 세우고 그 `status()` 를 돌려준다. 거부되면 `StartRefused`(전략 파일·생성 실패 포함)."""
+        if spec.mode not in MODES:
+            raise StartRefused(f"실행 방식이 올바르지 않습니다: {spec.mode!r} (orders 또는 paper)")
         now = to_kst(self._now())
         if now.weekday() >= 5:
             raise StartRefused("주말에는 실행을 시작할 수 없습니다 (토·일은 장이 없습니다)")
@@ -90,9 +104,14 @@ class Registry:
             raise StartRefused(f"전략 파일 이름이 올바르지 않습니다: {spec.file!r}")
         if spec.sym is not None and not ID_PATTERN.fullmatch(spec.sym):
             raise StartRefused(f"종목 코드가 올바르지 않습니다: {spec.sym!r}")
-        loaded = load(self.strategies, spec.file)
+        try:
+            loaded = load(self.strategies, spec.file)
+        except LoadError as e:
+            raise StartRefused(f"전략 파일을 불러오지 못했습니다 — {e}") from e
         nearest = self._nearest()                       # 잠금 밖 — 조회가 느려도 다른 시작을 막지 않게
         sym = spec.sym or nearest
+        if sym is None:     # 종목을 모르면 같은 종목 검사·손절 이어받기를 할 수 없다 — 열어 두고 가지 않는다
+            raise StartRefused("최근월물을 알 수 없습니다 — 잠시 뒤 다시 시작하세요")
         today = now.strftime("%Y%m%d")
         with self._lock:
             if spec.mode == "orders" and sym is not None:
@@ -103,28 +122,48 @@ class Registry:
                                            "끝낸 뒤에 시작하세요")
             run_id = self._new_id(today, loaded.name, spec, nearest)
             stops_before = count_stops(self._folders_of(today, loaded.name, sym), today)
-            run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
-                          sleep=self._sleep, stops_before=stops_before)
+            try:    # 전략 생성자(`loaded.new()`)가 여기서 불린다 — 고장 나도 빈 폴더를 남기지 않고 거부로
+                run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
+                              sleep=self._sleep, stops_before=stops_before)
+            except Exception as e:
+                shutil.rmtree(self.root / run_id, ignore_errors=True)
+                raise StartRefused(f"전략을 만들지 못했습니다 — {type(e).__name__}: {e}") from e
             run.sym = sym                               # 준비가 끝나기 전에도 같은 종목 검사가 풀린 종목으로 비교하게
             self._runs[run_id] = run                    # 준비 중에도 같은 종목 검사에 걸리도록 잠금 안에서 등록
+            self._preparing.add(run_id)
         try:
             run.prepare()                               # 부른 스레드에서. 오래 걸려도 잠금은 이미 풀었다
         except StartRefused:
             with self._lock:
                 self._runs.pop(run_id, None)            # run.json(끝·시작 거부)은 폴더에 남았다
+                self._preparing.discard(run_id)
+                self._stop_asked.discard(run_id)
             raise
-        if self._start_thread:
-            thread = threading.Thread(target=run.run_forever, name=f"pyrun-{run_id}", daemon=True)
-            with self._lock:
+        with self._lock:
+            stop_asked = run_id in self._stop_asked
+            if self._start_thread and not stop_asked:
+                thread = threading.Thread(target=run.run_forever, name=f"pyrun-{run_id}", daemon=True)
                 self._threads[run_id] = thread
-            thread.start()
+                thread.start()
+                self._preparing.discard(run_id)
+        if stop_asked:      # 준비 중에 중지 요청이 왔다 — 스레드 없이 여기서 끝낸다(주문 없음). 그동안은 준비 중으로 남겨 둔다
+            try:
+                run.finish("중지")
+            finally:
+                with self._lock:
+                    self._preparing.discard(run_id)
+                    self._stop_asked.discard(run_id)
+        elif not self._start_thread:
+            with self._lock:
+                self._preparing.discard(run_id)
         return run.status()
 
     def _nearest(self) -> str | None:
-        """최근월물 종목. 조회가 안 되면 None(그때는 `prepare()` 가 같은 조회로 거부하고 까닭을 남긴다)."""
+        """최근월물 종목. 조회가 안 되면 경고를 남기고 None(종목도 안 준 시작은 `start` 가 거부한다)."""
         try:
             return self._api.nearest_usd(self._api.all_futures())
-        except Exception:
+        except Exception as e:
+            logger.warning("최근월물 조회 실패 — %s", error_text(e))
             return None
 
     def _new_id(self, today: str, name: str, spec: RunSpec, nearest: str | None) -> str:
@@ -195,6 +234,10 @@ class Registry:
         스레드가 없는 실행(시험)만 여기서 바로 끝낸다."""
         run = self._run(run_id)
         run.request_stop()
+        with self._lock:
+            if run_id in self._preparing:       # 준비 중 — 잠금에서 기다리지 않는다. 준비를 마친 start() 가 끝낸다
+                self._stop_asked.add(run_id)
+                return
         if not self._alive(run_id) and run.state not in FINISHED_STATES:
             run.finish("중지")
 
@@ -208,10 +251,15 @@ class Registry:
         deadline = time.monotonic() + timeout
         with self._lock:
             runs = list(self._runs.items())
+            preparing = set(self._preparing)
+            self._stop_asked |= preparing
         for _, run in runs:
             run.request_stop()
         pending: list[str] = []
         for run_id, run in runs:
+            if run_id in preparing:                     # 준비 중 — 기다리지도 직접 끝내지도 않는다
+                pending.append(run_id)
+                continue
             thread = self._threads.get(run_id)
             if thread is not None and thread.is_alive():
                 thread.join(max(0.0, deadline - time.monotonic()))

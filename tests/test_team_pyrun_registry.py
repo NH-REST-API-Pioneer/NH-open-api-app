@@ -257,10 +257,12 @@ def test_파일_이름과_종목_코드에_경로_문자가_있으면_거부(tmp
     reg, fake, _ = make_registry(tmp_path)
     for spec in (RunSpec("../fake.py", "paper", None), RunSpec("sub/fake.py", "paper", None),
                  RunSpec("fake.txt", "paper", None), RunSpec("fake.py", "paper", "../x"),
-                 RunSpec("fake.py", "paper", "A75 6")):
+                 RunSpec("fake.py", "paper", "A75 6"), RunSpec("fake.py", "../../x", None),
+                 RunSpec("fake.py", "live", None), RunSpec("fake.py", "", None)):
         with pytest.raises(StartRefused):
             reg.start(spec)
     assert not (tmp_path / "pyruns").exists() and fake.calls == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["strategies"]        # 폴더 밖에도 아무것도 안 생겼다
 
 
 def test_동시에_시작해도_같은_종목_주문_실행은_하나만(tmp_path):
@@ -282,3 +284,97 @@ def test_동시에_시작해도_같은_종목_주문_실행은_하나만(tmp_pat
         t.join()
     assert [r for r in results if isinstance(r, str)] == [f"{TODAY}_fake_orders"]
     assert len([r for r in results if isinstance(r, StartRefused)]) == 5
+
+
+def test_최근월물을_모르면_종목을_안_준_시작은_거부하고_경고를_남긴다(tmp_path, caplog):
+    reg, fake, _ = make_registry(tmp_path)
+
+    def boom(prd="75"):
+        raise RuntimeError("조회 실패")
+    fake.all_futures = boom
+    for mode in ("orders", "paper"):
+        with caplog.at_level("WARNING", logger="backend.team_pyrun.registry"):
+            with pytest.raises(StartRefused, match="최근월물을 알 수 없습니다 — 잠시 뒤 다시 시작하세요"):
+                reg.start(RunSpec("fake.py", mode, None))
+    assert "조회 실패" in caplog.text
+    assert not (tmp_path / "pyruns").exists() and fake.orders == []
+    # 종목을 직접 줬으면 최근월물을 몰라도 시작할 수 있다(폴더 이름에 종목이 붙는다)
+    assert reg.start(RunSpec("fake.py", "paper", SYM))["id"] == f"{TODAY}_fake_paper_{SYM}"
+
+
+class BlockingApi(FakeApi):
+    """`product_detail`(준비 중의 네트워크 호출) 에서 `release` 가 열릴 때까지 멈춘다."""
+
+    def __init__(self):
+        super().__init__()
+        self.entered, self.release = threading.Event(), threading.Event()
+
+    def product_detail(self):
+        self.entered.set()
+        assert self.release.wait(10)
+        return super().product_detail()
+
+
+def test_준비_중인_실행은_stop_과_stop_all_이_기다리지_않고_준비가_끝나면_주문_없이_끝난다(tmp_path):
+    fake = BlockingApi()
+    reg, _, _ = make_registry(tmp_path, fake=fake)
+    started: dict = {}
+    starter = threading.Thread(target=lambda: started.update(status=reg.start(RunSpec("fake.py", "orders", None))))
+    starter.start()
+    assert fake.entered.wait(5)                                       # prepare() 가 LiveRun 잠금을 쥔 채 멈춰 있다
+    run_id = f"{TODAY}_fake_orders"
+    run = reg.get(run_id)
+    assert run is not None and run.state == "대기"
+
+    def promptly(call, *args):
+        t = threading.Thread(target=call, args=args)
+        t0 = time.monotonic()
+        t.start()
+        t.join(2)
+        assert not t.is_alive(), "준비 중인 실행의 중지 요청이 잠금에서 기다린다"
+        return time.monotonic() - t0
+    assert promptly(reg.stop, run_id) < 1
+    results: list = []
+    assert promptly(lambda: results.append(reg.stop_all(timeout=0.2))) < 1
+    assert results == [[run_id]]                                      # 아직 끝나지 않은 실행으로 알린다
+    assert run.state == "대기"                                         # 직접 끝내지 않았다
+    fake.release.set()
+    starter.join(5)
+    assert not starter.is_alive()
+    assert started["status"]["state"] == "끝" and run.ended_reason == "중지"
+    assert read_json(tmp_path / "pyruns" / run_id / "run.json")["state"] == "끝"
+    assert fake.orders == [] and fake.count("domestic_order") == 0
+    assert not [t for t in threading.enumerate() if t.name == f"pyrun-{run_id}"]      # 스레드 없이 끝났다
+    # 끝났으니 같은 종목을 다시 세울 수 있다
+    assert reg.start(RunSpec("fake.py", "orders", None))["id"] == f"{run_id}_2"
+
+
+def test_준비_중_중지_요청이_없으면_스레드가_돈다(tmp_path):
+    reg, fake, _ = make_registry(tmp_path, start_thread=True, sleep=lambda s: time.sleep(0.01))
+    status = reg.start(RunSpec("fake.py", "paper", None))
+    assert status["state"] == "대기"
+    assert [t for t in threading.enumerate() if t.name == f"pyrun-{status['id']}"]
+    assert reg.stop_all(timeout=5) == []
+
+
+def test_전략_생성자가_고장나면_빈_폴더_없이_StartRefused(tmp_path):
+    reg, fake, _ = make_registry(tmp_path)
+    src = STRATEGY_SRC.replace("    def __init__(self, p):\n        self.p = p\n",
+                               "    def __init__(self, p):\n        COUNT[0] += 1\n"
+                               "        if COUNT[0] > 1:\n            raise ValueError('두 번째부터 고장')\n        self.p = p\n")
+    src = src.replace('NAME = "fake"', 'NAME = "flaky"\nCOUNT = [0]')
+    assert "COUNT[0] += 1" in src
+    (tmp_path / "strategies" / "flaky.py").write_text(src, encoding="utf-8")
+    with pytest.raises(StartRefused, match="전략을 만들지 못했습니다 — ValueError: 두 번째부터 고장"):
+        reg.start(RunSpec("flaky.py", "paper", None))
+    assert list((tmp_path / "pyruns").iterdir()) == [] and reg.get(f"{TODAY}_flaky_paper") is None
+    assert reg.list() == []
+
+
+def test_전략_파일을_못_불러오면_LoadError_가_아니라_StartRefused(tmp_path):
+    reg, fake, _ = make_registry(tmp_path)
+    (tmp_path / "strategies" / "bad.py").write_text("def (:\n", encoding="utf-8")
+    for file, text in (("bad.py", "SyntaxError"), ("없는.py", "파일이 없습니다")):
+        with pytest.raises(StartRefused, match=f"전략 파일을 불러오지 못했습니다 — .*{text}"):
+            reg.start(RunSpec(file, "paper", None))
+    assert fake.calls == [] and not (tmp_path / "pyruns").exists()

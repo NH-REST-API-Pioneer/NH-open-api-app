@@ -280,8 +280,14 @@ class Registry:
             return closed
         for folder in sorted(self.root.iterdir()):
             data = _read_run_json(folder) if folder.is_dir() else None
-            if data is None or data.get("state") in FINISHED_STATES or folder.name in self._runs:
+            if data is None or data.get("state") in FINISHED_STATES:
                 continue
+            # run.json 을 **읽은 뒤에** 잠금 안에서 이 앱의 실행인지 본다: 실행은 등록(잠금 안)된 다음에야 run.json 을 쓰므로
+            # (`start` → `prepare`), run.json 을 읽을 수 있었다면 그 실행은 이미 `_runs` 에 있다. 앱이 뜬 직후의 `POST /runs` 가
+            # 세운 실행(상태 「대기」)을 「끝·재시작」으로 닫지 않는다.
+            with self._lock:
+                if folder.name in self._runs:
+                    continue
             try:
                 self._close(folder, data)
             except Exception as e:      # 폴더 하나가 안 닫혀도 나머지는 닫는다

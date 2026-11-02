@@ -22,7 +22,9 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from backend.nh_api import client as nh_client
@@ -34,7 +36,43 @@ from backend.team_pyrun.registry import FINISHED_STATES, registry
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/team/pyrun", tags=["team-pyrun"])
+#: 쓰는(상태를 바꾸는) 메서드 — 다른 사이트 검사를 받는다.
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+#: `Origin` 으로 받는 호스트 이름 — 포트는 가리지 않는다(개발 서버는 :5173 에서 프록시로 부른다).
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+FOREIGN_SITE = "다른 사이트에서 온 요청은 받지 않습니다"
+
+
+def refuse_cross_site(request: Request) -> None:
+    """다른 사이트의 웹 페이지가 사용자 브라우저로 보낸 쓰기 요청을 막는다(CSRF) — 이 앱은 로컬에서 돌아 로그인이 없고,
+    흘려보낸 `POST .../flatten` 한 번이 모의계좌 주문이 된다. 조회(GET)는 보지 않는다.
+
+    - `Sec-Fetch-Site: cross-site` 면 거절.
+    - `Origin` 이 있는데 호스트가 localhost·127.0.0.1·::1 이 아니면(`null` 포함) 거절.
+    - `Origin` 이 없으면 통과(curl·시험은 보내지 않는다). 브라우저의 쓰기 요청에는 늘 붙는다."""
+    if request.method not in UNSAFE_METHODS:
+        return
+    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+        raise HTTPException(status_code=403, detail=FOREIGN_SITE)
+    origin = request.headers.get("origin")
+    if origin is not None:
+        try:
+            host = urlparse(origin).hostname
+        except ValueError:
+            host = None
+        if host not in LOCAL_HOSTS:
+            raise HTTPException(status_code=403, detail=FOREIGN_SITE)
+
+
+def require_json(request: Request) -> None:
+    """본문을 JSON 으로만 받는다(415). `text/plain`·폼 본문은 다른 사이트의 「단순 요청」이라 사전 확인 없이 갈 수 있다 —
+    JSON 이어야 하면 브라우저가 먼저 사전 확인(CORS preflight)을 하고, 이 앱은 그것을 허락하지 않는다."""
+    media = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media != "application/json":
+        raise HTTPException(status_code=415, detail="본문은 application/json 으로 보내야 합니다")
+
+
+router = APIRouter(prefix="/api/team/pyrun", tags=["team-pyrun"], dependencies=[Depends(refuse_cross_site)])
 
 #: 내려받는 zip 에 넣는 파일(이 순서). `run.json` 과 그 밖의 파일은 넣지 않는다.
 DOWNLOAD_FILES = ("journal.jsonl", "summary.json", "api_log.jsonl")
@@ -86,7 +124,7 @@ def list_runs() -> dict[str, Any]:
     return {"runs": registry().list()}
 
 
-@router.post("/runs", status_code=201)
+@router.post("/runs", status_code=201, dependencies=[Depends(require_json)])
 def start_run(body: StartBody) -> dict[str, Any]:
     """실행을 세운다. 거부는 409(문장 그대로 `detail`). 준비(준비 봉 조회)가 끝난 뒤에 돌아온다."""
     try:

@@ -261,3 +261,59 @@ def test_라우터와_수명_연결이_main_에_있다():
     paths = app.openapi()["paths"]
     assert f"{BASE}/runs" in paths and f"{BASE}/runs/{{run_id}}/download" in paths
     assert app_main.pyrun_startup is routes_mod.pyrun_startup and app_main.pyrun_shutdown is routes_mod.pyrun_shutdown
+
+
+# ---------------------------------------------------------------- 다른 사이트에서 온 요청 막기 (R24)
+DENIED = {"detail": "다른 사이트에서 온 요청은 받지 않습니다"}
+UNSAFE = [("post", "/runs/20261030_bb_replay/stop", None), ("post", "/runs/20261030_bb_replay/flatten", None),
+          ("post", "/runs", {"file": "fake.py", "mode": "paper", "sym": None}),
+          ("post", "/strategies/reload", None)]
+
+
+@pytest.fixture
+def untouched(reg, monkeypatch):
+    """레지스트리의 쓰는 메서드가 불리면 시험이 실패하게 한다(거절된 요청은 닿지 않아야 한다)."""
+    def boom(*a, **k):
+        raise AssertionError("거절됐어야 할 요청이 레지스트리에 닿았다")
+    for name in ("start", "stop", "flatten", "get"):
+        monkeypatch.setattr(reg, name, boom)
+    return reg
+
+
+@pytest.mark.parametrize("method,path,body", UNSAFE)
+def test_다른_사이트_Origin_은_403_이고_레지스트리에_닿지_않는다(client, untouched, method, path, body):
+    for origin in ("https://evil.example", "http://localhost.evil.com", "null", "http://192.168.0.5:5173"):
+        r = getattr(client, method)(f"{BASE}{path}", json=body, headers={"Origin": origin})
+        assert (r.status_code, r.json()) == (403, DENIED), origin
+
+
+@pytest.mark.parametrize("method,path,body", UNSAFE)
+def test_Sec_Fetch_Site_cross_site_는_403(client, untouched, method, path, body):
+    r = getattr(client, method)(f"{BASE}{path}", json=body, headers={"Sec-Fetch-Site": "cross-site"})
+    assert (r.status_code, r.json()) == (403, DENIED)
+    # Origin 이 로컬이어도 브라우저가 cross-site 라고 하면 거절
+    r = getattr(client, method)(f"{BASE}{path}", json=body,
+                                headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://localhost:5173"})
+    assert r.status_code == 403
+
+
+def test_로컬_Origin_과_Origin_없음은_받는다(client, reg):
+    run_id = client.post(f"{BASE}/runs", json={"file": "fake.py", "mode": "paper", "sym": None}).json()["id"]   # Origin 없음
+    for origin in ("http://localhost:5173", "http://127.0.0.1:8000", "http://localhost", "http://[::1]:5173"):
+        r = client.post(f"{BASE}/runs/{run_id}/flatten", headers={"Origin": origin})
+        assert r.status_code == 204, origin
+    r = client.post(f"{BASE}/runs/{run_id}/stop", headers={"Origin": "http://localhost:5173", "Sec-Fetch-Site": "same-site"})
+    assert r.status_code == 204
+    assert client.post(f"{BASE}/runs/{run_id}/stop", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 204
+
+
+def test_조회는_Origin_을_가리지_않는다(client):
+    assert client.get(f"{BASE}/runs", headers={"Origin": "https://evil.example"}).status_code == 200
+
+
+def test_시작은_JSON_Content_Type_만_받는다(client, untouched):
+    body = '{"file": "fake.py", "mode": "paper", "sym": null}'
+    for ctype in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"):
+        r = client.post(f"{BASE}/runs", content=body, headers={"Content-Type": ctype})
+        assert r.status_code == 415, ctype
+    assert client.post(f"{BASE}/runs", content=body).status_code == 415             # 헤더 없음도 JSON 이 아니다

@@ -378,3 +378,15 @@ def test_전략_파일을_못_불러오면_LoadError_가_아니라_StartRefused(
         with pytest.raises(StartRefused, match=f"전략 파일을 불러오지 못했습니다 — .*{text}"):
             reg.start(RunSpec(file, "paper", None))
     assert fake.calls == [] and not (tmp_path / "pyruns").exists()
+
+
+def test_켜질_때_정리는_방금_세운_실행의_run_json_을_건드리지_않는다(tmp_path):
+    """앱이 뜬 직후 시작한 실행(상태 「대기」)을 복구가 「끝·재시작」으로 닫으면 안 된다(R25)."""
+    reg, _, _ = make_registry(tmp_path)
+    run = reg.start(RunSpec("fake.py", "paper", None))
+    path = tmp_path / "pyruns" / run["id"] / "run.json"
+    before = path.read_text(encoding="utf-8")
+    stale = write_run(tmp_path / "pyruns", "20261029_fake_paper", state="진행 중")
+    assert reg.recover() == ["20261029_fake_paper"]
+    assert path.read_text(encoding="utf-8") == before and reg.get(run["id"]).state == "대기"
+    assert read_json(stale / "run.json")["ended_reason"] == "재시작"

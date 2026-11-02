@@ -151,9 +151,11 @@ def count_stops(folders: Iterable[Path], date: str) -> int:
 
 
 def write_summary(folder: Path, data: dict) -> Path:
-    """`summary.json` 을 쓰고 경로를 돌려줍니다(들여쓰기 1, 한글 그대로)."""
+    """`summary.json` 을 쓰고 경로를 돌려줍니다(들여쓰기 1, 한글 그대로).
+
+    내려받는 결과이므로 journal 과 같이 쓰는 순간 `scrub` 합니다(계좌 응답 원본이 들어올 수 있음)."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "summary.json"
-    path.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(scrub(data), indent=1, ensure_ascii=False), encoding="utf-8")
     return path

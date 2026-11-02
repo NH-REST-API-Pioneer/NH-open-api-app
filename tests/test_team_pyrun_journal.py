@@ -94,3 +94,9 @@ def test_요약_파일은_들여쓰기_1(tmp_path):
     p = write_summary(tmp_path / "run", {"한글": 1})
     assert p == tmp_path / "run" / "summary.json"
     assert p.read_text(encoding="utf-8") == '{\n "한글": 1\n}'
+
+
+def test_요약_파일도_쓰는_순간_계좌_식별정보를_지운다(tmp_path):
+    p = write_summary(tmp_path, {"account_start": {"occurs1_ac_no": "1", "fee": "690"}})
+    text = p.read_text(encoding="utf-8")
+    assert "ac_no" not in text and '"fee": "690"' in text

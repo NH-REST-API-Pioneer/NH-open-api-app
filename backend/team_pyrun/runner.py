@@ -29,6 +29,8 @@ RETRY_SECONDS = 10      # 청산 체결이 확인 안 됐을 때 다시 시도�
 
 #: 신호 줄의 지표 칸에서 뺄 봉 칸 — 나머지 숫자 칸이 지표값이다.
 _BAR_FIELDS = frozenset({"date", "start", "end", "open", "high", "low", "close", "volume"})
+#: 신호 줄이 이미 쓰는 칸 이름 — 지표 칸이 같은 이름이면 `write` 가 오류를 내거나 값을 덮으므로 지표에서 뺀다.
+_SIGNAL_KEYS = frozenset({"kind", "at", "clock", "date", "bar", "close", "side", "reason", "stop_ticks"})
 
 
 @dataclass(frozen=True)
@@ -172,7 +174,8 @@ class Runner:
             b = s.bar
             fields = asdict(b) if is_dataclass(b) else dict(vars(b))
             ind = {k: round(v, 3) for k, v in fields.items()
-                   if k not in _BAR_FIELDS and isinstance(v, (int, float)) and not isinstance(v, bool)}
+                   if k not in _BAR_FIELDS and k not in _SIGNAL_KEYS and isinstance(k, str)
+                   and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)}
             self.last_signal = self.j.write("signal", clock=b.end, date=b.date, bar=b.start, close=b.close,
                                             side=s.side, reason=s.reason, stop_ticks=s.stop_ticks, **ind)
             if s.side and self.pos is None and self.pending is None and b.date == self.live_date:
@@ -287,6 +290,9 @@ class Runner:
         """화면에 보일 지금 상태."""
         pos = self.pos
         day = [t for t in self.trades if t.get("exit_date") == self.live_date]
+        # 하루 손절 수는 전략이 진입을 막는 데 쓰는 값(`day.stops`)을 따른다 — 앞선 실행의 손절도 들어 있다
+        own_stops = sum(1 for t in day if t["reason"] == "손절")
+        day_stops = getattr(getattr(self.strat, "day", None), "stops", None)
         time_exit = None
         if pos is not None:
             m = _minutes_of(pos["entry_time"]) + self.p.hold_min
@@ -299,7 +305,7 @@ class Runner:
             "target": self.strat.target,
             "time_exit_at": time_exit,
             "today_pnl": sum(t["pnl"] for t in day),
-            "stops": sum(1 for t in day if t["reason"] == "손절"),
+            "stops": own_stops if day_stops is None else day_stops,
             "max_stops": getattr(self.p, "max_stops_per_day", None),
             "halted": self.halted,
             "last_signal": self.last_signal,

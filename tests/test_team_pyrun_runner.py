@@ -98,8 +98,12 @@ class FakeBroker:
 
 def _runner(tmp_path, broker, side="buy"):
     p = SimpleNamespace(entry_start="093000", entry_end="150000", flatten_at="153000", hold_min=120)
-    strat = SimpleNamespace(p=p, target=None, day=SimpleNamespace(stops=0, realized_pnl=0),
-                            on_entry=lambda: None, on_exit=lambda pnl, stopped: None)
+    day = SimpleNamespace(stops=0, realized_pnl=0)
+
+    def on_exit(pnl, stopped):      # 실제 전략처럼 하루 손절 수를 센다
+        day.stops += int(stopped)
+
+    strat = SimpleNamespace(p=p, target=None, day=day, on_entry=lambda: None, on_exit=on_exit)
     r = Runner(strat, Journal(tmp_path / "journal.jsonl"), broker, 0.1, 1000)
     r.live_date = "20261030"
     r.pos = {"side": side, "entry": 1335.0, "entry_time": "100000", "signal_time": "095900",
@@ -174,7 +178,47 @@ def test_snapshot_칸(tmp_path):
     assert {"position", "entry", "stop", "stop_ticks", "target", "time_exit_at", "today_pnl", "stops",
             "max_stops", "halted", "last_signal"} <= set(s)
     assert (s["position"], s["entry"], s["stop"], s["time_exit_at"]) == (1, 1335.0, 1334.0, "120000")
+    assert (s["today_pnl"], s["stops"], s["halted"], s["last_signal"]) == (0, 0, None, None)
     assert r.expected_position() == 1
+
+
+def test_snapshot_보유_없음과_오늘_손익(tmp_path):
+    r = _runner(tmp_path, FakeBroker(fill_px=1333.0))
+    r.on_price("100100", 1333.0)                    # 손절로 청산: 1335.0 -> 1333.0 = -20틱 -> -20000원
+    s = r.snapshot()
+    assert (s["position"], s["entry"], s["stop"], s["stop_ticks"], s["time_exit_at"]) == (0, None, None, None, None)
+    assert s["today_pnl"] == -20000 and s["stops"] == 1
+
+
+def test_snapshot_손절_수는_전략의_하루_값을_따른다(tmp_path):
+    r = _runner(tmp_path, FakeBroker())
+    r.strat.day.stops = 1                           # 앞선 실행이 낸 손절을 이어받은 값
+    assert r.snapshot()["stops"] == 1 and r.snapshot()["today_pnl"] == 0
+
+
+def test_신호_줄의_지표_칸은_예약_칸과_비정상_수를_뺀다(tmp_path):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Bar:
+        date: str = "20261030"
+        start: str = "100000"
+        end: str = "100500"
+        close: float = 1335.0
+        reason: float = 7.0         # 신호 줄의 reason 과 같은 이름
+        kind: float = 1.0
+        rsi: float = 55.55555
+        bad: float = float("nan")
+        big: float = float("inf")
+
+    sig = SimpleNamespace(bar=Bar(), side=None, reason="신호 없음", stop_ticks=None)
+    r = _runner(tmp_path, FakeBroker())
+    r.strat.on_minute = lambda m: [sig]
+    r.on_minute_closed(Minute("20261030", "100400", 1, 1, 1, 1, 0))
+    row = Journal(tmp_path / "journal.jsonl").read()[-1]
+    assert row["kind"] == "signal" and row["reason"] == "신호 없음" and row["rsi"] == 55.556
+    assert "bad" not in row and "big" not in row
+    assert r.last_signal == row
 
 
 # ---------------------------------------------------------------- 작은 함수

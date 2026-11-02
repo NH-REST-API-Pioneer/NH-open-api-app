@@ -173,3 +173,14 @@ STRATEGY = S
     )
     got = load(tmp_path, "plain.py")
     assert dataclasses.fields(got.params_cls)[0].type is int   # 문자열 "int" 가 아니다
+
+
+def test_NAME_에_경로_문자가_있으면_거절한다(tmp_path):
+    src = (FOLDER / "strategy_bb.py").read_text(encoding="utf-8")
+    for bad in ("../x", "a b", "", "한글"):
+        (tmp_path / "strategy.py").write_text((FOLDER / "strategy.py").read_text(encoding="utf-8"), encoding="utf-8")
+        (tmp_path / "strategy_bb.py").write_text(src.replace('NAME = "bb"', f'NAME = "{bad}"'), encoding="utf-8")
+        with pytest.raises(LoadError, match="NAME"):
+            load(tmp_path, "strategy_bb.py")
+        row = next(f for f in scan(tmp_path) if f.file == "strategy_bb.py")
+        assert row.error and "NAME" in row.error

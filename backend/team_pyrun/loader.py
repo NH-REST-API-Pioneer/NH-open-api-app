@@ -22,6 +22,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import os
+import re
 import sys
 import threading
 import uuid
@@ -38,6 +39,9 @@ REQUIRED_PARAMS = ("session_start", "session_end", "entry_start", "entry_end", "
 REQUIRED_INSTANCE = ("on_minute", "end_of_day", "on_entry", "on_exit", "day", "p", "target")
 #: 모듈 필수 이름.
 REQUIRED_MODULE = ("STRATEGY", "TITLE", "NAME", "TICK", "TICK_VALUE")
+
+#: `NAME` 은 실행 기록 폴더 이름에 들어간다 — 경로 문자가 섞이지 못하게 한다.
+NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 
 #: sys.path·sys.modules 를 건드리는 동안 다른 불러오기가 끼어들지 못하게 한다.
 _LOCK = threading.Lock()
@@ -137,6 +141,8 @@ def _check(module: ModuleType) -> tuple[type, type, object]:
         missing.append("Params")
     if missing:
         raise LoadError("모듈에 없는 이름: " + ", ".join(missing))
+    if not NAME_PATTERN.fullmatch(str(module.NAME)):
+        raise LoadError(f"NAME 은 영문·숫자·_·- 만 쓸 수 있습니다: {module.NAME!r}")
     strategy_cls, params_cls = module.STRATEGY, module.Params
     try:
         params = params_cls()

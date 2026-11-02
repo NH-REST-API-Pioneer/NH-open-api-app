@@ -82,19 +82,28 @@ class Journal:
         parts.pop()     # 마지막 조각: 줄바꿈 뒤의 빈 값이거나 덜 쓰인 줄
         return parts
 
-    def read(self, after: int = 0) -> list[dict]:
-        """`after` 번째 줄 다음부터의 기록. 읽을 수 없는(깨진) 줄은 건너뜁니다.
+    def tail(self, after: int = 0) -> tuple[list[dict], int]:
+        """`after` 번째 줄 다음부터의 기록과, 다음에 이어 읽을 번호(= 그 시점의 줄 수)를 **한 번에** 돌려줍니다.
 
-        줄 번호는 깨진 줄도 세므로, 이어 읽을 때는 읽은 개수가 아니라 `count()` 를 `after` 로 쓰세요."""
+        읽는 도중에 줄이 늘어도 기록과 번호가 같은 순간의 것이라, 이어 읽을 때 빠지거나 겹치지 않습니다.
+        읽을 수 없는(깨진) 줄은 건너뛰되 번호에는 셉니다."""
+        lines = self._lines()
         rows: list[dict] = []
-        for raw in self._lines()[max(after, 0):]:
+        for raw in lines[max(after, 0):]:
             try:
                 row = json.loads(raw.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
                 continue
             if isinstance(row, dict):
                 rows.append(row)
-        return rows
+        return rows, len(lines)
+
+    def read(self, after: int = 0) -> list[dict]:
+        """`after` 번째 줄 다음부터의 기록. 읽을 수 없는(깨진) 줄은 건너뜁니다.
+
+        줄 번호는 깨진 줄도 세므로, 이어 읽을 때는 읽은 개수가 아니라 `count()` 를 `after` 로 쓰세요
+        (읽는 동안 줄이 늘 수 있으면 `tail()` 이 기록과 번호를 같이 줍니다)."""
+        return self.tail(after)[0]
 
     def count(self) -> int:
         """지금까지 쓰인 줄 수(깨진 줄 포함)."""

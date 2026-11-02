@@ -176,8 +176,11 @@ class Runner:
             ind = {k: round(v, 3) for k, v in fields.items()
                    if k not in _BAR_FIELDS and k not in _SIGNAL_KEYS and isinstance(k, str)
                    and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)}
+            # 차트가 봉을 그리도록 시가·고가·저가도 남긴다(종가는 원래 있음). 지표 칸에서는 빠지는 이름이라 겹치지 않는다
+            ohlc = {k: round(v, 4) for k in ("open", "high", "low") if isinstance(v := fields.get(k), (int, float))
+                    and not isinstance(v, bool) and math.isfinite(v)}
             self.last_signal = self.j.write("signal", clock=b.end, date=b.date, bar=b.start, close=b.close,
-                                            side=s.side, reason=s.reason, stop_ticks=s.stop_ticks, **ind)
+                                            side=s.side, reason=s.reason, stop_ticks=s.stop_ticks, **ohlc, **ind)
             if s.side and self.pos is None and self.pending is None and b.date == self.live_date:
                 self.pending = {"side": s.side, "stop_ticks": s.stop_ticks, "signal": b.end}
 

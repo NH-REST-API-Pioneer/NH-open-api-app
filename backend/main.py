@@ -53,6 +53,8 @@ from backend.strategy import service as strategy_service
 from backend.strategy import store as strategy_store
 from backend.strategy.strategy_routes import router as strategy_router
 from backend.strategy.strategy_routes import runs_router as strategy_runs_router
+from backend.team_pyrun.routes import pyrun_shutdown, pyrun_startup  # 팀: 파이썬 전략 실행 — 앱을 켜고 끌 때 부른다
+from backend.team_pyrun.routes import router as pyrun_router  # 팀: 파이썬 전략 실행 라우트
 from backend.ui.ui_routes import router as ui_router
 
 #: 백엔드 기록 한 줄의 모양 — 시각, 수준, 어느 모듈이 남겼는지, 내용.
@@ -107,9 +109,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 붙자마자 주문이 나가는 일은 없습니다.
     engine = strategy_pump.RunPump(strategy_service.service)
     await engine.start()
+    # 팀: 파이썬 전략 실행 — NH 호출 관찰자를 꽂고, 끝나지 않고 남은 실행 폴더를 닫는다(따로 돌며 기다리지 않음).
+    pyrun_recover = pyrun_startup()
     try:
         yield
     finally:
+        # 팀: 돌던 파이썬 전략 실행에 모두 중지를 요청한다(스레드에서 — 이벤트 루프를 막지 않게).
+        await pyrun_shutdown(pyrun_recover)
         await engine.stop()
         task.cancel()
         hours.cancel()
@@ -195,6 +201,7 @@ app.include_router(stream_router)
 app.include_router(session_router)
 app.include_router(strategy_router)
 app.include_router(strategy_runs_router)
+app.include_router(pyrun_router)  # 팀: 파이썬 전략 실행 `/api/team/pyrun`
 
 
 @app.get("/api/health")

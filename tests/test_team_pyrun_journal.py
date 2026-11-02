@@ -110,3 +110,15 @@ def test_해외_응답의_사용자_IP_계좌_칸은_접미사로도_지운다(t
     for k in ("user_id", "ip_addr", "action_acnt", "acnt_no", "1.2.3.4"):
         assert k not in text
     assert '"ord_no": "7"' in text and '"fee": "690"' in text
+
+
+def test_tail_은_기록과_이어_읽을_번호를_같이_준다(tmp_path):
+    j = Journal(tmp_path / "journal.jsonl")
+    j.write("event", text="a")
+    with j.path.open("a", encoding="utf-8") as f:
+        f.write("깨진 줄\n")
+    j.write("event", text="b")
+    rows, nxt = j.tail(0)
+    assert [r["text"] for r in rows] == ["a", "b"] and nxt == 3 == j.count()      # 깨진 줄도 번호에 센다
+    assert j.tail(nxt) == ([], 3)
+    assert [r["text"] for r in j.tail(2)[0]] == ["b"]

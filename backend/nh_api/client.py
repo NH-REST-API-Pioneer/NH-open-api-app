@@ -16,7 +16,9 @@
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+import logging
+import time
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +38,8 @@ from backend.nh_api.errors import (
 from backend.nh_api.rate_limit import RateLimiter
 from backend.nh_api.replay import note_replay
 from backend.nh_api.session import Session
+
+logger = logging.getLogger(__name__)  # 팀: 관찰자가 터졌을 때 남기는 용
 
 # 업무 처리 결과가 담기는 항목. 주문 계열 응답이 이 두 항목으로 사유를 알립니다.
 # 접속 토큰을 안 받아 줄 때 오는 상태 코드.
@@ -63,6 +67,12 @@ class ApiResult:
     http_status: int
     body: Any
     headers: Mapping[str, str]
+
+
+# 팀: 호출 관찰자. 앱 시작 때 `backend.team_pyrun.apilog.observe` 를 꽂습니다(없으면 아무 일도 안 함).
+# `call()` 이 끝날 때마다(성공·예외 모두) 한 번 부르며, 넘기는 dict 의 칸은 `_notify` 에 있습니다.
+# 관찰자 안의 예외는 삼킵니다 — 호출 결과를 바꾸지 않습니다.
+call_observer: Callable[[dict], None] | None = None
 
 
 #: 게이트웨이·실시간 접속 쪽 코드의 앞자리. 숫자로만 된 코드는 업무 쪽입니다.
@@ -136,6 +146,62 @@ class TradeClient:
             BusinessError: 업무 처리가 거부된 경우(상태 코드와 무관).
             GatewayError: 게이트웨이·실시간 접속 쪽이 거절한 경우.
         """
+        # 팀: 본문은 `_call` 로 옮기고, 여기서는 관찰자에게 넘길 기록만 모읍니다. 동작·예외는 그대로.
+        trace: dict[str, Any] = {}
+        error: BaseException | None = None
+        try:
+            return self._call(api_id, payload, environment, trace)
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            if call_observer is not None:
+                self._notify(api_id, payload, environment, trace, error)
+
+    def _notify(
+        self,
+        api_id: str,
+        payload: Mapping[str, Any] | None,
+        environment: str | None,
+        trace: dict[str, Any],
+        error: BaseException | None,
+    ) -> None:
+        """팀: 관찰자에게 호출 한 건을 알립니다. 여기서 나는 예외는 삼킵니다(로그만)."""
+        try:
+            body = trace.get("body")
+            if body is None and error is not None:
+                body = getattr(error, "body", None)
+            code = message = None
+            if error is not None and hasattr(error, "code"):
+                code, message = error.code, getattr(error, "detail", None)
+            else:
+                trouble = error_codes.failure_of(body)
+                if trouble is not None:
+                    code, message = trouble["code"], trouble["message"]
+            started = trace.get("sent_at")
+            call_observer({
+                "api_id": api_id,
+                "env": trace.get("env") or environment or self._session.config.default_environment,
+                "request": trace.get("request", dict(payload or {})),
+                "http": trace.get("http"),
+                "body": body,
+                "ms": round((time.perf_counter() - started) * 1000) if started is not None else 0,
+                "waited_ms": trace.get("waited_ms", 0),
+                "reissued": trace.get("reissued", False),
+                "error": None if error is None else f"{type(error).__name__}: {error}",
+                "code": code,
+                "message": message,
+            })
+        except Exception:
+            logger.exception("API 호출 관찰자가 실패했습니다(호출 결과에는 영향 없음)")
+
+    def _call(
+        self,
+        api_id: str,
+        payload: Mapping[str, Any] | None,
+        environment: str | None,
+        trace: dict[str, Any],  # 팀: 관찰자용 기록(env·request·waited_ms·sent_at·http·body·reissued)
+    ) -> ApiResult:
         spec = http_spec(api_id)
         if spec.market == COMMON:
             raise ValueError(
@@ -143,15 +209,21 @@ class TradeClient:
             )
 
         environment = environment or self._session.config.default_environment
+        trace["env"] = environment  # 팀:
         last_environment.set(environment)
         # 설정에 그 시장의 인증 정보가 없으면 여기서 걸립니다.
         self._session.config.market(spec.market, environment)
 
-        self._limiter.wait(environment, spec.market, spec.limit)
+        waited = self._limiter.wait(environment, spec.market, spec.limit)
 
         body_to_send = dict(payload or {})
+        trace["waited_ms"] = round(waited * 1000)  # 팀:
+        trace["request"] = body_to_send  # 팀:
+        trace["sent_at"] = time.perf_counter()  # 팀:
         response = self._send(spec, body_to_send, environment)
+        trace["http"] = response.status_code  # 팀:
         body = _peek(response)
+        trace["body"] = body  # 팀:
         trouble = error_codes.failure_of(body)
 
         if response.status_code == UNAUTHORIZED or (
@@ -171,8 +243,12 @@ class TradeClient:
             # 다시 받으라는 코드(`EGW052` 같은 것)가 본문에 담겨 옵니다 —
             # 상태만 보면 그 자리를 놓칩니다.
             self._session.tokens.forget(spec.market, environment)
+            trace["reissued"] = True  # 팀: 마지막 응답만 남기고 재발급은 표시만
+            trace["http"] = trace["body"] = None  # 팀: 다시 보낸 것이 못 받았으면 첫 응답을 남기지 않음
             response = self._send(spec, body_to_send, environment)
+            trace["http"] = response.status_code  # 팀:
             body = _peek(response)
+            trace["body"] = body  # 팀:
             trouble = error_codes.failure_of(body)
 
         # 저장본으로 답한 것이면 무엇으로 답했는지 남겨 둡니다. 라우트가 그것을
@@ -182,6 +258,7 @@ class TradeClient:
             # 살짝 읽기가 실패한 자리입니다. 여기서 제대로 읽어 보고, 그래도
             # 안 되면 그때 올립니다 — 같은 본문을 두 번 풀지 않습니다.
             body = _read_body(api_id, response)
+            trace["body"] = body  # 팀:
 
         if trouble is not None:
             # **상태 코드보다 본문이 앞섭니다.** 200 으로 오면서 본문에만 실패가

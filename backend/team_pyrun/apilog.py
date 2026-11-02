@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -25,6 +26,8 @@ from backend.team_pyrun.journal import _now, scrub
 FULL_BODY_APIS = frozenset({
     "domestic_order", "domestic_order-history", "domestic_open-interest",
     "domestic_deposit", "domestic_product-detail", "domestic_price-all-futures",
+    "overseas_order", "overseas_order-history", "overseas_open-interest",
+    "overseas_deposit", "overseas_product-detail",
 })
 
 _log: ContextVar["ApiLog | None"] = ContextVar("pyrun_apilog", default=None)
@@ -56,6 +59,27 @@ def observe(call: dict) -> None:
     run_log = _log.get()
     if run_log is not None:
         run_log.record({**call, "purpose": _purpose.get()})
+
+
+_BEARER = re.compile(r"Bearer\s+\S+", re.IGNORECASE)
+#: `access_token: 'x'` · `"app_key": "x"` · `appsecret=x` 꼴(따옴표 종류·이스케이프 무관)의 값
+_SECRET_FIELD = re.compile(
+    r"""(?P<key>access_token|app_key|app_secret|appkey|appsecret|authorization)(?P<mid>\\?["']?\s*[:=]\s*)"""
+    r"""(?:(?P<q>\\?["']).*?(?P=q)|[^\s,}\]]+)""",
+    re.IGNORECASE,
+)
+ERROR_MAX = 500
+
+
+def _redact_error(text: Any) -> Any:
+    """오류 문구에서 토큰·키 값을 가립니다. 인증 오류 문구에는 서버 응답 본문(토큰 포함)이 실려 올 수 있습니다.
+
+    `Bearer xxx` → `Bearer ***`, 토큰·키 칸의 값 → `***`. 500자를 넘으면 자릅니다."""
+    if not isinstance(text, str):
+        return text
+    text = _BEARER.sub("Bearer ***", text)
+    text = _SECRET_FIELD.sub(lambda m: f"{m['key']}{m['mid']}{m['q'] or ''}***{m['q'] or ''}", text)
+    return text[:ERROR_MAX]
 
 
 def _bar_time(row: Any) -> str:
@@ -97,7 +121,7 @@ class ApiLog:
     def record(self, call: dict) -> None:
         """호출 한 건을 한 줄로 쓰고(이어쓰기, 바로 flush) 통계에 셉니다."""
         api_id = call["api_id"]
-        error = call.get("error")
+        error = _redact_error(call.get("error"))
         ok = error is None
         body = call.get("body")
         row: dict[str, Any] = {

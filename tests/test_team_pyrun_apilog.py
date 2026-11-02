@@ -203,3 +203,30 @@ def test_여러_스레드가_써도_줄이_섞이지_않는다(tmp_path):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert len(_rows(tmp_path / "a.jsonl")) == 400
+
+
+def test_해외_주문_계열도_본문_전체가_남는다(tmp_path):
+    log = ApiLog(tmp_path / "a.jsonl", "r1")
+    base = {"env": "paper", "request": {}, "http": 200, "ms": 1, "waited_ms": 0, "reissued": False,
+            "error": None, "code": None, "message": None}
+    for api_id in ("overseas_order", "overseas_order-history", "overseas_open-interest",
+                   "overseas_deposit", "overseas_product-detail"):
+        log.record({**base, "api_id": api_id, "body": {"ord_no": "7", "x": "y"}})
+    for row in _rows(tmp_path / "a.jsonl"):
+        assert row["body"] == {"ord_no": "7", "x": "y"} and "summary" not in row
+    assert {"overseas_order", "overseas_deposit"} <= apilog.FULL_BODY_APIS
+
+
+def test_오류_문구의_토큰과_키는_가려서_쓴다(tmp_path):
+    log = ApiLog(tmp_path / "a.jsonl", "r1")
+    base = {"api_id": "domestic_price", "env": "paper", "request": {}, "http": None, "body": None,
+            "ms": 1, "waited_ms": 0, "reissued": False, "code": None, "message": None}
+    error = ("TransportError: 접속 토큰을 준비하지 못했습니다: 응답 {'access_token': 'abc123', "
+             '"app_secret": "SEC456", "appkey": "KEY789"} 헤더 Bearer xyz appsecret=ZZZ9 ' + "끝" * 600)
+    log.record({**base, "error": error})
+    text = (tmp_path / "a.jsonl").read_text(encoding="utf-8")
+    for secret in ("abc123", "SEC456", "KEY789", "xyz", "ZZZ9"):
+        assert secret not in text
+    row = json.loads(text)
+    assert "Bearer ***" in row["error"] and "'access_token': '***'" in row["error"]
+    assert len(row["error"]) <= 500 and row["ok"] is False and row["error"].startswith("TransportError: ")

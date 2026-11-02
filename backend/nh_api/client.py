@@ -217,7 +217,7 @@ class TradeClient:
         waited = self._limiter.wait(environment, spec.market, spec.limit)
 
         body_to_send = dict(payload or {})
-        trace["waited_ms"] = round(waited * 1000)  # 팀:
+        trace["waited_ms"] = round((waited or 0) * 1000)  # 팀:
         trace["request"] = body_to_send  # 팀:
         trace["sent_at"] = time.perf_counter()  # 팀:
         response = self._send(spec, body_to_send, environment)

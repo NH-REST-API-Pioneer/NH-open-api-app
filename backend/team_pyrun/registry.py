@@ -1,0 +1,284 @@
+"""실행 관리 — 실행을 세우고(시작 거부 규칙), 기록 폴더 이름을 정하고, 목록을 내고, 앱을 끌 때·켤 때 정리한다.
+
+    start(spec)      거부 규칙을 지나면 `LiveRun` 을 만들어 `prepare()`(부른 스레드에서) 뒤 데몬 스레드로 돌린다
+    list()           도는 실행의 `status()` + `root` 아래 폴더의 `run.json` (최근 시작순, 중복 없음)
+    get / folder     실행 객체 / 기록 폴더 (id 는 폴더 이름 — `[0-9A-Za-z_]+` 만, 아니면 `KeyError`)
+    stop / flatten   요청만 하고 바로 돌아온다 (실제 정리는 실행 스레드의 다음 step)
+    stop_all         앱을 끌 때 — 모두에게 중지를 요청하고 한 마감 시각 안에서 스레드를 기다린다
+    recover          앱을 켤 때 — 끝나지 않은 채 남은 폴더를 「끝·재시작」으로 닫는다 (주문은 보내지 않는다)
+
+시작 거부(`StartRefused`) — 폴더를 만들기 **전에** 걸리는 것(주말·장 끝·모의 환경 아님·같은 종목 주문 실행·
+이상한 파일/종목 이름)은 폴더를 남기지 않고 메시지만 돌려줍니다. 폴더를 만든 **뒤** `LiveRun.prepare()` 에서 걸리는 것
+(시작 잔고·틱 불일치 등)은 `run.json`(상태 「끝」, 까닭 「시작 거부: …」)이 남습니다.
+
+기록 폴더 이름: `<YYYYMMDD>_<NAME>_<orders|paper>[_<종목>][_<n>]`.
+
+- 종목은 사용자가 `spec.sym` 을 줬고 **최근월물과 다를 때만** 붙입니다(안 줬거나 최근월물이면 안 붙음).
+  최근월물은 `start` 에서 먼저 `api.nearest_usd(api.all_futures())` 로 알아냅니다 — 같은 종목 검사·앞선 손절 수 세기에도
+  종목을 알아야 해서 `prepare()` 뒤가 아니라 폴더를 정하기 전에 한 번 더 조회합니다(시세 조회라 주문과 무관).
+- `NAME` 에는 `-` 가 있을 수 있으나 id 는 `[0-9A-Za-z_]+` 만 쓸 수 있어, 폴더 이름에서는 `-` 를 `_` 로 바꿉니다
+  (`run.json` 의 `name` 은 그대로).
+- 같은 이름이 이미 있으면(폴더든 도는 실행이든) `_2`, `_3` …
+
+스레드 규칙: `LiveRun.finish()` 는 체결 확인 때문에 15초 넘게 걸릴 수 있어, 실행 스레드가 살아 있는 동안엔 요청·종료
+스레드에서 직접 부르지 않고 `request_stop()` 만 합니다. 스레드가 없는 실행(`start_thread=False`, 시험)만 바로 `finish("중지")`.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+import time
+from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+from backend import storage
+from backend.nh_api import runtime
+from backend.sessions.hours import now_kst, to_kst
+from backend.team_pyrun import api as default_api
+from backend.team_pyrun.apilog import ApiLog, bind, purpose
+from backend.team_pyrun.broker import error_text
+from backend.team_pyrun.journal import Journal, count_stops, summarize, write_summary
+from backend.team_pyrun.live import END_TIME, LiveRun, RunSpec, StartRefused
+from backend.team_pyrun.loader import load, strategies_dir
+
+#: 실행 id(= 폴더 이름)·종목 코드가 쓸 수 있는 글자 — 경로 문자가 섞이지 못하게 한다.
+ID_PATTERN = re.compile(r"[0-9A-Za-z_]+")
+#: 같은 종목의 주문 실행이 이미 있다고 보는 상태.
+BUSY_STATES = ("대기", "진행 중", "확인 필요")
+#: 끝난 상태 — `recover()` 가 건드리지 않는다.
+FINISHED_STATES = ("끝", "오류")
+
+
+def _read_run_json(folder: Path) -> dict | None:
+    """폴더의 `run.json`. 없거나 깨졌거나 모양이 다르면 None(목록·정리는 그런 폴더를 건너뛴다)."""
+    try:
+        data = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+class Registry:
+    """실행 관리. 앱에 하나(`registry()`)."""
+
+    def __init__(self, root: Path, strategies: Path, *, now: Callable[[], datetime] = now_kst,
+                 active_env: Callable[[], str | None] = runtime.active_environment, start_thread: bool = True,
+                 api_module: ModuleType | Any = default_api, sleep: Callable[[float], None] = time.sleep):
+        self.root, self.strategies = Path(root), Path(strategies)
+        self._now, self._active_env, self._start_thread = now, active_env, start_thread
+        self._api, self._sleep = api_module, sleep
+        self._lock = threading.Lock()                  # 시작 검사 + 폴더 정하기를 한 줄로
+        self._runs: dict[str, LiveRun] = {}
+        self._threads: dict[str, threading.Thread] = {}
+
+    # ------------------------------------------------------------ 시작
+    def start(self, spec: RunSpec) -> dict:
+        """실행을 세우고 그 `status()` 를 돌려준다. 거부되면 `StartRefused`(전략 파일 문제는 `LoadError`)."""
+        now = to_kst(self._now())
+        if now.weekday() >= 5:
+            raise StartRefused("주말에는 실행을 시작할 수 없습니다 (토·일은 장이 없습니다)")
+        if now.strftime("%H%M%S") >= END_TIME:
+            raise StartRefused(f"장이 끝난 시각({END_TIME[:2]}:{END_TIME[2:4]}) 뒤에는 실행을 시작할 수 없습니다")
+        if spec.mode == "orders" and self._active_env() != "paper":
+            raise StartRefused("모의투자 환경에서만 모의 계좌 실행을 세울 수 있습니다")
+        if Path(spec.file).name != spec.file or not spec.file.endswith(".py"):
+            raise StartRefused(f"전략 파일 이름이 올바르지 않습니다: {spec.file!r}")
+        if spec.sym is not None and not ID_PATTERN.fullmatch(spec.sym):
+            raise StartRefused(f"종목 코드가 올바르지 않습니다: {spec.sym!r}")
+        loaded = load(self.strategies, spec.file)
+        nearest = self._nearest()                       # 잠금 밖 — 조회가 느려도 다른 시작을 막지 않게
+        sym = spec.sym or nearest
+        today = now.strftime("%Y%m%d")
+        with self._lock:
+            if spec.mode == "orders" and sym is not None:
+                for other in self._runs.values():
+                    if (other.spec.mode == "orders" and other.state in BUSY_STATES
+                            and other.sym == sym):
+                        raise StartRefused(f"같은 종목 {sym} 의 모의 계좌 실행이 이미 있습니다 ({other.run_id}) — "
+                                           "끝낸 뒤에 시작하세요")
+            run_id = self._new_id(today, loaded.name, spec, nearest)
+            stops_before = count_stops(self._folders_of(today, loaded.name, sym), today)
+            run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
+                          sleep=self._sleep, stops_before=stops_before)
+            run.sym = sym                               # 준비가 끝나기 전에도 같은 종목 검사가 풀린 종목으로 비교하게
+            self._runs[run_id] = run                    # 준비 중에도 같은 종목 검사에 걸리도록 잠금 안에서 등록
+        try:
+            run.prepare()                               # 부른 스레드에서. 오래 걸려도 잠금은 이미 풀었다
+        except StartRefused:
+            with self._lock:
+                self._runs.pop(run_id, None)            # run.json(끝·시작 거부)은 폴더에 남았다
+            raise
+        if self._start_thread:
+            thread = threading.Thread(target=run.run_forever, name=f"pyrun-{run_id}", daemon=True)
+            with self._lock:
+                self._threads[run_id] = thread
+            thread.start()
+        return run.status()
+
+    def _nearest(self) -> str | None:
+        """최근월물 종목. 조회가 안 되면 None(그때는 `prepare()` 가 같은 조회로 거부하고 까닭을 남긴다)."""
+        try:
+            return self._api.nearest_usd(self._api.all_futures())
+        except Exception:
+            return None
+
+    def _new_id(self, today: str, name: str, spec: RunSpec, nearest: str | None) -> str:
+        """폴더 이름(= id). 이미 있으면 `_2`, `_3` …"""
+        base = f"{today}_{name.replace('-', '_')}_{spec.mode}"
+        if spec.sym and spec.sym != nearest:
+            base += f"_{spec.sym}"
+        run_id, n = base, 2
+        while (self.root / run_id).exists() or run_id in self._runs:
+            run_id, n = f"{base}_{n}", n + 1
+        return run_id
+
+    def _folders_of(self, today: str, name: str, sym: str | None) -> list[Path]:
+        """오늘 같은 전략·같은 종목으로 돌았던 폴더들(손절 수를 이어받을 곳). 새 폴더는 아직 없다."""
+        if sym is None or not self.root.is_dir():
+            return []
+        out = []
+        for folder in sorted(self.root.iterdir()):
+            if not (folder.is_dir() and folder.name.startswith(f"{today}_")):
+                continue
+            data = _read_run_json(folder)
+            if data is not None and data.get("name") == name and data.get("sym") == sym:
+                out.append(folder)
+        return out
+
+    # ------------------------------------------------------------ 조회
+    def list(self) -> list[dict]:
+        """도는 실행의 `status()` 와 폴더의 `run.json` 을 합쳐 최근 시작순으로. 못 읽는 폴더는 건너뛴다."""
+        rows: dict[str, dict] = {}
+        if self.root.is_dir():
+            for folder in sorted(self.root.iterdir()):
+                data = _read_run_json(folder) if folder.is_dir() else None
+                if data is not None:
+                    data.setdefault("id", folder.name)
+                    rows[folder.name] = data
+        with self._lock:
+            runs = list(self._runs.values())
+        for run in runs:
+            rows[run.run_id] = run.status()             # 도는 것은 폴더 기록보다 최신
+        return sorted(rows.values(), key=lambda r: r.get("started_at") or "", reverse=True)
+
+    def get(self, run_id: str) -> LiveRun | None:
+        """이 앱에서 세운 실행(끝난 것 포함). 모르면 None."""
+        return self._runs.get(run_id)
+
+    def folder(self, run_id: str) -> Path:
+        """기록 폴더. id 가 `[0-9A-Za-z_]+` 가 아니거나 폴더가 없으면 `KeyError`(폴더 밖을 가리킬 수 없다)."""
+        if not isinstance(run_id, str) or not ID_PATTERN.fullmatch(run_id):
+            raise KeyError(run_id)
+        path = self.root / run_id
+        if not path.is_dir():
+            raise KeyError(run_id)
+        return path
+
+    # ------------------------------------------------------------ 요청
+    def _run(self, run_id: str) -> LiveRun:
+        run = self.get(run_id)
+        if run is None:
+            raise KeyError(run_id)
+        return run
+
+    def _alive(self, run_id: str) -> bool:
+        thread = self._threads.get(run_id)
+        return thread is not None and thread.is_alive()
+
+    def stop(self, run_id: str) -> None:
+        """중지를 요청하고 바로 돌아온다(보유가 있으면 실행 스레드가 다음 step 에서 정리).
+        스레드가 없는 실행(시험)만 여기서 바로 끝낸다."""
+        run = self._run(run_id)
+        run.request_stop()
+        if not self._alive(run_id) and run.state not in FINISHED_STATES:
+            run.finish("중지")
+
+    def flatten(self, run_id: str) -> None:
+        """보유 정리를 요청하고 바로 돌아온다(실행은 계속)."""
+        self._run(run_id).request_flatten()
+
+    def stop_all(self, timeout: float = 20.0) -> list[str]:
+        """앱을 끌 때. 모두에게 중지를 요청하고 하나의 마감 시각(`timeout` 초) 안에서 스레드를 기다린다.
+        마감까지 안 끝난 실행의 id 를 돌려준다(그 실행은 건드리지 않는다 — 스레드가 마저 끝낸다)."""
+        deadline = time.monotonic() + timeout
+        with self._lock:
+            runs = list(self._runs.items())
+        for _, run in runs:
+            run.request_stop()
+        pending: list[str] = []
+        for run_id, run in runs:
+            thread = self._threads.get(run_id)
+            if thread is not None and thread.is_alive():
+                thread.join(max(0.0, deadline - time.monotonic()))
+                if thread.is_alive():
+                    pending.append(run_id)
+            elif run.state not in FINISHED_STATES:
+                run.finish("중지")                       # 스레드가 없다 — 직접 끝내도 누구도 기다리게 하지 않는다
+        return pending
+
+    # ------------------------------------------------------------ 앱을 켤 때
+    def recover(self) -> list[str]:
+        """끝나지 않은 채 남은 폴더(앱이 꺼졌거나 죽은 것)를 닫고 닫은 id 를 돌려준다. **주문은 보내지 않는다.**
+
+        orders 는 잔고를 한 번 조회해 `journal.jsonl` 에 남기고(못 읽으면 「확인 실패」), `summary.json` 이 없으면
+        `trade` 줄로 만든다. 끝에 `run.json` 을 상태 「끝」·까닭 「재시작」으로 바꾼다 — 그래서 중간에 죽어도 다음에 다시 한다."""
+        closed: list[str] = []
+        if not self.root.is_dir():
+            return closed
+        for folder in sorted(self.root.iterdir()):
+            data = _read_run_json(folder) if folder.is_dir() else None
+            if data is None or data.get("state") in FINISHED_STATES or folder.name in self._runs:
+                continue
+            try:
+                self._close(folder, data)
+            except Exception as e:      # 폴더 하나가 안 닫혀도 나머지는 닫는다
+                Journal(folder / "journal.jsonl").write("event", text="재시작 정리 실패", error=error_text(e))
+                continue
+            closed.append(folder.name)
+        return closed
+
+    def _close(self, folder: Path, data: dict) -> None:
+        j, run_id, sym = Journal(folder / "journal.jsonl"), folder.name, data.get("sym")
+        apilog = ApiLog(folder / "api_log.jsonl", run_id)
+        if data.get("mode") == "orders":
+            try:
+                if not sym:
+                    raise ValueError("종목을 모릅니다")
+                with bind(apilog), purpose("잔고확인"):
+                    held = self._api.net_position(self._api.open_interest(), sym)
+                j.write("event", text=f"재시작으로 닫음 — 잔고 {sym} {held:+d}계약 (정리 주문은 보내지 않음, 계좌에서 확인하세요)")
+            except Exception as e:
+                j.write("event", text="재시작으로 닫음 — 잔고 확인 실패 (정리 주문은 보내지 않음, 계좌에서 확인하세요)",
+                        error=error_text(e))
+        if not (folder / "summary.json").exists():
+            trades = [{k: v for k, v in row.items() if k != "kind"} for row in j.read() if row.get("kind") == "trade"]
+            write_summary(folder, {
+                "sym": sym, "trades": trades, "summary": summarize(trades),
+                "account_start": None, "account_end": None, "api": apilog.stats(),
+                "strategy": {k: data.get(k) for k in ("file", "name", "title", "sha256")},
+                "ended_reason": "재시작",
+            })
+        data.update(state="끝", ended_reason="재시작",
+                    ended_at=to_kst(self._now()).replace(tzinfo=None).isoformat(timespec="seconds"))
+        path = folder / "run.json"
+        tmp = path.with_name(f".run.json.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+
+
+_registry: Registry | None = None
+_registry_lock = threading.Lock()
+
+
+def registry() -> Registry:
+    """앱에 하나뿐인 `Registry`(`state_dir()/pyruns`, 전략 폴더). 처음 부를 때 만든다."""
+    global _registry
+    with _registry_lock:
+        if _registry is None:
+            _registry = Registry(storage.state_dir() / "pyruns", strategies_dir())
+        return _registry

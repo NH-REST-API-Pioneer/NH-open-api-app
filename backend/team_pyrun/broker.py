@@ -2,7 +2,8 @@
 
 모의 서버(`environment="paper"`)의 모의계좌에 **시장가 1계약**을 넣고, 주문내역에서 그 주문번호가
 전체체결(`ord_sts` 6)이 될 때까지 0.5초씩 최대 30번(15초) 봅니다. 체결가는 `avg_exec_pric`, 그게
-0 이면 `exec_pric`(week02 10/29 수정). 수수료는 체결 전후 예수금 `fee`(하루 누적)의 차이입니다.
+0 이면 `exec_pric`(week02 10/29 수정). 둘 다 못 읽으면 체결은 확인된 것이므로 기준가로 기록합니다(재시도 없음).
+수수료는 체결 전후 예수금 `fee`(하루 누적)의 차이입니다.
 
 **주문은 한 번만 보냅니다.** 여기서도, 아래 `api.market_order` 에서도 다시 보내지 않습니다.
 
@@ -76,6 +77,8 @@ class MockAccountBroker:
         self.unresolved: str | None = None  # 접수됐지만 체결·거부가 확인 안 된 주문번호
         self.unresolved_checks = 0          # 그 주문을 다시 봤는데도 결과를 모른 횟수
         self.unresolved_side: str | None = None
+        self.unresolved_pre: int | None = None      # 그 주문 전 보유
+        self.unresolved_post: int | None = None     # 그 주문이 체결된 뒤 보유
         #: 번호 없이 결과를 모르는 주문 {"side","pre","post"} — 잔고가 post 를 보일 때까지 모든 주문을 막는다
         self.blind: dict | None = None
         self.needs_check = False            # fill 이 None 을 돌려줌 → 실행이 바로 잔고를 대조하고 지운다
@@ -171,7 +174,8 @@ class MockAccountBroker:
 
         - 거부·취소(8·9) → 막지 않음
         - 전체체결(6), **방향이 다름**(예: 늦게 체결돼 받아들인 진입 뒤의 청산) → 막지 않음. 잔고 관문이 판단
-        - 전체체결(6), **같은 방향** → 보내지 않음. 잔고가 아직 주문 전 보유면 주문내역과 잔고가 어긋난 것이라 멈춤
+        - 전체체결(6), **같은 방향** → 잔고가 그 주문 체결 뒤 보유면 막지 않음(잔고 관문이 판단).
+          그 주문 전 보유 그대로면 주문내역과 잔고가 어긋난 것이라 멈춤. 그 밖·못 읽음이면 보내지 않음
         - 주문내역에 그 번호가 없음 → 멈춤(첫 쪽에 안 보이면 영영 못 찾을 수 있어 손절이 조용히 막히지 않게)
         - 아직 결과 없음·조회 실패 → 막음. 세 번째에도 그러면 멈춤"""
         if not self.unresolved:
@@ -201,11 +205,16 @@ class MockAccountBroker:
                     self.j.write("event", clock=clock, ord_no=no,
                                  text=f"앞선 {prev_side} 주문이 늦게 체결됨 — 방향이 다른 새 주문은 잔고 관문에 맡김")
                     return False
-                self._mark_unknown()
                 held = self.position()
-                exp = self.expected() if self.expected is not None else None
-                if held is not None and held == exp:
-                    self._halt(f"주문내역은 {side} 주문 {no} 체결, 잔고는 그대로({held:+d}) — 새 주문 안 냄")
+                pre, post = self.unresolved_pre, self.unresolved_post
+                if held is not None and post is not None and held == post:
+                    # 잔고가 그 주문 체결 뒤 보유 — 이미 반영됨. 지금 주문은 잔고 관문에 맡긴다
+                    self.j.write("event", clock=clock, ord_no=no,
+                                 text=f"같은 방향 앞선 주문 체결이 잔고({held:+d})에 반영됨 — 잔고 관문에 맡김")
+                    return False
+                self._mark_unknown()
+                if held is not None and pre is not None and held == pre:
+                    self._halt(f"주문내역은 {side} 주문 {no} 체결, 잔고는 그 전 그대로({held:+d}) — 새 주문 안 냄")
                 else:
                     self.j.write("event", clock=clock, ord_no=no,
                                  text="같은 방향 앞선 주문이 늦게 체결됨 — 새 주문 안 냄, 잔고로 확인")
@@ -240,12 +249,12 @@ class MockAccountBroker:
         None 이면 `needs_check` 가 서서 실행이 바로 잔고를 대조합니다."""
         self.last_fill_fee = None
         self.unknown = False
-        px = self._fill(side, clock, why)
+        px = self._fill(side, ref_price, clock, why)
         if px is None:
             self.needs_check = True
         return px
 
-    def _fill(self, side: str, clock: str, why: str) -> float | None:
+    def _fill(self, side: str, ref_price: float, clock: str, why: str) -> float | None:
         if self._blocked_by_blind(clock):
             return None
         if self._blocked_by_unresolved(side, clock):
@@ -273,15 +282,27 @@ class MockAccountBroker:
         if not ord_no:
             self._sent_blind(side, pre)     # 응답은 왔지만 주문번호가 없다 — 접수 여부는 잔고로
             return None
-        return self._confirm(side, ord_no, clock)
+        return self._confirm(side, ord_no, clock, ref_price, pre)
+
+    def open_unknowns(self) -> dict | None:
+        """아직 풀리지 않은 결과 모름 주문(끝낼 때 보이려고). 없으면 None."""
+        if self.unresolved:
+            return {"ord_no": self.unresolved, "side": self.unresolved_side,
+                    "pre": self.unresolved_pre, "post": self.unresolved_post}
+        if self.blind is not None:
+            return dict(self.blind)
+        return None
 
     def _sent_blind(self, side: str, pre: int | None) -> None:
         """번호 없이 결과를 모르는 주문 — 잔고가 그 주문 체결 뒤 보유를 보일 때까지 모든 주문을 막는 표시."""
         self._mark_unknown()
         self.blind = {"side": side, "pre": pre, "post": self._post(pre, side)}
 
-    def _confirm(self, side: str, ord_no: str, clock: str) -> float | None:
-        """주문내역에서 이 주문번호가 전체체결(6)이 될 때까지 0.5초씩 최대 30번 봅니다."""
+    def _confirm(self, side: str, ord_no: str, clock: str, ref_price: float, pre: int | None) -> float | None:
+        """주문내역에서 이 주문번호가 전체체결(6)이 될 때까지 0.5초씩 최대 30번 봅니다.
+
+        전체체결인데 체결가를 못 읽으면(두 칸 다 0·빈 값) **체결된 것으로 보고 기준가로 기록**합니다 — 주문내역이
+        체결을 확인해 줬으므로, None 을 돌려 실행기가 잔고(반영이 늦을 수 있음)로 판단하다 재시도하게 두지 않습니다."""
         key = ord_no.lstrip("0")
         last = None
         for _ in range(FILL_POLLS):
@@ -300,12 +321,16 @@ class MockAccountBroker:
             if sts == FILLED:
                 # avg_exec_pric 가 "0000…0.000" 으로 올 때가 있어 0 이면 exec_pric 를 씀 (week02 10/29 수정)
                 px = (self.api.num(last.get("avg_exec_pric")) or self.api.num(last.get("exec_pric"))) or None
+                price_read = px is not None
+                if not price_read:
+                    px = ref_price
+                    self.j.write("event", clock=clock, ord_no=ord_no,
+                                 text=f"전체체결 확인, 체결가를 읽지 못함 — 기준가 {ref_price} 로 기록")
                 self.last_fill_fee = self._fee_after_fill(clock)
                 self.j.write("fill", clock=clock, side=side, price=px, ord_no=ord_no, source="order-history",
-                             exec_qty=last.get("exec_qty"), exec_tm=last.get("exch_exec_tm"),
-                             fee=self.last_fill_fee, fee_total=self.last_fee, text="모의계좌 체결")
-                if px is None:
-                    self._mark_unknown()     # 체결은 됐는데 가격을 못 읽음 — 실행기가 잔고로 확인
+                             price_read=price_read, exec_qty=last.get("exec_qty"), exec_tm=last.get("exch_exec_tm"),
+                             fee=self.last_fill_fee, fee_total=self.last_fee,
+                             text="모의계좌 체결" if price_read else "모의계좌 체결 · 가격은 기준가")
                 return px
             if sts in REJECTED:
                 self.j.write("event", clock=clock, ord_no=ord_no, text=f"주문 {last.get('ord_sts_nm')}",
@@ -313,6 +338,7 @@ class MockAccountBroker:
                 return None
         self._mark_unknown()
         self.unresolved, self.unresolved_side, self.unresolved_checks = ord_no, side, 0
+        self.unresolved_pre, self.unresolved_post = pre, self._post(pre, side)
         self.j.write("event", clock=clock, ord_no=ord_no, text="15초 안에 전체체결 확인 안 됨 — 잔고로 확인",
                      raw=last)
         return None

@@ -22,6 +22,7 @@ week02 와 다른 점
 - 멈춘(`halted`) 채로 끝나면 보유를 정리하지 않습니다 — 끝 까닭에 「정리 안 함 — 확인 필요」를 붙입니다.
 - 끝낼 때(orders) 정리 주문 전에 잔고를 한 번 대조합니다. 다르면 정리하지 않고 「확인 필요」.
   정리 뒤 끝 잔고가 기대(보통 0)와 다르거나 못 읽어도 「확인 필요」를 붙입니다.
+  결과를 모르는 주문이 풀리지 않은 채 끝나면 기록과 summary.json `unresolved_order` 에 남깁니다(잔고가 맞으면 멈추진 않음).
 - 조회 실패는 기록하고 다음 초에 다시. 전략 코드 예외는 실행을 「오류」로 끝냅니다(보유는 정리).
 
 시각은 생성자에 넣은 `now()`(한국시간)만 씁니다. 상태(`대기` `진행 중` `확인 필요` `끝` `오류`)가 바뀔 때마다
@@ -385,6 +386,9 @@ class LiveRun:
             reason = f"{reason} · 정리 안 함 — 확인 필요: {r.halted}"
             j.write("event", clock=clock, text=f"정리하지 않고 끝냄 — 보유는 그대로 남겨 두었습니다. "
                                                f"계좌에서 직접 확인하세요 ({r.halted})")
+        open_order = b.open_unknowns() if isinstance(b, MockAccountBroker) else None
+        if open_order is not None:
+            j.write("event", clock=clock, text=f"끝낼 때 결과를 모르는 주문이 남아 있음 — 계좌·주문내역을 확인하세요 ({open_order})")
         if isinstance(b, MockAccountBroker):
             self.account_end = b.account(clock, "끝 (수수료·확정손익은 하루 누적)")
         data: dict[str, Any] = {
@@ -396,6 +400,8 @@ class LiveRun:
         }
         if r.halted:
             data["halted"] = r.halted
+        if open_order is not None:
+            data["unresolved_order"] = open_order
         write_summary(self.folder, data)
         return reason
 

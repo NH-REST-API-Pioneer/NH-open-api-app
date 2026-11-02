@@ -1015,3 +1015,102 @@ def test_알려진_거절_뒤_청산_재시도_대기_중_계좌가_0이면_불�
     run.step(at("090110"))
     assert run.broker.blind is None and len(fake.orders) == 2
     assert run.runner.halted and "잔고 불일치" in run.runner.halted and run.runner.trades == []
+
+
+# ---------------------------------------------------------------- 수정 3회차: 가격 없는 체결·같은 방향 늦은 체결·끝에 남은 결과 모름 주문
+def test_전체체결인데_체결가가_비면_기준가로_청산을_기록하고_재시도하지_않는다(tmp_path):
+    run, fake, out = entered(tmp_path)
+    real = fake.market_order
+
+    def filled_without_price(*a, **k):
+        res = real(*a, **k)
+        fake.history[0].update(avg_exec_pric="00000000000000.000000000", exec_pric="")
+        fake.held = 1                        # 체결됐지만 잔고 반영이 늦음
+        return res
+    fake.market_order = filled_without_price
+    fake.last = "1334.0"
+    run.step(at("090110"))
+    assert [o[1] for o in fake.orders] == ["buy", "sell"]
+    assert run.runner.pos is None and run.runner.retry_after == ""
+    t = run.runner.trades[0]
+    assert (t["exit"], t["reason"]) == (1334.0, "손절")
+    fill = [r for r in journal(out) if r["kind"] == "fill"][-1]
+    assert fill["price"] == 1334.0 and fill["price_read"] is False
+    assert any("체결가를 읽지 못함 — 기준가 1334.0" in r.get("text", "") for r in journal(out))
+    run.step(at("090111"))
+    fake.held = 0
+    for x in ("090120", "090121", "090130"):
+        run.step(at(x))
+    assert len(fake.orders) == 2 and run.runner.halted is None
+
+
+def test_같은_방향_앞선_주문_체결이_이미_잔고에_있으면_멈추지_않고_새_주문을_낸다(tmp_path):
+    run, fake, out = entered(tmp_path)
+    real = fake.market_order
+
+    def accepted_not_in_history(*a, **k):
+        fake.fill = False
+        res = real(*a, **k)
+        fake.held = 0                        # 청산 매도는 들어가 잔고 0, 주문내역엔 아직 없음
+        return res
+    fake.market_order = accepted_not_in_history
+    fake.last = "1334.0"
+    run.step(at("090110"))
+    assert run.broker.unresolved == "0000000002" and run.runner.pos is None   # 잔고 0 → 청산으로 기록
+    assert (run.broker.unresolved_pre, run.broker.unresolved_post) == (1, 0)
+    fake.market_order = real
+    fake.fill = True
+    fake.history = [{"ord_no": "2", "ord_sts": "6", "exec_pric": "1334.0"}]   # 이제 그 매도가 체결로 보임
+    run.runner.strat.script["090100"] = "sell"                                # 같은 방향(매도) 진입 신호
+    fake.chart = [bar("090000"), bar("090100")]
+    fake.last = "1335.0"
+    run.step(at("090204"))
+    assert run.runner.halted is None
+    assert [o[1] for o in fake.orders] == ["buy", "sell", "sell"] and run.runner.pos["side"] == "sell"
+    assert run.broker.unresolved is None
+
+
+def test_끝날_때_번호_없는_결과_모름_주문이_남아_있으면_요약에_보인다(tmp_path):
+    fake = FakeApi()
+    fake.fill = False
+    fake.order_error = TransportError("domestic_order", "시간 초과")
+    run, fake, out = entered(tmp_path, fake=fake)      # 잔고 0 그대로, 더 주문할 일 없음
+    run.finish("장 끝")
+    assert run.state == "끝" and run.ended_reason == "장 끝"           # 잔고는 맞으니 멈추지 않는다
+    s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert s["unresolved_order"] == {"side": "buy", "pre": 0, "post": 1} and "halted" not in s
+    assert any("결과를 모르는 주문이 남아 있음" in r.get("text", "") for r in journal(out))
+
+
+def test_끝날_때_번호_있는_결과_모름_주문이_남아_있으면_요약에_보인다(tmp_path):
+    fake = FakeApi()
+    fake.fill = False                                    # 접수됐지만 15초 안에 결과 없음, 잔고 0
+    run, fake, out = entered(tmp_path, fake=fake)
+    assert run.runner.pos is None
+    run.finish("중지")
+    s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert s["unresolved_order"] == {"ord_no": "0000000001", "side": "buy", "pre": 0, "post": 1}
+    assert run.state == "끝"
+
+
+def test_끝날_때_결과_모름_주문이_없으면_요약에_칸이_없다(tmp_path):
+    run, fake, out = entered(tmp_path)
+    run.finish("중지")
+    assert "unresolved_order" not in json.loads((out / "summary.json").read_text(encoding="utf-8"))
+
+
+def test_전체체결인데_체결가가_비고_잔고가_10초_넘게_늦어도_두_번째_매도는_없다(tmp_path):
+    run, fake, out = entered(tmp_path)
+    real = fake.market_order
+
+    def filled_without_price(*a, **k):
+        res = real(*a, **k)
+        fake.history[0].update(avg_exec_pric="0", exec_pric="0")
+        fake.held = 1                        # 잔고 반영이 재시도 시각(+10초)을 넘겨 늦음
+        return res
+    fake.market_order = filled_without_price
+    fake.last = "1334.0"
+    for x in ("090110", "090115", "090120", "090121", "090130"):
+        run.step(at(x))
+    assert [o[1] for o in fake.orders] == ["buy", "sell"]           # 같은 청산을 두 번 내지 않는다
+    assert len(run.runner.trades) == 1

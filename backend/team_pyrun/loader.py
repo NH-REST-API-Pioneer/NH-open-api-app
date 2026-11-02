@@ -7,6 +7,10 @@ week02 처럼 **파일 하나가 전략 하나**이고, 파일 끝에 `STRATEGY`
 앱에도 `backend.strategy` 가 있어 이름이 겹칠 수 있습니다. 그래서 **불러오는 동안만**
 `sys.path`·`sys.modules` 를 바꿨다가 끝나면 그대로 되돌립니다(모듈 전역 잠금 안에서).
 같은 파일을 두 번 불러오면 서로 다른 모듈이 됩니다 — 파일을 고쳐도 돌던 실행은 처음 것 그대로입니다.
+대상 파일은 **해시한 바이트 그대로** 컴파일해 실행합니다(pyc 캐시를 쓰지 않아 해시와 코드가 어긋나지 않고, 폴더에 `__pycache__` 도 안 생깁니다. 옆 모듈의 pyc 도 쓰지 않습니다).
+
+**전략 파일은 옆 모듈을 맨 위에서 import 해야 합니다.** 메서드 안에서 하는 import 는 불러온 뒤 폴더의 모듈이
+`sys.modules` 에서 빠지므로 실패합니다.
 
 모듈이 지켜야 할 약속(`STRATEGY` `TITLE` `NAME` `TICK` `TICK_VALUE`, 모듈의 `Params`, 전략 인스턴스의
 `on_minute` 등)은 불러올 때 한 번에 검사하고, 빠진 이름을 메시지에 모두 적습니다.
@@ -17,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import importlib.util
+import os
 import sys
 import threading
 import uuid
@@ -77,14 +82,10 @@ def strategies_dir() -> Path:
     return path
 
 
-def _inside(module: ModuleType, folder: Path) -> bool:
+def _inside(module: ModuleType, prefix: str) -> bool:
+    """모듈 파일이 폴더 안인가. 문자열 앞부분만 본다(`sys.path` 에 넣은 풀어 쓴 경로에서 왔으므로)."""
     file = getattr(module, "__file__", None)
-    if not file:
-        return False
-    try:
-        return Path(file).resolve().is_relative_to(folder)
-    except (OSError, ValueError):
-        return False
+    return isinstance(file, str) and file.startswith(prefix)
 
 
 def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
@@ -97,6 +98,8 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
     sha = hashlib.sha256(data).hexdigest()
     with _LOCK:
         saved_path = list(sys.path)
+        saved_dwb = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True   # 옆 모듈을 불러올 때도 폴더에 pyc 를 쓰지 않는다
         # 폴더 안 파일 이름과 같은 이름의 모듈(앱·다른 곳에서 온 것)은 잠시 치워 둔다.
         names = {p.stem for p in folder.glob("*.py")}
         saved_mods = {n: sys.modules.pop(n) for n in names if n in sys.modules}
@@ -108,7 +111,7 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
                 raise LoadError(f"불러올 수 없는 파일입니다: {file}")
             module = importlib.util.module_from_spec(spec)
             sys.modules[modname] = module   # dataclass 등이 모듈을 이름으로 찾는다
-            spec.loader.exec_module(module)
+            exec(compile(data, str(path), "exec"), module.__dict__)   # 해시한 바이트 그대로
             return module, sha
         except LoadError:
             raise
@@ -116,8 +119,11 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
             raise LoadError(f"{type(e).__name__}: {e}") from e
         finally:
             sys.path[:] = saved_path
-            for n in [n for n, m in sys.modules.items() if _inside(m, folder)]:
-                del sys.modules[n]
+            sys.dont_write_bytecode = saved_dwb
+            prefix = str(folder) + os.sep
+            for n, m in list(sys.modules.items()):   # 다른 스레드의 import 와 겹쳐도 안전하게 복사본을 훑는다
+                if _inside(m, prefix):
+                    sys.modules.pop(n, None)
             sys.modules.pop(modname, None)
             sys.modules.update(saved_mods)
 

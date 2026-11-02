@@ -79,3 +79,55 @@ def test_strategies_dir_은_없으면_만든다(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "HOME_DIR", tmp_path / "home")
     d = strategies_dir()
     assert d == tmp_path / "home" / "strategies" and d.is_dir()
+
+
+def test_해시한_바이트로_실행한다_파일이_바뀌면_해시도_코드도_따로(tmp_path):
+    import shutil
+
+    folder = tmp_path / "strategies"
+    shutil.copytree(FOLDER, folder, ignore=shutil.ignore_patterns("__pycache__"))
+    first = load(folder, "strategy_bb.py")
+    path = folder / "strategy_bb.py"
+    # 크기·수정 시각이 같아도(pyc 검사를 통과해도) 새 내용으로 실행돼야 한다
+    old = path.read_bytes()
+    new = old.replace(b'NAME = "bb"', b'NAME = "b2"')
+    assert len(new) == len(old) and new != old
+    st = path.stat()
+    path.write_bytes(new)
+    import os
+
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    second = load(folder, "strategy_bb.py")
+    assert second.sha256 != first.sha256
+    assert (first.name, second.name) == ("bb", "b2")
+    assert not (folder / "__pycache__").exists()   # 폴더에 pyc 를 쓰지 않는다
+    import hashlib
+
+    assert second.sha256 == hashlib.sha256(new).hexdigest()
+
+
+def test_모듈_이름들을_훑는_동안_다른_스레드가_import_해도_오류가_없다():
+    import threading
+    import time
+    import types
+
+    stop = threading.Event()
+
+    def churn():
+        i = 0
+        while not stop.is_set():
+            sys.modules[f"_churn_{i % 50}"] = types.ModuleType("x")
+            sys.modules.pop(f"_churn_{(i + 25) % 50}", None)
+            i += 1
+            time.sleep(0.0005)
+
+    t = threading.Thread(target=churn)
+    t.start()
+    try:
+        for _ in range(10):
+            load(FOLDER, "strategy_bb.py")
+    finally:
+        stop.set()
+        t.join()
+        for k in [k for k in list(sys.modules) if k.startswith("_churn_")]:
+            sys.modules.pop(k, None)

@@ -78,7 +78,6 @@
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-y: auto;
 }
 
 /* 전략 파일 줄 — 실행 줄과 같은 얼굴이고, 못 쓰는 파일은 흐리게 섭니다. */

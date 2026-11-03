@@ -67,7 +67,8 @@ week02 의 `strategy.py`(VWAP)·`strategy_bb.py`(볼린저)는 **고치지 않�
 ### Params — dataclass, 모든 칸에 기본값
 
 앱은 `Params()` 를 인자 없이 만듭니다. 그래서 **모든 칸에 기본값**이 있어야 하고, 기본값이 곧 실행 값입니다.
-찾는 순서: 모듈의 `Params`(dataclass) → 전략 `__init__` 첫 인자의 주석(dataclass).
+찾는 순서: ① 이 파일에서 정의한 `Params`(dataclass) → ② 전략 `__init__` 첫 인자의 주석(dataclass, 예: `def __init__(self, p: MyParams)`)
+→ ③ 가져온 `Params`(예: `from strategy import Params`). 자기 Params 를 주석으로 밝히면 가져온 `Params` 보다 먼저 쓰입니다.
 
 반드시 있어야 하는 6칸:
 
@@ -89,12 +90,12 @@ week02 의 `strategy.py`(VWAP)·`strategy_bb.py`(볼린저)는 **고치지 않�
 |---|---|---|
 | `target` | 인스턴스 (값 또는 property) | `current_vwap` 을 봅니다 |
 | `current_vwap` | 인스턴스 | 익절 없이 돕니다 — 목록 줄 밑에 「target·current_vwap 이 없어 익절 없이 돕니다」 알림 |
-| `day.stops` | 인스턴스의 `day` 객체 | 앞선 실행의 손절 수를 이어받지 않습니다. 화면의 손절 수는 이 실행이 센 값 |
+| `day.stops` | 인스턴스의 `day` 객체 | 전략이 앞선 실행의 손절 수를 받지 못합니다(그날 손절 한도로 진입을 막을 수 없음). 화면의 손절 수는 앞선 실행 + 이 실행이 센 값 |
 | `end_of_day()` | 메서드 | 건너뜀 |
 | `on_entry()` | 메서드 | 건너뜀 |
 | `on_exit(pnl_won, stopped)` | 메서드 | 건너뜀 |
 | `STRATEGY` | 모듈 | `on_minute` 클래스를 찾습니다 |
-| `TITLE` | 모듈 | 클래스 문서 문자열 첫 줄 → 모듈 문서 문자열 첫 줄 → 클래스 이름 |
+| `TITLE` | 모듈 | 모듈 문서 문자열 첫 줄의 「 — 」 앞(끝의 「.」 은 뺌) → 클래스 문서 문자열 첫 줄 → 클래스 이름 |
 | `NAME` | 모듈 | 파일 이름(확장자 뺀 것, 영문·숫자·`_`·`-` 밖의 글자는 `_`) |
 | `TICK` · `TICK_VALUE` | 모듈 (`import` 해 온 것도 됨) | `0.1` · `1000` (미국달러선물) |
 
@@ -160,9 +161,9 @@ week02 의 `strategy.py`(VWAP)·`strategy_bb.py`(볼린저)는 **고치지 않�
 
 자주 보는 불러오기 오류:
 
-- `` `on_minute` 가 있는 전략 클래스가 없습니다 `` — 전략 클래스를 정의하지 않았거나 다른 파일에서 가져오기만 했습니다.
-- `` 전략 클래스가 여러 개입니다 (A, B) — 파일 끝에 `STRATEGY = A` 처럼 하나를 고르세요 ``
-- `Params(dataclass) 를 찾지 못했습니다` — 모듈의 `Params` 가 dataclass 가 아니거나 없습니다.
+- 「on_minute 이 있는 전략 클래스가 없습니다」 — 전략 클래스를 정의하지 않았거나 다른 파일에서 가져오기만 했습니다.
+- 「전략 클래스가 여러 개입니다 (A, B) — 파일 끝에 「STRATEGY = A」 처럼 하나를 고르세요」
+- `Params(dataclass) 를 찾지 못했습니다` — 모듈의 `Params` 도, 전략 `__init__` 첫 인자 주석도 dataclass 가 아닙니다(또는 없습니다).
 - `Params 에 없는 이름: …` — 2장의 6칸 중 빠진 것.
 - `전략에 없는 이름: …` — 인스턴스에 `on_minute`·`p` 가 없습니다.
 - `NAME 은 영문·숫자·_·- 만 쓸 수 있습니다` · `TICK·TICK_VALUE 는 숫자여야 합니다`
@@ -226,6 +227,6 @@ class MeanRevert:
         return [Signal(bar, None, "평균 근처")]
 ```
 
-- `STRATEGY`·`TITLE`·`NAME` 이 없으므로 전략은 `MeanRevert`, 이름은 파일 이름(`my_strategy`), 제목은 클래스 문서 첫 줄입니다.
+- `STRATEGY`·`TITLE`·`NAME` 이 없으므로 전략은 `MeanRevert`, 이름은 파일 이름(`my_strategy`), 제목은 모듈 문서 첫 줄의 「 — 」 앞(`이동평균 되돌림`)입니다.
 - `TICK` 을 기본 공용 모듈에서 가져왔으므로 틱은 0.1, 틱가치는 기본값 1000 입니다.
 - `day`·`on_entry`·`on_exit` 가 없으므로 그날 손절 한도나 청산 뒤 대기는 없습니다. 필요하면 week02 `DayState` 처럼 더하세요.

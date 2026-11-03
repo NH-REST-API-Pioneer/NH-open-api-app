@@ -9,7 +9,7 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
 - 익절 목표는 전략의 `target`, 없으면 `current_vwap`(week02 `runner.make_strategy` 가 VWAP 전략에 붙이던 것),
   둘 다 없으면 익절 없음(`target_of`). 틱·틱가치는 전략 파일의 `TICK`·`TICK_VALUE`(`Loaded`) 를 인자로 받습니다.
 - 전략의 `end_of_day`·`on_entry`·`on_exit` 는 없으면 건너뜁니다(`_hook`). 하루 손절 수(`day.stops`)가 없으면
-  화면의 손절 수는 이 실행기가 센 값입니다.
+  화면의 손절 수는 이 실행기가 센 값 + 오늘 앞선 실행의 손절(`stops_before`)입니다.
 - `signal` 줄은 판정 봉마다 전부 남기고, 지표 칸은 그 봉의 숫자 칸을 모두 담습니다.
 - `trade` 줄에 `reason`·`exit_date` 가 있습니다(그날 손절 수 세기용).
 - `halted`(멈춤) 가 있으면 진입도 청산도 하지 않습니다. 청산이 안 됐는데 계좌 잔고가 기대와
@@ -175,6 +175,7 @@ class Runner:
         self.cur_date: str | None = None
         self.halted: str | None = None        # 멈춘 까닭. 있으면 진입·청산 모두 안 함
         self.last_signal: dict | None = None  # 마지막 판정 봉의 신호 줄
+        self.stops_before = 0                 # 오늘 앞선 실행의 손절 수 — 전략에 `day` 가 없을 때 화면의 손절 수에 더한다
 
     # ---- 시세 넣기
     def feed(self, m: Minute) -> list:
@@ -344,8 +345,9 @@ class Runner:
         """화면에 보일 지금 상태."""
         pos = self.pos
         day = [t for t in self.trades if t.get("exit_date") == self.live_date]
-        # 하루 손절 수는 전략이 진입을 막는 데 쓰는 값(`day.stops`)을 따른다 — 앞선 실행의 손절도 들어 있다
-        own_stops = sum(1 for t in day if t["reason"] == "손절")
+        # 하루 손절 수는 전략이 진입을 막는 데 쓰는 값(`day.stops`)을 따른다 — 앞선 실행의 손절도 들어 있다.
+        # `day` 가 없는 전략이면 이 실행이 센 손절에 앞선 실행의 손절(`stops_before`)을 더한다
+        own_stops = sum(1 for t in day if t["reason"] == "손절") + self.stops_before
         day_stops = getattr(getattr(self.strat, "day", None), "stops", None)
         time_exit = None
         if pos is not None:

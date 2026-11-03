@@ -71,7 +71,7 @@ def test_문법_오류와_약속_위반은_LoadError_메시지에_이유가_있�
 
 
 def test_STRATEGY_도_on_minute_클래스도_없는_모듈은_LoadError():
-    with pytest.raises(LoadError, match="`on_minute` 가 있는 전략 클래스가 없습니다"):
+    with pytest.raises(LoadError, match="on_minute 이 있는 전략 클래스가 없습니다"):
         load(FOLDER, "backtest_dummy.py")
 
 

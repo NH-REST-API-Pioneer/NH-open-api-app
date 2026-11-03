@@ -5,8 +5,10 @@
 week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 고치지 않고 하나만 올려도 됩니다**:
 
 - 파일 끝의 `STRATEGY`·`TITLE`·`NAME` 은 있으면 그대로 쓰고, 없으면 찾습니다 — 전략 클래스는 그 파일에서
-  정의한 클래스 중 `on_minute` 이 있는 것 하나, `NAME` 은 파일 이름, `TITLE` 은 클래스(없으면 모듈) 문서 첫 줄.
-- `Params` 는 모듈의 dataclass `Params`, 없으면 전략 `__init__` 첫 인자의 주석(dataclass). `TICK`·`TICK_VALUE` 가
+  정의한 클래스 중 `on_minute` 이 있는 것 하나, `NAME` 은 파일 이름, `TITLE` 은 모듈 문서 첫 줄의 「 — 」 앞
+  (없으면 클래스 문서 첫 줄, 그것도 없으면 클래스 이름).
+- `Params` 는 이 파일에서 정의한 dataclass `Params` → 전략 `__init__` 첫 인자의 주석(dataclass) → 가져온
+  `Params`(예: `from strategy import Params`) 순서로 찾습니다. `TICK`·`TICK_VALUE` 가
   없으면 미국달러선물 값(0.1·1000) — 장중 실행은 시작할 때 서버 값과 다시 맞춰 봅니다(`live.prepare`).
 - 익절 목표(`target`·`current_vwap`)가 없으면 오류가 아니라 알림(`notes`)만 남깁니다(익절 없이 돕니다).
 - 전략 파일은 `from strategy import ...` 처럼 옆 파일을 이름으로 불러 씁니다. 폴더에 `strategy.py` 가 없으면
@@ -175,10 +177,10 @@ def _strategy_class(module: ModuleType) -> type:
         return module.STRATEGY
     found = _candidates(module)
     if not found:
-        raise LoadError("`on_minute` 가 있는 전략 클래스가 없습니다")
+        raise LoadError("on_minute 이 있는 전략 클래스가 없습니다")
     if len(found) > 1:
         names = ", ".join(c.__name__ for c in found)
-        raise LoadError(f"전략 클래스가 여러 개입니다 ({names}) — 파일 끝에 `STRATEGY = {found[0].__name__}` 처럼 하나를 고르세요")
+        raise LoadError(f"전략 클래스가 여러 개입니다 ({names}) — 파일 끝에 「STRATEGY = {found[0].__name__}」 처럼 하나를 고르세요")
     return found[0]
 
 
@@ -194,10 +196,23 @@ def _first_arg_type(strategy_cls: type) -> object:
 
 
 def _params_class(module: ModuleType, strategy_cls: type) -> type:
-    """모듈의 dataclass `Params`, 아니면 `__init__` 첫 인자 주석의 dataclass. 둘 다 아니면 `LoadError`."""
-    for candidate in (getattr(module, "Params", None), _first_arg_type(strategy_cls)):
-        if isinstance(candidate, type) and dataclasses.is_dataclass(candidate):
-            return candidate
+    """Params 클래스를 이 순서로 찾는다(모두 dataclass 여야 한다). 못 찾으면 `LoadError`.
+
+    1. 이 파일에서 정의한 `Params`
+    2. 전략 `__init__` 첫 인자의 주석
+    3. 가져온 `Params`(예: `from strategy import Params`) — 파일이 자기 Params 를 주석으로 밝혔는데
+       가져온 것이 먼저 잡혀 엉뚱한 값으로 도는 일이 없게 마지막에 본다."""
+    def ok(candidate: object) -> bool:
+        return isinstance(candidate, type) and dataclasses.is_dataclass(candidate)
+
+    own = getattr(module, "Params", None)
+    if ok(own) and own.__module__ == module.__name__:
+        return own
+    annotated = _first_arg_type(strategy_cls)
+    if ok(annotated):
+        return annotated
+    if ok(own):
+        return own
     raise LoadError("Params(dataclass) 를 찾지 못했습니다")
 
 
@@ -208,6 +223,16 @@ def _first_line(doc: object) -> str | None:
             if line.strip():
                 return line.strip()
     return None
+
+
+def _module_title(doc: object) -> str | None:
+    """모듈 문서 첫 줄에서 제목만 — 첫 「 — 」 앞까지, 끝의 「.」 은 뺀다.
+    (`볼린저 밴드 + RSI 평균회귀 전략 — 판정 규칙 한 벌 (2주차 후보 2).` → `볼린저 밴드 + RSI 평균회귀 전략`)"""
+    line = _first_line(doc)
+    if line is None:
+        return None
+    title = line.split(" — ", 1)[0].strip().removesuffix(".").strip()
+    return title or None
 
 
 @dataclass(frozen=True)
@@ -236,7 +261,8 @@ def _check(module: ModuleType, file: str) -> _Checked:
     if hasattr(module, "TITLE"):
         title = str(module.TITLE)
     else:
-        title = (_first_line(getattr(strategy_cls, "__doc__", None)) or _first_line(module.__doc__)
+        # 클래스 문서는 대개 메서드 설명(「1분봉을 넣으면 …」)이라 모듈 문서의 제목이 먼저다
+        title = (_module_title(module.__doc__) or _first_line(getattr(strategy_cls, "__doc__", None))
                  or getattr(strategy_cls, "__name__", name))
     try:
         tick = float(getattr(module, "TICK", DEFAULT_TICK))

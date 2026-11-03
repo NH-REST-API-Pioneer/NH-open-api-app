@@ -107,6 +107,7 @@ class LiveRun:
         # orders 의 MockAccountBroker 는 종목이 정해지는 prepare() 에서 만든다
         self.broker: MockAccountBroker | PaperBroker | None = None if self.orders else PaperBroker(self.j, loaded.tick)
         self.runner = Runner(loaded.new(), self.j, self.broker, loaded.tick, loaded.tick_value)
+        self.runner.stops_before = self.stops_before   # 화면의 오늘 손절 수용(전략에 day 가 없을 때)
         self.sym: str | None = spec.sym
         self.state = "대기"
         self.started_at: str | None = None

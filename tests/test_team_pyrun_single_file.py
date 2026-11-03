@@ -80,7 +80,7 @@ def test_볼린저_원본만_올려도_week02_와_같다(tmp_path):
     folder = _alone(tmp_path, "strategy_bb.py")
     loaded = load(folder, "strategy_bb.py")
     assert loaded.name == "strategy_bb"
-    assert loaded.title == "1분봉을 넣으면 판정 봉을 쌓고, 판정 봉이 닫힐 때 Signal 을 돌려줍니다."
+    assert loaded.title == "볼린저 밴드 + RSI 평균회귀 전략"        # 모듈 문서 첫 줄, 「 — 」 앞까지
     assert (loaded.tick, loaded.tick_value) == (0.1, 1000)        # 기본 공용 모듈에서 import 한 TICK·TICK_VALUE
     assert loaded.strategy_cls.__name__ == "BBRSIReversion" and loaded.params_cls().bar_min == 5
     r = replay(loaded, "20261030", load_minutes(DATA), tmp_path / "out")
@@ -92,18 +92,18 @@ def test_VWAP_원본만_올려도_week02_와_같다(tmp_path):
     folder = _alone(tmp_path, "strategy.py")
     loaded = load(folder, "strategy.py")
     assert loaded.name == "strategy" and loaded.strategy_cls.__name__ == "VWAPReversion"
-    assert loaded.title == "1분봉을 넣으면 VWAP 을 갱신하고, 판정 봉이 닫힐 때 Signal 을 돌려줍니다."
+    assert loaded.title == "VWAP 밴드 평균회귀 전략"
     r = replay(loaded, "20261030", load_minutes(DATA), tmp_path / "out")
     assert [t["reason"] for t in r["trades"]] == ["익절", "익절", "익절", "손절", "손절"]
     assert r["summary"]["net_pnl"] == -21000
 
 
 def test_원본만_둔_폴더의_목록에는_그_파일_하나만_선다(tmp_path):
-    for name, title_start in (("strategy_bb.py", "1분봉을 넣으면 판정 봉"), ("strategy.py", "1분봉을 넣으면 VWAP")):
+    for name, title_start in (("strategy_bb.py", "볼린저 밴드 + RSI 평균회귀 전략"), ("strategy.py", "VWAP 밴드 평균회귀 전략")):
         strategies, modules = scan_all(_alone(tmp_path, name))
         assert modules == [] and [s.file for s in strategies] == [name]     # 기본 공용 모듈은 목록에 없다
         row = strategies[0]
-        assert row.error is None and row.name == name.removesuffix(".py") and row.title.startswith(title_start)
+        assert row.error is None and row.name == name.removesuffix(".py") and row.title == title_start
         assert row.notes == [] and row.params["hold_min"] == 120
 
 
@@ -154,7 +154,7 @@ class Mine:
 # ---------------------------------------------------------------- 전략 클래스 자동 찾기
 def test_on_minute_클래스가_없으면_오류이고_목록에선_공용_모듈이다(tmp_path):
     folder = _write(tmp_path / "s", "util.py", "from dataclasses import dataclass\n" + PARAMS_SRC)
-    with pytest.raises(LoadError, match=re.escape("`on_minute` 가 있는 전략 클래스가 없습니다")):
+    with pytest.raises(LoadError, match=re.escape("on_minute 이 있는 전략 클래스가 없습니다")):
         load(folder, "util.py")
     strategies, modules = scan_all(folder)
     assert strategies == [] and modules == ["util.py"]
@@ -175,7 +175,7 @@ class B(A):
     pass
 '''
     folder = _write(tmp_path / "s", "two.py", body)
-    msg = "전략 클래스가 여러 개입니다 (A, B) — 파일 끝에 `STRATEGY = A` 처럼 하나를 고르세요"
+    msg = "전략 클래스가 여러 개입니다 (A, B) — 파일 끝에 「STRATEGY = A」 처럼 하나를 고르세요"
     with pytest.raises(LoadError) as e:
         load(folder, "two.py")
     assert str(e.value) == msg
@@ -224,6 +224,24 @@ class Bare:
         return []
 ''')
     assert load(folder, "bare.py").title == "Bare"
+    # 모듈 문서가 없으면 클래스 문서 첫 줄. 모듈 문서는 「 — 」 앞까지, 끝의 「.」 은 뺀다
+    _write(folder, "cls_doc.py", "from dataclasses import dataclass\n" + PARAMS_SRC + '''
+
+class Doc:
+    """클래스 설명 — 그대로 둡니다.
+    둘째 줄"""
+
+    def __init__(self, p):
+        self.p = p
+
+    def on_minute(self, m):
+        return []
+''')
+    assert load(folder, "cls_doc.py").title == "클래스 설명 — 그대로 둡니다."
+    _write(folder, "dash.py", '"""긴 제목 — 덧붙임."""\n' + (folder / "cls_doc.py").read_text(encoding="utf-8"))
+    assert load(folder, "dash.py").title == "긴 제목"
+    _write(folder, "dot.py", '"""마침표로 끝나는 제목."""\n' + (folder / "cls_doc.py").read_text(encoding="utf-8"))
+    assert load(folder, "dot.py").title == "마침표로 끝나는 제목"
     _write(folder, "named.py", "from dataclasses import dataclass\n" + PARAMS_SRC + '''
 
 class Named:
@@ -265,6 +283,42 @@ class Mine:
 ''')
     got = load(folder, "cfg.py")
     assert got.params_cls.__name__ == "Settings" and got.new().p.hold_min == 30
+
+
+def test_가져온_Params_보다_init_주석의_자기_Params_가_먼저다(tmp_path):
+    folder = _write(tmp_path / "s", "own.py", '''from dataclasses import dataclass
+
+from strategy import Params  # noqa: F401  — 기본 공용 모듈의 VWAP Params (hold_min 120)
+
+
+@dataclass(frozen=True)
+class MyParams:
+    session_start: str = "090000"
+    session_end: str = "153500"
+    entry_start: str = "093000"
+    entry_end: str = "150000"
+    flatten_at: str = "153000"
+    hold_min: int = 7
+
+
+class Mine:
+    def __init__(self, p: MyParams):
+        self.p = p
+
+    def on_minute(self, m):
+        return []
+''')
+    got = load(folder, "own.py")
+    assert got.params_cls.__name__ == "MyParams" and got.new().p.hold_min == 7
+    # 주석이 없으면 가져온 Params 라도 쓴다(마지막 차례)
+    _write(folder, "imported.py", (folder / "own.py").read_text(encoding="utf-8").replace("p: MyParams", "p"))
+    got = load(folder, "imported.py")
+    assert got.params_cls.__name__ == "Params" and got.new().p.hold_min == 120
+    # 이 파일에서 정의한 Params 는 주석보다 먼저
+    _write(folder, "own_first.py", (folder / "own.py").read_text(encoding="utf-8")
+           .replace("from strategy import Params  # noqa: F401  — 기본 공용 모듈의 VWAP Params (hold_min 120)\n", "")
+           .replace("class MyParams:", "class Params:").replace("p: MyParams", "p: int"))
+    assert load(folder, "own_first.py").params_cls.__name__ == "Params"
 
 
 def test_Params_를_못_찾거나_칸이_모자라면_오류(tmp_path):
@@ -394,6 +448,8 @@ def test_day_on_entry_on_exit_end_of_day_가_없어도_실행기가_돈다(tmp_p
     r.on_price("090200", 1330.0)                                                  # 손절 → on_exit 자리
     assert [t["reason"] for t in r.trades] == ["손절"]
     assert r.snapshot()["stops"] == 1                                             # day 가 없으면 실행기 자신의 수
+    r.stops_before = 2                                                            # 오늘 앞선 실행의 손절
+    assert r.snapshot()["stops"] == 3
 
 
 def test_day_가_없으면_앞선_손절_수를_이어받지_않고_시작한다(tmp_path):
@@ -413,7 +469,7 @@ def test_day_가_없으면_앞선_손절_수를_이어받지_않고_시작한다
     assert run.runner.pos is not None and run.state == "진행 중"
     fake.last = "1300.0"
     run.step(at("093105"))
-    assert [t["reason"] for t in run.runner.trades] == ["손절"] and run.status()["stops"] == 1
+    assert [t["reason"] for t in run.runner.trades] == ["손절"] and run.status()["stops"] == 2   # 앞선 1 + 이 실행 1
     run.finish("중지")
     assert run.state == "끝"
 
@@ -429,4 +485,6 @@ def test_작성_규칙_문서의_예제를_불러온다(tmp_path):
     s = got.new()
     assert callable(s.on_minute)
     r = replay(got, "20261030", load_minutes(DATA), tmp_path / "out")
-    assert "summary" in r
+    # 문서에 적은 결과 그대로 (2026-10-30 리플레이: 53건, −81,000원)
+    assert (r["summary"]["trades"], r["summary"]["net_pnl"]) == (53, -81000)
+    assert "53건, −81,000원" in text

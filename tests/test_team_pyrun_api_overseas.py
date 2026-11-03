@@ -322,3 +322,23 @@ def test_client_를_안_주면_앱의_접속을_쓴다(config, monkeypatch):
     monkeypatch.setattr(runtime, "client", lambda: client)
     api.ovs_price("MKUX26")
     assert 서버_.횟수(PRICE) == 1
+
+
+# ── 쪽 넘기기 (Task 2 · R5) ─────────────────────────────────
+
+
+def test_잔고와_주문내역_쪽은_줄과_다음_키를_함께(config):
+    잔고 = {"Occurs1": [{"occurs1_sym": "MKUX26", "occurs1_trd_tp": "1", "occurs1_opint_qty": "1"}], "nrec": "0001",
+          "nxt_key": " K2 "}
+    내역 = {"Occurs1": [{"occurs1_ord_no": "0000012345", "occurs1_ord_sts": "6"}], "nrec": "0001", "nxt_key": ""}
+    client, 서버_ = 만들기(config, {OPEN_INTEREST: httpx.Response(200, json=잔고),
+                                    ORDER_HISTORY: httpx.Response(200, json=내역)})
+    줄, 다음 = api.ovs_open_interest_page("K1", client=client)
+    assert 줄 == [{"sym": "MKUX26", "trd_tp": "1", "opint_qty": "1"}] and 다음 == "K2"
+    줄, 다음 = api.ovs_order_history_page("H1", client=client)
+    assert 줄[0]["ord_no"] == "0000012345" and 다음 == ""
+    assert 보낸본문(서버_, OPEN_INTEREST) == [{"nxt_key": "K1"}]
+    assert 보낸본문(서버_, ORDER_HISTORY) == [{"trd_div_cd": "0", "inq_div": "0", "nxt_key": "H1", "prd_cd": ""}]
+    # 첫 쪽만 읽던 함수는 그대로 — 빈 키로 부르고 줄만 돌려준다
+    assert api.ovs_open_interest(client=client)[0]["sym"] == "MKUX26"
+    assert 보낸본문(서버_, OPEN_INTEREST)[-1] == {"nxt_key": ""}

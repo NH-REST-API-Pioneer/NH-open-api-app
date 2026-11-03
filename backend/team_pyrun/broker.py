@@ -37,6 +37,11 @@ fill 한 번이 남기는 것 — 실행기가 None 을 받았을 때 잔고를 
 보유가 없을 때도 잔고를 계속 대조합니다(늦은 체결 대비).
 
 API 오류는 전부 여기서 잡습니다. 실행 쪽에서 「전략 코드 예외」와 섞이지 않게 하기 위해서입니다(R16).
+
+**시장(국내·해외)은 어댑터가 압니다**(`markets.adapter`). 브로커는 받은 `api_module` 을 `markets.as_adapter` 로
+감싸 쓰고 — 모듈이면 국내 어댑터, 이미 어댑터면 그대로 — 주문내역 줄의 체결 상태 코드·체결가·체결 시각·상태 이름·
+거부 사유, 주문 답의 기록 칸, 예수금의 기록 칸만 어댑터에서 읽습니다. 위의 주문 규칙(한 번만·관문·`blind`·
+`unresolved`·멈춤)은 시장과 상관없이 같습니다.
 """
 from __future__ import annotations
 
@@ -49,14 +54,13 @@ from backend.nh_api.errors import BusinessError
 from backend.sessions.hours import now_kst
 from backend.team_pyrun.apilog import _redact_error, purpose
 from backend.team_pyrun.journal import Journal
+from backend.team_pyrun.markets import as_adapter
 
-#: 예수금에서 기록하는 칸(week02 와 같음). 수수료·확정손익은 하루 누적값입니다.
-ACCOUNT_KEYS = ("fee", "fut_cls_pl_amt", "pl_tot_pric", "ord_psb_tot_amt")
+# 예수금 기록 칸·체결 상태 코드(전체체결 6, 거부·취소 8·9)는 시장마다라 어댑터에 있습니다
+# (`markets.DomesticAdapter`·`OverseasAdapter` 의 `account_keys`·`filled`·`rejected`).
 FILL_POLLS = 30         # 체결 확인 횟수
 FILL_POLL_SECONDS = 0.5  # 체결 확인 간격 (초) — 30 × 0.5 = 15초
 FEE_RECHECK_SECONDS = 1.0  # 예수금 fee 반영이 늦을 때 한 번 더 보기 전 쉬는 시간
-FILLED = "6"            # 주문내역 `ord_sts`: 전체체결
-REJECTED = ("8", "9")   # 주문내역 `ord_sts`: 거부·취소 — 체결 안 됨이 확인된 것
 UNRESOLVED_MAX_WAITS = 2  # 결과를 모르는 앞선 주문을 이만큼 더 기다려도 모르면 실행을 멈춤
 
 
@@ -68,7 +72,8 @@ def error_text(e: BaseException) -> str:
 class MockAccountBroker:
     """모의계좌에 시장가 주문을 넣고 주문내역으로 체결가를 확인합니다.
 
-    `api_module` 은 `backend.team_pyrun.api` 와 같은 이름의 함수를 가진 것(시험에서는 가짜).
+    `api_module` 은 `backend.team_pyrun.api` 와 같은 이름의 함수를 가진 것(시험에서는 가짜) 또는 시장 어댑터
+    (`markets.adapter`). 모듈이면 국내 어댑터로 감쌉니다.
     `today`(YYYYMMDD)는 예수금 조회 날짜 — 없으면 지금 한국 날짜."""
 
     mode = "mock-account"
@@ -76,7 +81,7 @@ class MockAccountBroker:
     def __init__(self, api_module: ModuleType | Any, sym: str, journal: Journal, exec_cnd: str = "1",
                  sleep: Callable[[float], None] = time.sleep, *, today: str | None = None,
                  expected: Callable[[], int] | None = None, halt: Callable[[str], None] | None = None):
-        self.api, self.sym, self.j, self.exec_cnd = api_module, sym, journal, exec_cnd
+        self.api, self.sym, self.j, self.exec_cnd = as_adapter(api_module), sym, journal, exec_cnd
         self.sleep = sleep
         self.today = today or now_kst().strftime("%Y%m%d")
         self.last_fee: float | None = None          # 마지막으로 본 예수금 fee (하루 누적)
@@ -104,7 +109,7 @@ class MockAccountBroker:
         try:
             with purpose("예수금"):
                 dep = self.api.deposit(self.today)
-            snap = {k: self.api.num(dep.get(k)) for k in ACCOUNT_KEYS}
+            snap = {k: self.api.num(dep.get(k)) for k in self.api.account_keys}
         except Exception as e:      # 기록용 조회라 어떤 오류도 매매를 멈추지 않게
             self.j.write("event", clock=clock, text=f"예수금 조회 실패 ({why})", error=error_text(e))
             return None
@@ -210,11 +215,12 @@ class MockAccountBroker:
                 self._halt(f"결과를 모르는 주문 {no} 을 주문내역에서 찾지 못함 — 새 주문 안 냄")
                 return True
             sts = str(mine[0].get("ord_sts", "")).strip()
-            if sts in REJECTED:
+            if sts in self.api.rejected:
                 self.unresolved = None
-                self.j.write("event", clock=clock, ord_no=no, text=f"앞선 주문 {mine[0].get('ord_sts_nm')} 확인 — 체결 안 됨")
+                self.j.write("event", clock=clock, ord_no=no,
+                             text=f"앞선 주문 {self.api.status_name(mine[0])} 확인 — 체결 안 됨")
                 return False
-            if sts == FILLED:
+            if sts == self.api.filled:
                 return self._filled_unresolved(no, clock)
         self._mark_unknown()
         self.unresolved_checks += 1
@@ -302,8 +308,8 @@ class MockAccountBroker:
             return None
         res = res if isinstance(res, dict) else {}
         ord_no = str(res.get("ord_no") or "").strip()
-        self.j.write("order", clock=clock, side=side, ord_no=ord_no, msg_cd=res.get("msg_cd"),
-                     msg_cntn=res.get("msg_cntn"), ok=bool(ord_no), text=f"시장가 1계약 · {why}")
+        self.j.write("order", clock=clock, side=side, ord_no=ord_no, **self.api.order_log(res),
+                     ok=bool(ord_no), text=f"시장가 1계약 · {why}")
         if not ord_no:
             self._sent_blind(side, pre)     # 응답은 왔지만 주문번호가 없다 — 접수 여부는 잔고로
             return None
@@ -357,9 +363,9 @@ class MockAccountBroker:
                 continue
             last = mine[0]
             sts = str(last.get("ord_sts", "")).strip()
-            if sts == FILLED:
-                # avg_exec_pric 가 "0000…0.000" 으로 올 때가 있어 0 이면 exec_pric 를 씀 (week02 10/29 수정)
-                px = (self.api.num(last.get("avg_exec_pric")) or self.api.num(last.get("exec_pric"))) or None
+            if sts == self.api.filled:
+                # 체결가 칸은 시장마다 다름 — 국내 avg_exec_pric(0 이면 exec_pric, week02 10/29), 해외 exec_pric(0 이면 ord_avg_pric)
+                px = self.api.fill_price(last)
                 price_read = px is not None
                 if not price_read:
                     px = ref_price
@@ -367,13 +373,13 @@ class MockAccountBroker:
                                  text=f"전체체결 확인, 체결가를 읽지 못함 — 기준가 {ref_price} 로 기록")
                 self.last_fill_fee = self._fee_after_fill(clock)
                 self.j.write("fill", clock=clock, side=side, price=px, ord_no=ord_no, source="order-history",
-                             price_read=price_read, exec_qty=last.get("exec_qty"), exec_tm=last.get("exch_exec_tm"),
+                             price_read=price_read, exec_qty=last.get("exec_qty"), exec_tm=self.api.fill_time(last),
                              fee=self.last_fill_fee, fee_total=self.last_fee,
                              text="모의계좌 체결" if price_read else "모의계좌 체결 · 가격은 기준가")
                 return px
-            if sts in REJECTED:
-                self.j.write("event", clock=clock, ord_no=ord_no, text=f"주문 {last.get('ord_sts_nm')}",
-                             reject=last.get("ord_rejt_rsn"), raw=last)
+            if sts in self.api.rejected:
+                self.j.write("event", clock=clock, ord_no=ord_no, text=f"주문 {self.api.status_name(last)}",
+                             reject=self.api.reject_reason(last), raw=last)
                 return None
         self._mark_unknown()
         self.unresolved, self.unresolved_side, self.unresolved_checks = ord_no, side, 0

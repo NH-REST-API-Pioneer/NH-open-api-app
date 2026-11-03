@@ -354,7 +354,21 @@ def ovs_open_interest(*, client: TradeClient | None = None) -> list[dict]:
     근거: week03 `nh_client.ovs_open_interest`(요청 `nxt_key`) 와 운영자 `overseas_account.py`(:333~353 읽는 칸).
     **기록이 없습니다.** 보유가 없으면 빈 목록. 종목은 호출한 쪽이 거릅니다(`ovs_net_position`).
     """
-    return rows(_query("overseas_open-interest", {"nxt_key": ""}, client))
+    return ovs_open_interest_page(client=client)[0]
+
+
+def ovs_open_interest_page(nxt_key: str = "", *, client: TradeClient | None = None) -> tuple[list[dict], str]:
+    """해외 잔고 한 쪽 — (줄, 다음 쪽 키). 키가 비면 첫 쪽. 쪽을 따라가며 합치는 일은 `markets` 의 해외 어댑터가 합니다.
+
+    다음 쪽 키는 본문의 `nxt_key`(운영자 `overseas_account.open_interest`:357 이 화면에 넘기는 그 칸).
+    """
+    body = _query("overseas_open-interest", {"nxt_key": nxt_key}, client)
+    return rows(body), _next_key(body)
+
+
+def _next_key(body: Any) -> str:
+    """응답의 다음 쪽 키(`nxt_key`, 앞뒤 빈칸 뗌). 없으면 빈 문자열 — 운영자 해외 계좌 해석과 같은 읽기."""
+    return str(body.get("nxt_key") or "").strip() if isinstance(body, dict) else ""
 
 
 def ovs_order_history(*, client: TradeClient | None = None) -> list[dict]:
@@ -364,9 +378,18 @@ def ovs_order_history(*, client: TradeClient | None = None) -> list[dict]:
     운영자 `overseas_account.order_history`(:420~475 읽는 칸). **기록이 없습니다.** 국내와 달리 조회구분이 `inq_div`
     이고 매수매도가 `trd_div_cd`/`trd_tp` 입니다.
     """
-    return rows(_query("overseas_order-history", {
-        "trd_div_cd": "0", "inq_div": "0", "nxt_key": "", "prd_cd": "",
-    }, client))
+    return ovs_order_history_page(client=client)[0]
+
+
+def ovs_order_history_page(nxt_key: str = "", *, client: TradeClient | None = None) -> tuple[list[dict], str]:
+    """해외 주문내역 한 쪽 — (줄, 다음 쪽 키). 요청 값은 `ovs_order_history` 와 같고 `nxt_key` 만 바뀝니다.
+
+    다음 쪽 키는 본문의 `nxt_key`(운영자 `overseas_account.order_history`:478).
+    """
+    body = _query("overseas_order-history", {
+        "trd_div_cd": "0", "inq_div": "0", "nxt_key": nxt_key, "prd_cd": "",
+    }, client)
+    return rows(body), _next_key(body)
 
 
 def ovs_market_order(sym: str, side: str, qty: int = 1, *, client: TradeClient | None = None) -> dict:

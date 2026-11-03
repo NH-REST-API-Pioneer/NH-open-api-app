@@ -14,6 +14,8 @@ import {
   type PyStrategyFile,
 } from '../../data/pyrun'
 import { moneyIn } from '../../lib/number'
+import { useMasterStatus } from '../../lib/useMaster'
+import { PySymbolPicker, symText } from './PySymbolPicker'
 
 /* 팀: 「파이썬 전략」 왼쪽 열 — ① 전략 파일 ② 실행 목록, 그리고 「+ 실행 세우기」 폼.
  * 얼굴은 「전략 진행」의 실행 카드(`.run-runs` · `.run-row`)를 그대로 씁니다. */
@@ -491,6 +493,8 @@ export function PyAddForm({
   const [sym, setSym] = useState('')
   const [sending, setSending] = useState(false)
   const [why, setWhy] = useState<string | null>(null)
+  // 확인 얼굴의 종목 글이 마스터를 읽으므로, 마스터가 도착하면 다시 그립니다.
+  useMasterStatus()
 
   async function send() {
     if (sending || !file) return
@@ -523,7 +527,7 @@ export function PyAddForm({
           </div>
           <div className="run-confirm-row">
             <dt>종목</dt>
-            <dd>{sym.trim() || '최근월물'}</dd>
+            <dd>{symText(sym)}</dd>
           </div>
         </dl>
         <p className="run-approve">{ORDERS_CONFIRM_TEXT}</p>
@@ -568,16 +572,8 @@ export function PyAddForm({
           <option value="orders">모의 계좌</option>
         </select>
       </label>
-      <label className="run-add-row">
-        <span className="run-add-label">종목</span>
-        <input
-          className="control"
-          value={sym}
-          placeholder="빈칸 = 최근월물"
-          spellCheck={false}
-          onChange={(e) => setSym(e.target.value)}
-        />
-      </label>
+      {/* 종목은 검색해서 고릅니다 — 미국달러선물만 고를 수 있고, 안 고르면 서버가 최근월물을 정합니다. */}
+      <PySymbolPicker sym={sym} onChange={setSym} />
       <div className="run-add-acts">
         <button type="button" className="btn btn-quiet" aria-disabled={sending || undefined} onClick={() => !sending && onCancel()}>
           그만두기

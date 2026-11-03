@@ -38,6 +38,39 @@ export function modeLabel(mode: string | null | undefined): string {
 export const ORDERS_CONFIRM_TEXT =
   '모의 계좌로 실제 주문이 나갑니다. 실행 중엔 이 종목을 다른 곳(일반주문·조건식 전략)에서 주문하지 마세요.'
 
+/* ── 종목 고르기 ──────────────────────────────────────── */
+
+/** 이 실행기가 돌리는 종목코드의 앞부분(미국달러선물). 서버(`registry.py` 의 `USD_PREFIX`)와 같은 값입니다 —
+ *  서버가 다른 종목을 거절하므로, 화면은 미리 못 고르게만 합니다. */
+export const USD_PREFIX = 'A75'
+/** 마스터의 미국달러 품목 코드. 「최근월물」이 어느 코드인지 보여 줄 때 이 품목의 월물을 봅니다. */
+export const USD_PRODUCT = 'USD'
+/** 미국달러선물이 아닌 종목 줄에 서는 까닭. */
+export const SYM_REFUSED = '이 실행기는 미국달러선물만 됩니다'
+/** 종목을 안 고른 기본 선택. 서버가 최근월물을 고릅니다(`sym: null`). */
+export const SYM_AUTO = '최근월물 (자동)'
+
+export function isUsdFutures(code: string): boolean {
+  return code.startsWith(USD_PREFIX)
+}
+
+/** 고를 수 있는 코드인지. 못 고르면 줄 오른쪽에 설 까닭이 함께 옵니다. */
+export function symVerdict(code: string): { ok: true } | { ok: false; reason: string } {
+  return isUsdFutures(code) ? { ok: true } : { ok: false, reason: SYM_REFUSED }
+}
+
+/** 기본 선택의 글. 최근월물 코드를 마스터에서 알면 옆에 붙이고, 모르면 뺍니다. */
+export function autoSymLabel(autoCode: string | null): string {
+  return autoCode ? `${SYM_AUTO} · ${autoCode}` : SYM_AUTO
+}
+
+/** 지금 고른 종목의 글. `sym` 이 비면 기본 선택, 아니면 「이름 · 코드」(이름을 모르면 코드만). */
+export function symLabel(sym: string, name: string | null, autoCode: string | null): string {
+  const code = sym.trim()
+  if (code === '') return autoSymLabel(autoCode)
+  return name ? `${name} · ${code}` : code
+}
+
 export interface PyStrategyFile {
   file: string
   name: string

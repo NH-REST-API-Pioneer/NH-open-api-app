@@ -39,14 +39,19 @@ const RECENT_SHOWN = 5
 
 /** 목록에 서는 한 줄 — 검색 결과 그대로이거나, 같은 품목의 담을 수 없는 종목
  *  여럿을 접은 한 줄입니다. */
-type PickerRow =
+// 팀: 「파이썬 전략」의 종목 고르기(`screens/team/PySymbolPicker.tsx`)가 같은 접기를 쓰려고 내보냅니다.
+export type PickerRow =
   | Hit
   | { row: 'folded'; key: string; market: Market; product: Product; reason: string }
 
 /** 같은 품목에서 같은 까닭으로 담을 수 없는 종목 행들을 한 줄로 접습니다 —
  *  코드로 걸린 옵션 월물이 열 줄 서면 목록이 까닭으로 찹니다. 담을 수 있는
  *  행과 품목 행은 그대로 둡니다. */
-function foldUnwatchable(hits: Hit[]): PickerRow[] {
+// 팀: 판정 함수를 인자로 받습니다(기본은 이 창의 `watchable`). 「파이썬 전략」은 미국달러선물만 고르게 합니다.
+export function foldUnwatchable(
+  hits: Hit[],
+  verdictOf: (code: string) => { ok: true } | { ok: false; reason: string } = watchable,
+): PickerRow[] {
   const out: PickerRow[] = []
   const folded = new Map<string, Extract<PickerRow, { row: 'folded' }>>()
   for (const hit of hits) {
@@ -54,7 +59,7 @@ function foldUnwatchable(hits: Hit[]): PickerRow[] {
       out.push(hit)
       continue
     }
-    const verdict = watchable(hit.ref.code)
+    const verdict = verdictOf(hit.ref.code)
     if (verdict.ok) {
       out.push(hit)
       continue

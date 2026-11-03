@@ -317,3 +317,60 @@
   color: var(--text);
   word-break: keep-all;
 }
+
+/* ── 실행 세우기의 종목 고르기 ─────────────────────────────
+ * 칸은 「실행 세우기」 폼의 다른 줄과 같은 자리(`.run-add-row`)이고, 목록은 그 아래에 창 안에서 펼쳐집니다.
+ * 줄 모양은 상단 검색·관심종목 담기 창의 `.search-row` 를 그대로 씁니다. */
+.pyrun-sym {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 고른 종목의 글이 「이름 · 코드」로 길어 폼 기본 폭(200)에는 안 들어갑니다. 남는 폭을 다 쓰고 왼쪽에서 읽습니다. */
+.run-add .pyrun-sym-input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.pyrun-sym-list {
+  flex: 0 0 auto;
+  max-height: 280px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* 이 목록은 마우스로 고릅니다(화살표 커서가 없습니다). 관심종목 담기 창과 같이 올라간 줄에 바탕을 깝니다. */
+.pyrun-sym-list .search-row:not(:disabled):hover {
+  background: var(--hover);
+}
+
+/* 고를 수 없는 줄. 투명도로 흐리지 않고 이름만 흐림 글자로 둡니다 — 까닭이 제일 먼저 읽혀야 합니다. */
+.pyrun-sym-list .search-row:disabled {
+  cursor: default;
+}
+
+.pyrun-sym-list .search-row:disabled .search-row-name {
+  color: var(--text-dim);
+}
+
+.pyrun-sym-list .search-row:disabled .search-row-code {
+  color: var(--text-label);
+}
+
+.pyrun-sym-list .search-row:disabled:hover {
+  background: none;
+}
+
+/* 지금 고른 줄. */
+.pyrun-sym-list .search-row.is-picked .search-row-name {
+  color: var(--brand);
+}
+
+/* 닫혀 있는 칸은 눌러서 여는 칸입니다. */
+.run-add .pyrun-sym-input[readonly] {
+  cursor: pointer;
+}

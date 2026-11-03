@@ -330,3 +330,44 @@ def test_시작은_JSON_Content_Type_만_받는다(client, untouched):
         r = client.post(f"{BASE}/runs", content=body, headers={"Content-Type": ctype})
         assert r.status_code == 415, ctype
     assert client.post(f"{BASE}/runs", content=body).status_code == 415             # 헤더 없음도 JSON 이 아니다
+
+
+# ---------------------------------------------------------------- 시험은 사용자 홈의 실행 폴더를 건드리지 않는다
+def _outside_home(path):
+    from pathlib import Path
+    return not Path(path).resolve().is_relative_to(Path.home().resolve())
+
+
+def test_앱_수명을_돌려도_파이썬_전략_레지스트리는_사용자_홈_밖이다(monkeypatch):
+    """`main.lifespan` 은 `pyrun_startup()` → `registry()` → `recover()` 를 부른다. 시험에서 그 레지스트리가
+    `~/NHFutures/state/pyruns`·`~/NHFutures/strategies` 를 가리키면 사용자의 실행 폴더를 「끝·재시작」으로 고쳐 쓴다."""
+    r = registry_mod.registry()                 # 먼저 본다 — 홈을 가리키면 수명을 돌리기 전에 멈춘다
+    assert _outside_home(r.root) and _outside_home(r.strategies), (r.root, r.strategies)
+
+    class _펌프:
+        def __init__(self, service):
+            pass
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    async def _아무것도():
+        return None
+
+    monkeypatch.setattr(app_main.strategy_pump, "RunPump", _펌프)
+    for name in ("_prepare_master", "_prepare_sessions", "_keep_fresh"):
+        monkeypatch.setattr(app_main, name, _아무것도)
+    monkeypatch.setattr(nh_client, "call_observer", None)
+
+    async def 띄워보기():
+        async with app_main.lifespan(app_main.app):
+            await asyncio.sleep(0)
+
+    asyncio.run(띄워보기())
+    r = registry_mod.registry()
+    assert _outside_home(r.root) and _outside_home(r.strategies), (r.root, r.strategies)
+    with pytest.raises(AssertionError, match="NH"):
+        r._api.open_interest()                  # 시험 레지스트리의 api 는 부르면 실패한다

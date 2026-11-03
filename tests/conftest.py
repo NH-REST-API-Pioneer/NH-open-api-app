@@ -22,6 +22,10 @@
 폴더에 쓸모없는 인증 자료가 남습니다. 시험마다 조심하는 규율에 기대지 않고
 여기서 한 번에 돌려 둡니다.
 
+**파이썬 전략 실행 레지스트리도 사용자 홈 밖에 세워 둡니다**(팀). 앱 수명(`main.lifespan`)을
+지나는 시험은 `registry()` 를 부르고, 그 레지스트리는 켜질 때 `~/NHFutures/state/pyruns` 의 남은 실행을
+「끝·재시작」으로 닫습니다. 미리 임시 폴더의 레지스트리를 넣어 두고, 그 api 는 부르면 실패합니다.
+
 **종목 마스터도 저장소 안의 조각으로 돕니다**(`실마스터`). 앞서는 사용자 홈에
 내려받아 둔 실물을 읽고 없으면 건너뛰었는데, 그러면 시험의 변별력이 **어느 날
 사본이냐**에 따라 달라지고 갓 받은 사람에게서는 아예 돌지 않습니다.
@@ -212,3 +216,27 @@ def _주문_결과_확인은_시험에서_끈다(monkeypatch):
 
     monkeypatch.setattr(order_outcome, "WAITS", ())
     monkeypatch.setattr(order_outcome, "sleep", lambda _초: None)
+
+
+class _파이썬_전략_api_막힘:
+    """파이썬 전략 실행의 api 자리(`backend.team_pyrun.api` 와 같은 이름)를 무엇이든 부르면 실패하게."""
+
+    def __getattr__(self, 이름):
+        def 막힘(*_a, **_k):
+            raise AssertionError(f"시험이 파이썬 전략 실행으로 NH 를 부르려 했습니다: {이름}")
+
+        return 막힘
+
+
+@pytest.fixture(autouse=True)
+def _파이썬_전략_실행은_임시_자리로(tmp_path_factory, monkeypatch):
+    """팀: `registry()` 싱글턴을 시험마다 임시 폴더의 `Registry` 로 둡니다(스레드 없음, api 는 부르면 실패).
+
+    자리를 직접 바꿔 쓰는 시험(`monkeypatch.setattr(registry, "_registry", …)`)은 그 위에 덮어쓰고,
+    끝나면 이 값으로 돌아왔다가 시험이 끝날 때 원래 값으로 돌아갑니다."""
+    from backend.team_pyrun import registry as registry_lib
+
+    자리 = tmp_path_factory.mktemp("pyrun")
+    monkeypatch.setattr(registry_lib, "_registry", registry_lib.Registry(
+        자리 / "pyruns", 자리 / "strategies", start_thread=False, api_module=_파이썬_전략_api_막힘(),
+        sleep=lambda _초: None))

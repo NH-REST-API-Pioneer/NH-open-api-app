@@ -554,10 +554,23 @@ class Runner:
         if not isinstance(got, dict):
             return None
 
-        def ok(v: object) -> bool:
-            return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
-
-        return {k: None if got[k] is None else float(got[k]) for k in ("stop", "target") if k in got and ok(got[k])}
+        out: dict = {}
+        for k in ("stop", "target"):
+            if k not in got:
+                continue
+            v = got[k]
+            if v is None:
+                out[k] = None
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                continue        # 수가 아님 → 원래 값
+            try:
+                f = float(v)    # 아주 큰 정수는 여기서 OverflowError — 원래 값
+            except OverflowError:
+                continue
+            if math.isfinite(f):
+                out[k] = f
+        return out
 
     def snapshot(self) -> dict:
         """화면에 보일 지금 상태."""

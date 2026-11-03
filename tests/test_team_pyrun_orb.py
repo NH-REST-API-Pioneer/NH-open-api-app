@@ -7,10 +7,12 @@ week03 `backtest.py` 로 낸 `results/backtest_orb/start_all.json`(20261012~2026
 - `signal_time` — 앱은 판정한 1분봉이 **끝난** 시각, 백테스트는 그 분의 **시작** 시각(`s.minute.time`) → 1분 차이.
 week03 파일은 내려받은 것이라 실행하지 않고, 같은 바이트를 시험 자료로 두고 앱 로더로만 불러옵니다.
 """
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +28,12 @@ APP_FILE = HERE.parent / "docs/team/examples/strategy_orb_app.py"
 CSV = WEEK03 / "bars_1m_MKUX26.csv"
 GOLDEN = WEEK03 / "start_all.json"
 DATA_FROM, DATA_TO = "20261012", "20261102"     # week03 backtest.py DATA_FROM·DATA_TO
+
+#: week03 원본(내려받은 그대로)의 sha256 — 복사본이 한 바이트도 바뀌지 않았음을 지킨다
+WEEK03_SHA256 = {
+    "strategy_orb.py": "486ba7dc3d19705578808e1c62e246990942a0fa7c283b14ce59f719fdbc597e",
+    "common.py": "acc75dd9d33a47e1f5232ce41dc6fd7b207cbeee1ab505668b6d0388f697f1a7",
+}
 
 #: 앱 사유 → 백테스트 사유 (비교에서만)
 REASON_MAP = {"장 마감 정리": "마감 정리"}
@@ -82,6 +90,8 @@ def test_앱_ORB_파일은_strategy_orb_py_를_고치지_않는다():
     text = APP_FILE.read_text(encoding="utf-8")
     assert "from strategy_orb import Params, SessionBreakout" in text
     assert "def on_minute" not in text and "def on_entry" not in text and "def _decide" not in text
+    # 시험 자료의 week03 원본 두 개가 내려받은 바이트 그대로인가 (scratchpad week03 원본의 sha256)
+    assert {name: hashlib.sha256((WEEK03 / name).read_bytes()).hexdigest() for name in WEEK03_SHA256} == WEEK03_SHA256
 
 
 # ---------------------------------------------------------------- 골든
@@ -115,6 +125,96 @@ def test_MKU_리플레이의_기록과_run_json(folder, tmp_path):
     assert (run["mode"], run["sym"], run["state"]) == ("replay", "MKUX26", "끝")
     params = json.loads((out / "summary.json").read_text(encoding="utf-8"))["strategy"]["params"]
     assert params["session_start"] == "082500" and params["range_min"] == 15
+
+
+# ---------------------------------------------------------------- exit_reason 직접 시험 (골든이 안 지나는 규칙)
+@pytest.fixture
+def orb(folder):
+    """해외 시간표로 채운 앱 ORB 전략 (hold_min 120 · flatten 23:50)."""
+    return load(folder, "strategy_orb_app.py").new(OVERSEAS)
+
+
+def _pos(side, entry, entry_time="093000", *, low=0.7480, high=0.7520, target_ticks=10, exit_by="170000"):
+    """실행기가 넘기는 보유 사본 꼴. 신호는 ORB Signal 에서 exit_reason 이 읽는 칸만."""
+    sig = SimpleNamespace(range_low=low, range_high=high, target_ticks=target_ticks, exit_by=exit_by)
+    return {"side": side, "entry": entry, "entry_time": entry_time, "entry_date": "20261030",
+            "signal_time": entry_time, "stop": None, "stop_ticks": 20, "signal": sig}
+
+
+def test_매수_시가가_손절가_아래면_시가로_손절_아니면_손절가로(orb):
+    pos = _pos("buy", 0.7500)            # 손절 = 범위 아래 끝 0.7480, 익절 = 0.7500 + 10틱 = 0.7510
+    # 시가 물음(가격 하나): 시가 0.7470 이 이미 손절가 아래 → 시가 = min(시가, 손절가)
+    assert orb.exit_reason("100000", 0.7470, None, None, pos) == ("손절", 0.7470)
+    # 시가 0.7490 은 손절가 위 → 시가 물음은 들고 있음, 범위 물음(저가 0.7475)에서 손절가 = min(시가, 손절가)
+    assert orb.exit_reason("100000", 0.7490, None, None, pos) is None
+    assert orb.exit_reason("100000", 0.7485, 0.7475, 0.7492, pos) == ("손절", 0.7480)
+    # 같은 분에 둘 다 닿으면 손절 먼저 (backtest 147~154 순서)
+    assert orb.exit_reason("100000", 0.7500, 0.7475, 0.7515, pos) == ("손절", 0.7480)
+
+
+def test_매수_익절_갭은_시가로_닿으면_목표가로(orb):
+    pos = _pos("buy", 0.7500)
+    assert orb.exit_reason("100000", 0.7515, None, None, pos) == ("익절", 0.7515)       # max(시가, 목표)
+    assert orb.exit_reason("100000", 0.7505, 0.7501, 0.7512, pos) == ("익절", 0.7510)
+
+
+def test_매도는_거울_시가가_손절가_위면_시가로_익절_갭도_시가로(orb):
+    pos = _pos("sell", 0.7500)           # 손절 = 범위 위 끝 0.7520, 익절 = 0.7500 − 10틱 = 0.7490
+    assert orb.exit_reason("100000", 0.7530, None, None, pos) == ("손절", 0.7530)       # max(시가, 손절가)
+    assert orb.exit_reason("100000", 0.7510, None, None, pos) is None
+    assert orb.exit_reason("100000", 0.7512, 0.7505, 0.7525, pos) == ("손절", 0.7520)
+    assert orb.exit_reason("100000", 0.7485, None, None, pos) == ("익절", 0.7485)       # min(시가, 목표)
+    assert orb.exit_reason("100000", 0.7495, 0.7488, 0.7499, pos) == ("익절", 0.7490)
+
+
+def test_exit_by_가_hold_min_보다_이르면_다음_개장_전_청산(orb):
+    # 17:10 진입 · hold_min 120 → 19:10, 신호의 exit_by 19:00 이 더 이름
+    pos = _pos("buy", 0.7500, "171000", exit_by="190000")
+    assert orb.exit_reason("185900", 0.7500, None, None, pos) is None
+    assert orb.exit_reason("190000", 0.7502, None, None, pos) == "다음 개장 전 청산"   # 그 분 시가에서
+    # exit_by 가 더 늦으면 hold_min 의 「시간 청산」
+    late = _pos("buy", 0.7500, "171000", exit_by="223000")
+    assert orb.exit_reason("190900", 0.7500, None, None, late) is None
+    assert orb.exit_reason("191000", 0.7500, None, None, late) == "시간 청산"
+
+
+def test_기한은_진입한_분이_지나야(orb):
+    # 성긴 봉으로 exit_by(17:00) 뒤인 17:05 에 진입 — backtest 1단계는 그 분 전부터 든 보유만 보므로 그 분엔 기한 없음
+    pos = _pos("buy", 0.7500, "170500", exit_by="170000")
+    assert orb.exit_reason("170500", 0.7500, None, None, pos) is None
+    assert orb.exit_reason("170500", 0.7500, 0.7499, 0.7501, pos) is None
+    assert orb.exit_reason("170600", 0.7500, None, None, pos) == "다음 개장 전 청산"
+
+
+def test_휴장_중엔_손절_익절_없이_기한만(orb):
+    pos = _pos("buy", 0.7500, "184000", exit_by="223000")   # 기한 = 18:40 + 120분 = 20:40 (휴장 20:35~20:50)
+    early = _pos("buy", 0.7500, "190000", exit_by="223000")
+    # 20:40 은 매매 시간 밖 — 손절가·목표가를 지나도 None (backtest 141 `tradable`)
+    assert orb.exit_reason("203400", 0.7470, None, None, early) == ("손절", 0.7470)      # 20:34 는 매매 시간
+    assert orb.exit_reason("204000", 0.7470, None, None, early) is None
+    assert orb.exit_reason("204000", 0.7500, 0.7470, 0.7530, early) is None
+    assert orb.exit_reason("204000", 0.7515, None, None, early) is None
+    # 기한은 매매 시간 밖이어도 그 분 시가에서 (backtest 111~116 은 tradable 을 보지 않음)
+    assert orb.exit_reason("204000", 0.7470, None, None, pos) == "시간 청산"
+    # 휴장 끝(20:50)부터 다시 손절
+    assert orb.exit_reason("205000", 0.7470, None, None, early) == ("손절", 0.7470)
+
+
+def test_실행기에서_시가_갭_손절은_시가_슬리피지로_체결(orb, tmp_path):
+    j = Journal(tmp_path / "journal.jsonl")
+    r = Runner(orb, j, PaperBroker(j, 0.0001, fee=0.0, slip_ticks=1), 0.0001, 2.5)
+    r.live_date = "20261030"
+    # 09:15 까지 범위(0.7480~0.7500, 20틱), 09:15 봉 종가 0.7502 가 위로 돌파 → 09:16 시가에 매수
+    for i in range(15):
+        r.on_minute_closed(Minute("20261030", f"09{i:02d}00", 0.7490, 0.7500, 0.7480, 0.7490, 1))
+    r.on_minute_closed(Minute("20261030", "091500", 0.7500, 0.7502, 0.7499, 0.7502, 1))
+    assert r.pending is not None
+    r.on_price("091600", 0.7503)
+    r.on_price("091600", 0.7503, ref_low=0.7501, ref_high=0.7504)
+    assert r.pos is not None and r.pos["entry"] == 0.7504
+    r.on_price("091700", 0.7470)             # 시가가 범위 아래 끝 0.7480 을 이미 지남 → 시가 − 1틱
+    assert [(t["reason"], t["exit"], t["exit_time"]) for t in r.trades] == [("손절", 0.7469, "091700")]
+    assert orb.day.stops == 1
 
 
 # ---------------------------------------------------------------- 화면의 손절·익절 (exit_levels)
@@ -193,7 +293,11 @@ def test_exit_levels_가_틀린_값이나_예외면_원래_값을_보인다(tmp_
         def exit_levels(self, pos):
             return {"stop": "높음", "target": float("nan")}
 
-    for cls in (Bad, Odd):
+    class Huge(_Levels):
+        def exit_levels(self, pos):
+            return {"stop": 10**400, "target": -(10**400)}     # float 로 못 바꾸는 큰 정수 — OverflowError 가 새지 않게
+
+    for cls in (Bad, Odd, Huge):
         j = Journal(tmp_path / f"{cls.__name__}.jsonl")
         r = Runner(cls(_P()), j, PaperBroker(j, 0.1, fee=0.0, slip_ticks=0), 0.1, 1000)
         r.live_date = "20261030"

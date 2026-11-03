@@ -209,7 +209,6 @@ export function PySymbolPicker({ sym, onChange }: { sym: string; onChange: (sym:
           className="control pyrun-sym-input"
           type="text"
           aria-labelledby={`${listId}-label`}
-          aria-expanded={open}
           autoComplete="off"
           spellCheck={false}
           /* 닫혀 있을 때는 지금 고른 것을 보이고, 열면 비워서 바로 칠 수 있게 합니다. */

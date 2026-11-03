@@ -134,6 +134,21 @@ def test_요약에_전략_정보가_없으면_params_는_null(client, reg):
     assert client.get(f"{BASE}/runs/20261028_fake_old").json()["params"] is None
 
 
+def test_이_앱에서_끝난_실행도_요약과_결과_모름_주문을_합쳐_돌려준다(client, reg):
+    """끝난(끝·오류) 실행은 이 프로세스가 세운 것이어도 폴더에서 읽은 것과 같은 칸(`summary`·`unresolved_order`)이 온다."""
+    run_id = client.post(f"{BASE}/runs", json={"file": "fake.py", "mode": "paper", "sym": None}).json()["id"]
+    assert client.post(f"{BASE}/runs/{run_id}/stop").status_code == 204
+    folder = reg.root / run_id
+    s = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
+    s["unresolved_order"] = {"side": "buy", "pre": 0, "post": 1}
+    (folder / "summary.json").write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
+    body = client.get(f"{BASE}/runs/{run_id}").json()
+    assert body["state"] == "끝" and body["id"] == run_id
+    assert body["summary"] == s["summary"] and body["summary"]["trades"] == 0
+    assert body["unresolved_order"] == {"side": "buy", "pre": 0, "post": 1}
+    assert body["params"]["bar_min"] == 1 and "halted" in body
+
+
 def test_없는_실행은_404(client):
     for path in ("", "/journal", "/api-log", "/bars", "/download"):
         assert client.get(f"{BASE}/runs/20200101_none_paper{path}").status_code == 404, path

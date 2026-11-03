@@ -135,24 +135,34 @@ def start_run(body: StartBody) -> dict[str, Any]:
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict[str, Any]:
-    """도는(이 앱에서 세운) 실행은 `status()`, 그 밖에는 `run.json` + `summary`(요약 파일의 `summary`, 없으면 null)."""
+    """도는(이 앱에서 세운) 실행은 `status()`, 그 밖에는 `run.json`. 끝난 실행(끝·오류)이면 이 앱에서 세운 것이어도
+    요약 파일에서 `summary`(없으면 null)·`halted`·`unresolved_order`·`params` 를 합친다."""
     live = registry().get(run_id)
     if live is not None:
-        return live.status()
+        data = live.status()
+        if data.get("state") in FINISHED_STATES:  # 끝난 실행은 폴더에서 읽은 것과 같은 칸을 보인다
+            _merge_summary(data, live.folder)
+        return data
     folder = _folder(run_id)
     data = _read_json(folder / "run.json")
     if data is None:
         raise HTTPException(status_code=404, detail=f"실행 기록을 읽지 못했습니다: {run_id}")
     data.setdefault("id", run_id)
+    _merge_summary(data, folder)
+    return data
+
+
+def _merge_summary(data: dict[str, Any], folder: Path) -> None:
+    """요약 파일(`summary.json`)의 `summary`·`halted`·`unresolved_order`·`params` 를 data 에 넣는다(이미 값이 있는 칸은 그대로)."""
     summary = _read_json(folder / "summary.json") or {}
     data["summary"] = summary.get("summary")
     for key in ("halted", "unresolved_order"):
-        if summary.get(key) is not None:
-            data.setdefault(key, summary[key])
+        if summary.get(key) is not None and data.get(key) is None:
+            data[key] = summary[key]
     # 그 실행이 쓴 Params(요약 파일의 `strategy.params`). 없으면 null — 화면은 지금 파일 값을 단서와 함께 쓴다
-    strategy = summary.get("strategy")
-    data.setdefault("params", strategy.get("params") if isinstance(strategy, dict) else None)
-    return data
+    if data.get("params") is None:
+        strategy = summary.get("strategy")
+        data["params"] = strategy.get("params") if isinstance(strategy, dict) else None
 
 
 def _tail(folder: Path, name: str, after: int) -> dict[str, Any]:

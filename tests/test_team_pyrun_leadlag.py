@@ -24,6 +24,7 @@ import pytest
 
 from backend.team_pyrun import replay
 from backend.team_pyrun.loader import load
+from backend.team_pyrun import realtime
 from backend.team_pyrun.realtime import RealtimeRun
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,13 +47,18 @@ DOC_TABLE = {0.5: (4, 1, -2, -21.0), 0.6: (3, 1, -1, -14.5), 0.7: (2, 1, 4, 2.0)
 
 
 # ---------------------------------------------------------------- 도움
-def top_level(text: str) -> dict[str, str]:
-    """모듈 맨 위의 클래스·함수·대입 이름 → 소스 조각."""
+def _with_decorators(text: str, node: ast.AST) -> tuple[list[str], str]:
+    """(데코레이터들, 소스 조각) — `get_source_segment` 는 데코레이터 줄을 빼므로 따로 붙인다(`@dataclass`·`@staticmethod`)."""
+    return [ast.unparse(d) for d in node.decorator_list], ast.get_source_segment(text, node, padded=True)
+
+
+def top_level(text: str) -> dict[str, object]:
+    """모듈 맨 위의 클래스·함수·대입 이름 → 소스 조각(클래스·함수는 데코레이터까지)."""
     tree = ast.parse(text)
-    out: dict[str, str] = {}
+    out: dict[str, object] = {}
     for node in tree.body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            out[node.name] = ast.get_source_segment(text, node, padded=True)
+            out[node.name] = _with_decorators(text, node)
         elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             out[node.targets[0].id] = ast.get_source_segment(text, node)
     return out
@@ -61,7 +67,7 @@ def top_level(text: str) -> dict[str, str]:
 def methods(text: str, cls: str) -> dict[str, str]:
     tree = ast.parse(text)
     node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls)
-    return {f.name: ast.get_source_segment(text, f, padded=True)
+    return {f.name: _with_decorators(text, f)
             for f in node.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
@@ -161,6 +167,7 @@ def test_Engine_LiveParams_상수_소스가_ws_trader_와_같음():
     theirs = top_level(WS_TRADER.read_text(encoding="utf-8"))
     for name in KEPT:
         assert ours[name] == theirs[name], f"{name} 이 ws_trader 와 다름"
+    assert ours["LiveParams"][0] == ["dataclass"]       # 데코레이터도 비교하고 있음
 
 
 def test_판단_메서드가_하나씩_같음():
@@ -169,6 +176,14 @@ def test_판단_메서드가_하나씩_같음():
     assert set(ours) == set(theirs) == set(JUDGE)
     for name in JUDGE:
         assert ours[name] == theirs[name], f"Engine.{name} 이 ws_trader 와 다름"
+    assert ours["_at"][0] == ["staticmethod"]
+
+
+def test_데코레이터가_다르면_복사_확인이_잡음():
+    text = WS_TRADER.read_text(encoding="utf-8")
+    bad = text.replace("    @staticmethod\n    def _at(", "    def _at(", 1)
+    assert bad != text
+    assert methods(bad, "Engine")["_at"] != methods(text, "Engine")["_at"]
 
 
 # ---------------------------------------------------------------- 녹화 읽기
@@ -250,6 +265,9 @@ def test_리플레이_기록은_실시간_종이_리플레이(tmp_path, loaded, 
     assert (run["mode"], run["kind"], run["state"], run["sym"], run["signal_sym"]) == (
         "replay", "realtime", "끝", "MKUX26", "A756B000")
     assert run["ended_reason"] == "장 끝"          # 녹화가 15:45(flatten_at + 5분) 넘어서까지 있음 — 장중 실행처럼 끝냄
+    first = json.loads((out / "journal.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert first["kind"] == "event" and first["text"].startswith("리플레이") and "서버 접속 없음" in first["text"]
+    assert "서버 paper" not in (out / "journal.jsonl").read_text(encoding="utf-8")
     s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert s["kind"] == "realtime" and s["engine_net_usd"] == 18.5 and len(s["trades"]) == 1
     assert s["strategy"]["params"]["move_won"] == 0.8
@@ -274,7 +292,7 @@ def test_20261102_녹화는_거래_없음(tmp_path, loaded):
 
 
 # ---------------------------------------------------------------- 명령줄
-def test_명령줄은_원문_녹화면_실시간_리플레이(tmp_path, monkeypatch):
+def test_명령줄은_원문_녹화면_실시간_리플레이(tmp_path, monkeypatch, capsys):
     folder = tmp_path / "strategies"
     folder.mkdir()
     shutil.copy(EXAMPLE, folder / "strategy_leadlag.py")
@@ -289,6 +307,8 @@ def test_명령줄은_원문_녹화면_실시간_리플레이(tmp_path, monkeypa
     out = tmp_path / "state" / "pyruns" / "20261103_strategy_leadlag_replay"
     run = json.loads((out / "run.json").read_text(encoding="utf-8"))
     assert (run["kind"], run["mode"]) == ("realtime", "replay")
+    assert replay.main(["x.py"]) == 2
+    assert "<raw.jsonl[.gz]>" in capsys.readouterr().err
     # 1분봉 전략에 원문 녹화 / 실시간 전략에 1분봉 csv — 거부
     assert replay.main([str(folder / "strategy_leadlag.py"), "20261103", str(tmp_path / "bars_1m_MKUX26.csv")]) == 2
 
@@ -303,3 +323,57 @@ def test_StartRefused_는_리플레이에서_돌려줌(tmp_path, loaded, msgs_11
 def test_wall_of_는_한국시간():
     w = replay.wall_of(datetime.fromisoformat("2026-11-03T09:00:00.250+09:00").timestamp())
     assert w.strftime("%Y%m%d %H%M%S") == "20261103 090000" and w.utcoffset().total_seconds() == 9 * 3600
+
+
+# ---------------------------------------------------------------- 보유 중 긴 공백 (손으로 만든 녹화)
+def _ka(ts: str, price: float, exch: str):
+    return replay.RawMessage("domestic", "KA", "A756B000",
+                             {"tick_div": "1", "exec_qty": "1", "last_pric": f"{price:.2f}", "exch_tm": exch + "00"},
+                             replay._mono_of(ts))
+
+
+def _fb(ts: str, bid: float, ask: float, ko: str):
+    return replay.RawMessage("overseas", "FB", "MKUX26",
+                             {"bid_pric_1": f"{bid:.4f}", "ask_pric_1": f"{ask:.4f}", "ko_exec_tm": ko},
+                             replay._mono_of(ts))
+
+
+def test_보유_중_10분_넘는_공백도_replay_live_처럼_타이머를_다_돌림(tmp_path, loaded):
+    # 09:30:00 시세 → 09:30:46 KRX +0.8원(MKU 그대로) 매도 진입 → 12분 동안 원문 없음 → 09:42:46 호가 하나
+    msgs = [_fb("2026-11-03T09:30:00.100", 0.7450, 0.7451, "093000"),
+            _ka("2026-11-03T09:30:00.200", 1340.0, "093000"),
+            _ka("2026-11-03T09:30:15.200", 1340.0, "093015"),      # stale_s(20초) 안에 이어지게
+            _ka("2026-11-03T09:30:30.200", 1340.0, "093030"),
+            _ka("2026-11-03T09:30:46.300", 1340.8, "093046"),
+            _fb("2026-11-03T09:42:46.400", 0.7450, 0.7451, "094246")]
+    ref = replay_live_ref(loaded, msgs, loaded.params_cls())
+    assert len(ref) == 1 and ref[0]["reason"] == "시간" and abs(ref[0]["held_s"] - 300) < 1   # 공백 안의 타이머에서
+    out = tmp_path / "out"
+    got = replay.replay_realtime(loaded, msgs, out)
+    assert app_view(got["trades"]) == ref_view(ref)
+    t = got["trades"][0]
+    assert (t["exit_time"], t["reason"], t["held_s"]) == (ref[0]["out"], ref[0]["reason"], ref[0]["held_s"])
+    assert "건너뜀" not in (out / "journal.jsonl").read_text(encoding="utf-8")
+
+
+def test_장중_실행은_긴_공백의_타이머를_그대로_건너뜀(tmp_path, loaded):
+    # 장중 기본값(600)은 그대로 — 같은 녹화를 상한 있는 실행기로 돌리면 공백 끝에서 시간 청산
+    msgs = [_fb("2026-11-03T09:30:00.100", 0.7450, 0.7451, "093000"),
+            _ka("2026-11-03T09:30:00.200", 1340.0, "093000"),
+            _ka("2026-11-03T09:30:15.200", 1340.0, "093015"),      # stale_s(20초) 안에 이어지게
+            _ka("2026-11-03T09:30:30.200", 1340.0, "093030"),
+            _ka("2026-11-03T09:30:46.300", 1340.8, "093046"),
+            _fb("2026-11-03T09:42:46.400", 0.7450, 0.7451, "094246")]
+    assert RealtimeRun.__init__.__kwdefaults__["max_timer_catchup"] == realtime.MAX_TIMER_CATCHUP == 600
+    got = replay.replay_realtime(loaded, msgs, tmp_path / "out", max_timer_catchup=realtime.MAX_TIMER_CATCHUP)
+    assert got["trades"][0]["held_s"] > 700
+    assert "건너뜀" in (tmp_path / "out" / "journal.jsonl").read_text(encoding="utf-8")
+
+
+def test_RunSpec_mode_에_replay_가_있음():
+    import typing
+
+    from backend.team_pyrun import registry
+    from backend.team_pyrun.live import RunSpec
+    assert typing.get_args(typing.get_type_hints(RunSpec)["mode"]) == ("orders", "paper", "replay")
+    assert registry.MODES == ("orders", "paper")        # 실행 세우기는 여전히 둘만

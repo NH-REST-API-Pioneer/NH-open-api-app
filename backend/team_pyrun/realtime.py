@@ -135,7 +135,7 @@ RECONCILE_SECONDS = 30      # 보유 중 잔고 대조 간격
 RECHECK_SECONDS = 5         # 보유가 바뀐 뒤 잔고를 한 번 더 보기까지
 RETRY_SECONDS = 10          # 결과를 아는 실패 뒤 청산을 다시 시도하기까지
 MAX_EXIT_REJECTS = 3        # 결과를 아는 실패로 청산이 이만큼 안 되면(처음 + 다시 2번) 멈춤
-MAX_TIMER_CATCHUP = 600     # 밀린 타이머를 이보다 많이 돌려야 하면 건너뛰고 기록 (잠자기에서 깬 경우 등)
+MAX_TIMER_CATCHUP = 600     # 밀린 타이머를 이보다 많이 돌려야 하면 건너뛰고 기록 (잠자기에서 깬 경우 등). 리플레이는 끔(None)
 #: Engine.filled_exit 가 돌려주는 칸 — trade 줄에 그대로 남긴다
 ENGINE_TRADE_KEYS = ("gross_ticks", "net_ticks", "net_usd", "held_s")
 #: signal 줄에 남기는 행동 칸 (그 밖의 칸은 남기지 않음)
@@ -181,9 +181,11 @@ class RealtimeRun:
                  now: Callable[[], datetime] = now_kst, monotonic: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
                  active_env: Callable[[], str | None] = runtime.active_environment, stops_before: int = 0,
-                 params: dict[str, Any] | None = None):
+                 params: dict[str, Any] | None = None, max_timer_catchup: int | None = MAX_TIMER_CATCHUP):
         self.run_id, self.folder, self.loaded, self.spec = run_id, Path(folder), loaded, spec
         self.now, self.monotonic, self.sleep = now, monotonic, sleep
+        #: 밀린 타이머를 이보다 많이 돌려야 하면 건너뜀(장중). None = 건너뛰지 않음 — 녹화 리플레이가 replay_live 처럼 다 돌릴 때
+        self.max_timer_catchup = max_timer_catchup
         self.feed_factory, self.active_env = feed_factory, active_env
         self.kind = "realtime"
         self.market = OVERSEAS              # 주문하는 종목은 언제나 MKU (KRX 는 시세만)
@@ -289,7 +291,10 @@ class RealtimeRun:
         if clock >= self.end_at:
             raise StartRefused(f"실행 끝 시각({self.end_at[:2]}:{self.end_at[2:4]}) 뒤에는 시작할 수 없습니다")
         # 1. 어디로·무엇을
-        j.write("event", text=f"서버 paper · 주문 {'모의계좌' if self.orders else '종이'} · 실시간")
+        if self.spec.mode == "replay":
+            j.write("event", text="리플레이 · 서버 접속 없음 · 녹화 원문 · 종이 체결(반대 호가) · 실시간")
+        else:
+            j.write("event", text=f"서버 paper · 주문 {'모의계좌' if self.orders else '종이'} · 실시간")
         j.write("event", text=f"시장 {self.market.id} · 통화 {self.market.currency} · 실행 끝 "
                               f"{self.end_at[:2]}:{self.end_at[2:4]} (전략 flatten_at + {END_GRACE_MINUTES}분)")
         if self._end_note:
@@ -475,7 +480,7 @@ class RealtimeRun:
     def _catch_up(self, upto: float) -> None:
         """받은 시각 `upto` 까지 밀린 1초 타이머를 차례로 돌린다."""
         behind = int((upto - self._next_timer) // TIMER_SECONDS) + 1 if upto >= self._next_timer else 0
-        if behind > MAX_TIMER_CATCHUP:
+        if self.max_timer_catchup is not None and behind > self.max_timer_catchup:
             skip = behind - 1
             self.j.write("event", text=f"타이머 {skip}번이 밀려 건너뜀 (실행 스레드가 {skip:.0f}초 넘게 멈춰 있었음)")
             self._next_timer += skip * TIMER_SECONDS

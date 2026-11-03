@@ -111,7 +111,8 @@ class RunSpec:
     1분봉 실행은 쓰지 않습니다. `sym` 은 언제나 **주문하는** 종목입니다."""
 
     file: str
-    mode: Literal["orders", "paper"]
+    #: "replay" 는 녹화 리플레이(`replay.replay_realtime`)만 씀 — 실행 세우기(registry `MODES`)는 여전히 orders·paper 만 받음
+    mode: Literal["orders", "paper", "replay"]
     sym: str | None
     signal_sym: str | None = None
 

@@ -26,8 +26,8 @@ week03 `ws_trader.py` 가 남긴 원문 녹화(`results/live/<날짜>/raw.jsonl.
 | 체결 | 신호 순간 반대 호가(종이) | 같음 — 실행기 「종이」 체결(반대 호가, 수수료 체결마다 US$2) |
 
 서버 접속·주문은 없습니다(시작 때 틱 확인은 MKU 값 0.0001·US$2.5 로 답함). 앱 실행기의 규칙도 그대로라
-녹화가 실행 끝 시각(`flatten_at` + 5분) 뒤에 시작하면 시작 거부, 10분 넘게 원문이 없던 공백은 타이머를 건너뜁니다
-(`realtime.MAX_TIMER_CATCHUP` — replay_live 와 달라지는 것은 그 공백 동안 보유가 있을 때뿐).
+녹화가 실행 끝 시각(`flatten_at` + 5분) 뒤에 시작하면 시작 거부. 다만 원문이 오래 없던 공백에서도 1초 타이머는
+replay_live 처럼 다 돌립니다(장중의 `realtime.MAX_TIMER_CATCHUP` 건너뛰기를 끔 — 보유 중 공백의 시간 청산이 같게).
 """
 from __future__ import annotations
 
@@ -210,11 +210,15 @@ class _NoFeed:
 
 
 def replay_realtime(loaded: Loaded, messages: Iterable[RawMessage], folder: Path, *, sym: str | None = None,
-                    signal_sym: str | None = None, params: dict[str, Any] | None = None) -> dict:
+                    signal_sym: str | None = None, params: dict[str, Any] | None = None,
+                    max_timer_catchup: int | None = None) -> dict:
     """원문 녹화를 앱 실시간 실행기(종이)에 흘려 `folder` 에 기록하고 `{"trades", "summary", "refused"}` 를 돌려준다.
 
     `sym`(MKU)·`signal_sym`(KRX)이 없으면 녹화의 첫 `FB`·`KA` 종목. `params` 는 기본 Params 에서 바꿀 칸
-    (replay_live 의 `--move` 처럼). 시작 거부면 `refused` 에 까닭(거래 없음), 아니면 None."""
+    (replay_live 의 `--move` 처럼). 시작 거부면 `refused` 에 까닭(거래 없음), 아니면 None.
+
+    `max_timer_catchup` 은 기본 None — 녹화 공백이 길어도 1초 타이머를 replay_live 처럼 **다** 돌린다(장중 실행기는
+    `realtime.MAX_TIMER_CATCHUP` 600번 넘게 밀리면 건너뜀. 보유 중 긴 공백이면 시간 청산 시각이 달라지므로)."""
     msgs = list(messages)
     if not msgs:
         raise ValueError("녹화에 KA·FB 원문이 없습니다")
@@ -226,13 +230,12 @@ def replay_realtime(loaded: Loaded, messages: Iterable[RawMessage], folder: Path
                                                            signal_sym=signal_sym),
                       api_module=_OfflineApi(), feed_factory=lambda run_id, wants: _NoFeed(),
                       now=clock.now, monotonic=clock.monotonic, sleep=lambda seconds: None,
-                      active_env=lambda: None, params=params)
+                      active_env=lambda: None, params=params, max_timer_catchup=max_timer_catchup)
     try:
         run.prepare()
     except StartRefused as e:
         return {"trades": [], "summary": summarize([]), "refused": str(e)}
-    run.j.write("event", text=f"리플레이 — 녹화 원문 {len(msgs):,}건(KA·FB), 시각 = 받은 시각(recv_ts), "
-                              "종이 체결(반대 호가) · 서버 접속·주문 없음")
+    run.j.write("event", text=f"녹화 원문 {len(msgs):,}건(KA·FB) · 시각 = 받은 시각(recv_ts) · 타이머 건너뛰기 없음")
     run.start_timers_at(msgs[0].recv_monotonic)     # replay_live: 첫 타이머 = 첫 원문 시각
     last_sec = None
     for m in msgs:
@@ -255,7 +258,8 @@ def _is_raw(path: Path) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 3 or not re.fullmatch(r"\d{8}", args[1]):
-        print("사용법: python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv>", file=sys.stderr)
+        print("사용법: python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv | raw.jsonl[.gz]>\n"
+              "  1분봉 전략은 1분봉 csv, 실시간 전략(leadlag)은 원문 녹화 <raw.jsonl[.gz]>", file=sys.stderr)
         return 2
     file, date, data = args
     from backend.team_pyrun.live import run_market     # 장중 실행과 같은 시장 규칙 (명령줄에서만 쓰므로 여기서)

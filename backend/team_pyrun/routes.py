@@ -3,6 +3,7 @@
     GET  /strategies · POST /strategies/reload   전략 폴더의 파일 목록(읽을 때마다 폴더를 다시 본다)
     POST /strategies                             전략 파일 올리기 `{file, content, overwrite}` → 201 목록(`folder` `strategies` `modules`)(같은 이름은 409, 이름·크기는 400)
     DELETE /strategies/{file}                    전략 파일 지우기 → 200 목록(없으면 404)
+    GET  /convention                             전략 파일 작성 규칙 `{"markdown": 문서 글}`(문서가 없으면 404)
     GET  /runs · POST /runs                      실행 목록 / 시작(거부는 409 `{"detail": 거부 문장}`)
     GET  /runs/{id}                              도는 실행은 `status()`, 끝난 실행은 `run.json` + 요약
     GET  /runs/{id}/journal · /api-log           `?after=N` 이어 읽기 → `{"rows": […], "next": 줄 수}`
@@ -80,6 +81,8 @@ router = APIRouter(prefix="/api/team/pyrun", tags=["team-pyrun"], dependencies=[
 DOWNLOAD_FILES = ("journal.jsonl", "summary.json", "api_log.jsonl")
 #: 차트용 봉에서 신호 줄의 꼬리표 칸 — 봉 칸이 아니다.
 _ROW_TAGS = ("kind", "at", "clock", "bar", "date")
+#: 전략 파일 작성 규칙 문서. 저장소 뿌리(= 이 패키지의 두 단계 위) 기준이고, 부를 때마다 읽는다.
+CONVENTION_DOC = Path(__file__).resolve().parents[2] / "docs" / "team" / "strategy-file-convention.md"
 
 
 class StartBody(BaseModel):
@@ -158,6 +161,16 @@ def delete_strategy(file: str) -> dict[str, Any]:
     except strategy_files.StoreFailed as e:
         raise HTTPException(status_code=500, detail=str(e)) from None
     return list_strategies()
+
+
+@router.get("/convention")
+def strategy_convention() -> dict[str, str]:
+    """전략 파일 작성 규칙(마크다운 글 그대로). 화면은 꾸미지 않고 글로 보인다."""
+    try:
+        text = CONVENTION_DOC.read_text(encoding="utf-8")
+    except OSError:
+        raise HTTPException(status_code=404, detail="작성 규칙 문서를 찾지 못했습니다") from None
+    return {"markdown": text}
 
 
 # ---------------------------------------------------------------- 실행

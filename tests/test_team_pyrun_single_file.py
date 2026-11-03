@@ -25,6 +25,7 @@ from tests.test_team_pyrun_live import FakeApi, at, bar
 FIX = Path(__file__).parent / "fixtures" / "team_pyrun"
 WEEK02 = FIX / "week02"
 DATA = FIX / "bars_1m_A756B000_20261030.csv"
+DOC = Path(__file__).resolve().parents[1] / "docs" / "team" / "strategy-file-convention.md"
 
 BB_GOLDEN = [("sell", 1339.6, 1337.7, "익절", "093500", "101700"),
              ("buy", 1334.9, 1336.7, "익절", "121000", "124000"),
@@ -415,3 +416,17 @@ def test_day_가_없으면_앞선_손절_수를_이어받지_않고_시작한다
     assert [t["reason"] for t in run.runner.trades] == ["손절"] and run.status()["stops"] == 1
     run.finish("중지")
     assert run.state == "끝"
+
+
+# ---------------------------------------------------------------- 작성 규칙 문서
+def test_작성_규칙_문서의_예제를_불러온다(tmp_path):
+    text = DOC.read_text(encoding="utf-8")
+    m = re.search(r"```python\n(.*?)```", text, re.S)
+    assert m, "문서에 python 코드 덩어리가 없습니다"
+    folder = _write(tmp_path / "s", "my_strategy.py", m.group(1))
+    got = load(folder, "my_strategy.py")
+    assert got.name == "my_strategy" and got.title
+    s = got.new()
+    assert callable(s.on_minute)
+    r = replay(got, "20261030", load_minutes(DATA), tmp_path / "out")
+    assert "summary" in r

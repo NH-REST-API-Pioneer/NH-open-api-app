@@ -670,6 +670,29 @@ def test_올리고_지워도_공용_모듈을_불러온_실행은_계속_돈다(
     assert refused.status_code == 409
 
 
+# ---------------------------------------------------------------- 작성 규칙 문서
+def test_작성_규칙_문서를_돌려준다(client):
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[1] / "docs" / "team" / "strategy-file-convention.md"
+    r = client.get(f"{BASE}/convention")
+    assert r.status_code == 200
+    assert r.json() == {"markdown": doc.read_text(encoding="utf-8")}
+
+
+def test_작성_규칙_문서가_없으면_404(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(routes_mod, "CONVENTION_DOC", tmp_path / "nope.md")
+    r = client.get(f"{BASE}/convention")
+    assert r.status_code == 404
+
+
+def test_작성_규칙_문서_경로는_패키지_기준_저장소_안이다():
+    from pathlib import Path
+
+    root = Path(routes_mod.__file__).resolve().parents[2]
+    assert routes_mod.CONVENTION_DOC == root / "docs" / "team" / "strategy-file-convention.md"
+
+
 def test_익절_목표가_없는_전략은_목록에_알림이_선다(client, reg):
     src = (FIXTURES / "no_target.py").read_text(encoding="utf-8")
     (reg.strategies / "no_target.py").write_text(src, encoding="utf-8")

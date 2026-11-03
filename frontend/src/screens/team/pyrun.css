@@ -69,6 +69,18 @@
   word-break: keep-all;
 }
 
+/* 「작성 규칙」 창의 본문 — 마크다운 글을 그대로, 줄을 접어 보입니다. 넘치면 창 본문이 스크롤합니다. */
+.pyrun-convention {
+  margin: 0;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+}
+
 /* 전략 파일 줄 — 실행 줄과 같은 얼굴이고, 못 쓰는 파일은 흐리게 섭니다. */
 .pyrun-file.is-broken .run-name-text {
   color: var(--text-dim);

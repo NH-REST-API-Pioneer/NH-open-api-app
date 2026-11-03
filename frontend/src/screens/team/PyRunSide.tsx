@@ -1,10 +1,11 @@
-import { useRef, useState, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { Modal } from '../../app/Modal'
 import {
   ORDERS_CONFIRM_TEXT,
   PY_FINISHED,
   deleteStrategy,
   downloadUrl,
+  loadConvention,
   modeLabel,
   startRun,
   uploadStrategy,
@@ -68,6 +69,30 @@ interface Note {
 /** 올리는 중에 또 파일이 오면 알리는 문장. */
 const BUSY_TEXT = '올리는 중입니다 — 끝난 뒤 다시 올려 주세요'
 
+/** 「작성 규칙」 창 — 서버의 규칙 문서(마크다운)를 꾸미지 않고 글 그대로 보입니다. 열 때마다 새로 받습니다. */
+function ConventionModal({ onClose }: { onClose: () => void }) {
+  const [text, setText] = useState<string | null>(null)
+  const [why, setWhy] = useState<string | null>(null)
+  useEffect(() => {
+    const control = new AbortController()
+    void loadConvention(control.signal).then((got) => {
+      if (control.signal.aborted) return
+      if (got.ok) setText(got.data)
+      else setWhy(got.why)
+    })
+    return () => control.abort()
+  }, [])
+  return (
+    <Modal label="전략 파일 작성 규칙" tall onClose={onClose} head={<span className="modal-title">전략 파일 작성 규칙</span>}>
+      {why ? (
+        <p className="run-store-why">{why}</p>
+      ) : (
+        <pre className="pyrun-convention">{text ?? '읽는 중입니다'}</pre>
+      )}
+    </Modal>
+  )
+}
+
 export function PyStrategyCard({
   list,
   why,
@@ -94,6 +119,7 @@ export function PyStrategyCard({
   const [ask, setAsk] = useState<Ask | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteWhy, setDeleteWhy] = useState<string | null>(null)
+  const [rules, setRules] = useState(false)
 
   /** 고른 파일들을 하나씩 올립니다. 같은 이름이 있으면(409) 그 자리에서 덮어쓸지 묻고 답을 기다립니다. */
   async function upload(picked: File[]) {
@@ -204,6 +230,9 @@ export function PyStrategyCard({
     <div className={`card run-runs${over ? ' pyrun-drop-over' : ''}`} {...drop}>
       <div className="run-runs-head">
         <h2 className="run-card-title">전략 파일</h2>
+        <button type="button" className="btn btn-quiet" onClick={() => setRules(true)}>
+          작성 규칙
+        </button>
       </div>
       <p className="pyrun-folder">
         {list ? (
@@ -315,6 +344,7 @@ export function PyStrategyCard({
         }}
       />
 
+      {rules && <ConventionModal onClose={() => setRules(false)} />}
       {ask?.kind === 'overwrite' && (
         <Modal
           label="덮어쓰기"

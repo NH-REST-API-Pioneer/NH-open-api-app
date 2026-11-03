@@ -216,6 +216,12 @@ export function deleteStrategy(file: string): Promise<PyResult<PyStrategies>> {
   return call<PyStrategies>(`/strategies/${enc(file)}`, { method: 'DELETE' })
 }
 
+/** 전략 파일 작성 규칙(마크다운 글 그대로). 화면은 꾸미지 않고 글로 보입니다. */
+export async function loadConvention(signal?: AbortSignal): Promise<PyResult<string>> {
+  const got = await call<{ markdown: string }>('/convention', undefined, signal)
+  return got.ok ? { ok: true, data: got.data.markdown } : got
+}
+
 export async function loadRuns(signal?: AbortSignal): Promise<PyResult<PyRunStatus[]>> {
   const got = await call<{ runs: PyRunStatus[] }>('/runs', undefined, signal)
   return got.ok ? { ok: true, data: got.data.runs } : got

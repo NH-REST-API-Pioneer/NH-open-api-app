@@ -25,6 +25,13 @@
    앞선 주문이 사실은 접수돼 있었다면 여기서 드러나고, 실행기는 None 을 받아 잔고를 따릅니다
    (청산 재시도인데 잔고가 0 이면 주문 없이 청산으로 기록).
 
+fill 한 번이 남기는 것 — 실행기가 None 을 받았을 때 잔고를 **이 실행의 것으로 따라도 되는지** 판단하는 데 씁니다.
+
+- `sent`: 이 fill 에서 `market_order` 를 실제로 불렀는가(관문에 걸려 안 보냈으면 False).
+- `explains(held)`: 잔고 held 가 이 실행의 결과 모름 주문으로 설명되는가 — `blind`·`unresolved` 의 체결 뒤 보유이거나,
+  이 fill 에서 그 표시가 잔고 증거로 풀렸을 때(`landed`). 알려진 거절(업무 거부·8·9)이나 관문에 걸린 주문은
+  아무 잔고도 설명하지 않는다 — 그때 다른 잔고는 남의 주문이다.
+
 `expected`·`halt` 는 실행(`live.py`)이 꽂습니다. `needs_check`(None 을 돌려줌)·`unknown` 은 실행이 읽고 바로
 잔고를 대조한 뒤 지웁니다. `had_unknown` 은 지우지 않습니다 — 한 번이라도 결과를 모르는 주문이 있었으면
 보유가 없을 때도 잔고를 계속 대조합니다(늦은 체결 대비).
@@ -84,6 +91,9 @@ class MockAccountBroker:
         #: 번호 없이 결과를 모르는 주문 {"side","pre","post"} — 잔고가 post 를 보일 때까지 모든 주문을 막는다
         self.blind: dict | None = None
         self.needs_check = False            # fill 이 None 을 돌려줌 → 실행이 바로 잔고를 대조하고 지운다
+        self.sent = False                   # 직전 fill 에서 주문을 실제로 보냈는가 (관문에 걸렸으면 False)
+        #: 직전 fill 에서 결과 모름 주문이 잔고 증거로 풀렸으면 그 잔고(체결 뒤 보유). 아니면 None
+        self.landed: int | None = None
         #: 실행이 꽂는 갈고리 — 실행기가 아는 보유(주문 전)와 멈춤. 없으면 잔고 관문을 건너뛴다(단독 시험용)
         self.expected: Callable[[], int] | None = expected
         self.halt: Callable[[str], None] | None = halt
@@ -147,6 +157,7 @@ class MockAccountBroker:
     def lift_blind(self, clock: str, held: int) -> None:
         """번호 없는 결과 모름 주문이 잔고에 반영된 것을 확인 — 표시를 지운다."""
         b, self.blind = self.blind, None
+        self.landed = held
         self.j.write("event", clock=clock, text=f"결과를 모르던 {b['side']} 주문이 잔고({held:+d})에 반영됨 — 주문 막음 해제")
 
     def _blocked_by_blind(self, clock: str) -> bool:
@@ -221,6 +232,7 @@ class MockAccountBroker:
         held = self.position()
         if held is not None and post is not None and held == post:
             self.unresolved = None
+            self.landed = held
             self.j.write("event", clock=clock, ord_no=no,
                          text=f"앞선 {prev_side} 주문 체결이 잔고({held:+d})에 반영됨 — 표시 풀고 잔고 관문에 맡김")
             return False
@@ -259,6 +271,8 @@ class MockAccountBroker:
         None 이면 `needs_check` 가 서서 실행이 바로 잔고를 대조합니다."""
         self.last_fill_fee = None
         self.unknown = False
+        self.sent = False
+        self.landed = None
         px = self._fill(side, ref_price, clock, why)
         if px is None:
             self.needs_check = True
@@ -274,6 +288,7 @@ class MockAccountBroker:
         pre = self.expected() if self.expected is not None else None
         try:
             with purpose("진입" if why.startswith("진입") else "청산"):
+                self.sent = True
                 res = self.api.market_order(self.sym, side, 1, self.exec_cnd)
         except BusinessError as e:
             # 서버가 업무 거부로 답했다 — 접수 안 됨이 확인된 것
@@ -293,6 +308,20 @@ class MockAccountBroker:
             self._sent_blind(side, pre)     # 응답은 왔지만 주문번호가 없다 — 접수 여부는 잔고로
             return None
         return self._confirm(side, ord_no, clock, ref_price, pre)
+
+    def explains(self, held: int | None) -> bool:
+        """잔고 held 가 이 실행의 결과 모름 주문으로 설명되는가. 실행기가 체결가 없이 잔고를 따를 때 묻는다.
+
+        - 이 fill 에서 결과 모름 주문이 잔고 증거로 풀림(`landed`) — 청산 재시도에서 앞선 청산이 반영된 것
+        - 결과 모름 표시(`blind`·`unresolved`)의 체결 뒤 보유 — 방금 보낸 주문이 응답 없이 들어간 것
+        그 밖(알려진 거절·관문에 걸려 안 보냄·표시 없음)은 False — 그 잔고는 이 실행이 만든 것이 아니다."""
+        if held is None:
+            return False
+        if self.landed is not None and held == self.landed:
+            return True
+        if self.blind is not None and held == self.blind["post"]:
+            return True
+        return self.unresolved is not None and held == self.unresolved_post
 
     def open_unknowns(self) -> dict | None:
         """아직 풀리지 않은 결과 모름 주문(끝낼 때 보이려고). 없으면 None."""

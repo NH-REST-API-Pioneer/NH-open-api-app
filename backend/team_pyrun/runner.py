@@ -11,6 +11,10 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
 - `trade` 줄에 `reason`·`exit_date` 가 있습니다(그날 손절 수 세기용).
 - `halted`(멈춤) 가 있으면 진입도 청산도 하지 않습니다. 청산이 안 됐는데 계좌 잔고가 기대와
   다르면(남의 주문이 섞인 것) **다시 주문하지 않고 멈춥니다** — 주문은 재전송하지 않습니다.
+- 체결가를 못 받았을 때(`fill` → None) 잔고를 **이 실행의 것으로 따르는 건** 브로커가 그 잔고를 설명할 때뿐입니다
+  (`broker.sent`·`broker.explains`). 진입은 이번에 주문을 실제로 보냈고 잔고가 신호 방향 1계약일 때만,
+  청산의 잔고 0 은 결과 모름 주문이 그 0 을 설명할 때만. 아니면 남의 포지션이므로 멈춥니다(확인 필요).
+  두 이름이 없는 브로커(시험용 가짜)는 week02 처럼 잔고를 따릅니다.
 
 체결을 맡는 쪽은 `Broker` 입니다. 여기엔 종이 체결(`PaperBroker`) 만 있고, 모의계좌 체결은 따로 만듭니다.
 """
@@ -113,6 +117,7 @@ class PaperBroker:
     **모의계좌 체결이 아닙니다** — 기록에도 `source="paper"` 로 남깁니다."""
 
     mode = "paper"
+    sent = True         # 종이 체결은 언제나 「보낸」 것으로 본다(관문이 없고 None 을 돌려주지 않음)
 
     def __init__(self, journal: Journal, tick: float, fee: float = PAPER_FEE):
         self.j = journal
@@ -225,6 +230,10 @@ class Runner:
             if not held:
                 self.j.write("event", clock=clock, text="진입 체결 없음 (잔고 0) — 이 신호는 건너뜀")
                 return
+            if not self._mine(held, sent_needed=True, want=1 if e["side"] == "buy" else -1):
+                # 관문에 걸려 안 보냈거나(남의 잔고), 알려진 거절이거나, 방향이 다르다 — 남의 포지션을 인수하지 않는다
+                self.halt(f"잔고 불일치 · 기대 {self.expected_position():+d} · 계좌 {held:+d}")
+                return
             px = price      # 체결은 됐는데 체결가를 못 받음 → 현재가로 기록하고 보유로 다룸
             self.j.write("event", clock=clock, text=f"체결가 미확인 · 잔고 {held:+d} → 현재가 {px} 로 기록")
         self.pos = {"side": e["side"], "entry": px, "entry_time": clock, "signal_time": e["signal"],
@@ -238,6 +247,10 @@ class Runner:
         px = self.broker.fill(side, ref, clock, f"청산 · {reason}")
         if px is None:
             held = self.broker.position()
+            if held == 0 and not self._mine(0):
+                # 이 실행이 낸 결과 모름 청산이 없다(알려진 거절·관문에 걸려 안 보냄) — 남이 닫은 것. 지어낸 청산을 적지 않는다
+                self.halt(f"잔고 불일치 · 기대 {self.expected_position():+d} · 계좌 +0")
+                return
             if held == 0:   # 청산은 됐는데 체결가를 못 받음 → 현재가로 기록 (다시 주문하면 반대 포지션이 생김)
                 px = ref
                 self.j.write("event", clock=clock, text=f"청산 체결가 미확인 · 잔고 0 → {px} 로 기록")
@@ -267,6 +280,18 @@ class Runner:
                                           "fee", "pnl_after_fee", "reason", "exit_date")})
         self.strat.on_exit(pnl, stopped=reason == "손절")
         self.pos = None
+
+    def _mine(self, held: int, *, sent_needed: bool = False, want: int | None = None) -> bool:
+        """체결가 없이 받은 잔고 held 를 이 실행의 체결로 따라도 되는가(`fill` 이 None 을 돌려준 바로 뒤).
+
+        want 가 있으면 잔고가 그 값이어야 하고(진입: 신호 방향 1계약), sent_needed 면 이번 fill 에서 주문을 실제로
+        보냈어야 한다. 브로커가 `explains` 를 가지면 그 잔고가 이 실행의 결과 모름 주문으로 설명돼야 한다."""
+        if want is not None and held != want:
+            return False
+        if sent_needed and not getattr(self.broker, "sent", True):
+            return False
+        explains = getattr(self.broker, "explains", None)
+        return explains is None or bool(explains(held))
 
     def force_flat(self, clock: str) -> None:
         """실행을 끝내며 남은 보유를 마지막 가격으로 정리. 멈춘 실행은 건드리지 않는다(잔고가 어긋나 있다)."""

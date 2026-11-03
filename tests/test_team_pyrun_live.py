@@ -1215,3 +1215,83 @@ def test_다른_방향_앞선_매수_체결이_잔고에_보이지만_실행기�
     assert [o[1] for o in fake.orders] == ["buy"]                    # 매도 없음
     assert run.broker.unresolved is None and run.broker.blind is None
     assert run.state == "확인 필요" and "잔고 불일치" in run.runner.halted
+
+
+# ---------------------------------------------------------------- 최종 리뷰 수정: 이 실행이 열지 않은 포지션은 받아들이지 않는다
+def _buy_signal_run(tmp_path, fake=None):
+    """준비를 마치고 09:00 봉 매수 신호를 기다리는 실행(아직 주문 없음)."""
+    run, fake, out = make_run(tmp_path, fake=fake)
+    run.prepare()
+    run.runner.strat.script = {"090000": "buy"}
+    fake.chart = [bar("090000")]
+    return run, fake, out
+
+
+def test_남의_매수_잔고가_있을_때_매수_신호면_주문도_인수도_없이_확인_필요(tmp_path):
+    """평평한 실행(기대 0)인데 계좌에 남의 +1 — 잔고 관문이 막아 주문이 안 나갔으니 그 +1 은 이 실행의 것이 아니다."""
+    run, fake, out = _buy_signal_run(tmp_path)
+    run.step(at("090010"))
+    fake.held = 1                               # 사용자가 일반주문 화면에서 1계약 매수
+    run.step(at("090104"))                      # 매수 신호 → 진입 시도
+    assert fake.orders == []
+    assert run.runner.pos is None and run.runner.trades == []
+    assert run.runner.halted == "잔고 불일치 · 기대 +0 · 계좌 +1"
+    assert run.state == "확인 필요" and run_json(out)["state"] == "확인 필요"
+    for t in ("090110", "090140", "090210"):
+        run.step(at(t))
+    fake.last = "1300.0"                        # 남의 포지션 기준 손절가를 지나도
+    run.step(at("090211"))
+    run.finish("중지")
+    assert fake.orders == [] and run.runner.trades == []
+
+
+def test_남의_반대_잔고가_있을_때_매수_신호면_주문도_인수도_없이_확인_필요(tmp_path):
+    run, fake, out = _buy_signal_run(tmp_path)
+    fake.held = -1                              # 남의 매도 1 (평평한 실행은 대조하지 않으니 주문 직전 관문이 처음 본다)
+    run.step(at("090104"))
+    assert fake.orders == [] and run.runner.pos is None
+    assert run.runner.halted == "잔고 불일치 · 기대 +0 · 계좌 -1"
+
+
+def test_응답_없는_매수_뒤_계좌가_반대면_실행기가_보유로_적지_않고_멈춘다(tmp_path):
+    """주문은 나갔지만(결과 모름) 계좌가 −1 — 이 매수로는 될 수 없는 잔고다. 매수 보유로 적으면 안 된다."""
+    fake = FakeApi()
+    fake.fill = False
+    fake.order_error = TransportError("domestic_order", "시간 초과")
+    run, fake, out = _buy_signal_run(tmp_path, fake=fake)
+    real_order = fake.market_order
+
+    def order_then_short(*a, **k):
+        fake.held = -1
+        return real_order(*a, **k)
+    fake.market_order = order_then_short
+    run.step(at("090104"))
+    assert len(fake.orders) == 1
+    assert run.runner.pos is None and run.runner.trades == []
+    assert run.runner.halted == "잔고 불일치 · 기대 +0 · 계좌 -1"
+    run.finish("중지")
+    assert len(fake.orders) == 1
+
+
+def test_알려진_거절_청산_뒤_계좌가_0이면_청산으로_적지_않고_멈춘다(tmp_path):
+    """업무 거부(접수 안 됨이 확인된 것) 뒤 계좌 0 — 이 실행의 청산이 아니다. 기준가로 거래를 지어내지 않는다."""
+    run, fake, out = entered(tmp_path)
+    fake.fill = False
+    fake.order_error = BusinessError("domestic_order", "1234", "거부", {})
+    fake.last = "1334.0"
+    fake.held_seq = [1, 1, 0]                   # 5초 대조 +1 · 관문 +1 · 거절 뒤 실행기 확인 0
+    run.step(at("090110"))
+    assert [o[1] for o in fake.orders] == ["buy", "sell"]
+    assert run.runner.trades == [] and run.runner.pos is not None
+    assert run.runner.halted == "잔고 불일치 · 기대 +1 · 계좌 +0"
+    assert not [r for r in journal(out) if r["kind"] == "trade"]
+
+
+def test_주문_없이_막힌_청산에서_계좌가_0이면_청산으로_적지_않고_멈춘다(tmp_path):
+    """남이 이 실행의 보유를 닫음: 관문이 0 을 보고 주문을 안 냈고, 결과 모름 주문도 없다."""
+    run, fake, out = entered(tmp_path)
+    fake.last = "1334.0"
+    fake.held_seq = [1, 0, 0]                   # 5초 대조 +1 · 관문 0 · 실행기 확인 0
+    run.step(at("090110"))
+    assert [o[1] for o in fake.orders] == ["buy"]
+    assert run.runner.trades == [] and run.runner.halted == "잔고 불일치 · 기대 +1 · 계좌 +0"

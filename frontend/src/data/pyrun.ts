@@ -45,12 +45,14 @@ export interface PyStrategyFile {
   params: Record<string, unknown> | null
   /** 못 쓰는 파일이면 그 까닭. 이 파일로는 실행을 세울 수 없습니다. */
   error: string | null
+  /** 알림(오류 아님) — 예: 익절 목표가 없어 익절 없이 돕니다. 실행은 세울 수 있습니다. */
+  notes?: string[]
 }
 
 export interface PyStrategies {
   folder: string
   strategies: PyStrategyFile[]
-  /** 오류 없이 불러와지지만 `STRATEGY` 가 없는 파일(공용 코드)의 이름, 이름순. 실행은 못 세우고 지울 수는 있습니다. */
+  /** 오류 없이 불러와지지만 전략 파일이 아닌 파일(공용 코드)의 이름, 이름순. 실행은 못 세우고 지울 수는 있습니다. */
   modules: string[]
 }
 

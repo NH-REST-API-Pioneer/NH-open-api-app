@@ -189,10 +189,13 @@ class LiveRun:
         hist = sorted((m for m in got if (m.date, m.time) < (today, now_min)), key=lambda m: (m.date, m.time))
         r.warmup(hist)
         r.live_date = today       # 준비 봉에서 난 오늘 신호로는 진입하지 않음 — 이 뒤로 닫히는 봉부터
-        if self.stops_before:
-            r.strat.day.stops = self.stops_before
+        day = getattr(r.strat, "day", None)
+        if self.stops_before and day is not None:
+            day.stops = self.stops_before
             j.write("event", text=f"오늘 앞선 실행의 손절 {self.stops_before}회를 이어받음 "
                                   f"(한도 {getattr(r.p, 'max_stops_per_day', '?')}회)")
+        elif self.stops_before:     # 하루 상태(`day`)가 없는 전략 — 손절 수를 넣을 자리가 없다
+            j.write("event", text=f"전략에 하루 상태(day)가 없어 오늘 앞선 실행의 손절 {self.stops_before}회를 이어받지 않음")
         self._day_obj = getattr(r.strat, "day", None)
         self._last_fed = (hist[-1].date, hist[-1].time) if hist else ("", "")
         self._seen_minute = now.strftime("%H%M")

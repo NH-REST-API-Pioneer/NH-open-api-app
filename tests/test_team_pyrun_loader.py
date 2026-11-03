@@ -17,7 +17,8 @@ def test_전략이_있는_파일만_목록에_선다():
     assert got["strategy_bb.py"].params["bar_min"] == 5
     assert got["strategy.py"].name == "vwap"
     assert "SyntaxError" in got["broken.py"].error
-    assert "target" in got["no_target.py"].error
+    # target 이 없으면 오류가 아니라 알림(익절 없이 돈다)
+    assert got["no_target.py"].error is None and got["no_target.py"].notes == ["target·current_vwap 이 없어 익절 없이 돕니다"]
 
 
 def test_목록은_파일_이름순():
@@ -66,12 +67,11 @@ def test_없는_파일은_LoadError():
 def test_문법_오류와_약속_위반은_LoadError_메시지에_이유가_있다():
     with pytest.raises(LoadError, match="SyntaxError"):
         load(FOLDER, "broken.py")
-    with pytest.raises(LoadError, match="target"):
-        load(FOLDER, "no_target.py")
+    assert load(FOLDER, "no_target.py").name == "nt"      # target 이 없어도 불러온다(익절 없이)
 
 
-def test_STRATEGY_없는_모듈은_LoadError():
-    with pytest.raises(LoadError, match="STRATEGY"):
+def test_STRATEGY_도_on_minute_클래스도_없는_모듈은_LoadError():
+    with pytest.raises(LoadError, match="`on_minute` 가 있는 전략 클래스가 없습니다"):
         load(FOLDER, "backtest_dummy.py")
 
 

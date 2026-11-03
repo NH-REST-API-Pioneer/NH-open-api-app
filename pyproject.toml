@@ -34,7 +34,8 @@ testpaths = ["tests"]
 # 검사하는 자리. 저장소의 파이썬 코드는 이 세 폴더에 있습니다. (팀: desktop/ 은 지웠습니다)
 include = ["backend/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
 # 팀: 전략 폴더 시험용 파일에는 일부러 문법이 틀린 것(broken.py)과 week02 원본이 있어 검사하지 않습니다.
-extend-exclude = ["tests/fixtures/team_pyrun"]
+# 팀: backend/team_pyrun/builtin/ 은 week02 strategy.py 원본을 바이트 그대로 둔 기본 공용 모듈이라 고치지 않으므로 검사하지 않습니다.
+extend-exclude = ["tests/fixtures/team_pyrun", "backend/team_pyrun/builtin"]
 # 서식은 `ruff format` 으로 바꾸지 않습니다.
 line-length = 120
 

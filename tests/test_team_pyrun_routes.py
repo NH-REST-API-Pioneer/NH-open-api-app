@@ -59,7 +59,8 @@ def test_전략_목록(client, reg):
     by_file = {s["file"]: s for s in body["strategies"]}
     assert by_file["strategy_bb.py"]["name"] == "bb" and by_file["strategy_bb.py"]["error"] is None
     assert by_file["strategy_bb.py"]["params"]["bar_min"] == 5
-    assert {"file", "name", "title", "params", "error"} == set(by_file["fake.py"])
+    assert {"file", "name", "title", "params", "error", "notes"} == set(by_file["fake.py"])
+    assert by_file["fake.py"]["notes"] == []
     # 다시 읽기는 같은 것 — 그 사이 새로 놓은 파일도 보인다
     (reg.strategies / "late.py").write_text("raise RuntimeError('깨짐')\n", encoding="utf-8")
     again = client.post(f"{BASE}/strategies/reload").json()
@@ -667,3 +668,10 @@ def test_올리고_지워도_공용_모듈을_불러온_실행은_계속_돈다(
     # helper 가 없어진 뒤 새로 세우는 실행은 불러오지 못해 거부된다
     refused = client.post(f"{BASE}/runs", json={"file": "uses.py", "mode": "paper", "sym": None})
     assert refused.status_code == 409
+
+
+def test_익절_목표가_없는_전략은_목록에_알림이_선다(client, reg):
+    src = (FIXTURES / "no_target.py").read_text(encoding="utf-8")
+    (reg.strategies / "no_target.py").write_text(src, encoding="utf-8")
+    row = next(s for s in client.get(f"{BASE}/strategies").json()["strategies"] if s["file"] == "no_target.py")
+    assert row["error"] is None and row["notes"] == ["target·current_vwap 이 없어 익절 없이 돕니다"]

@@ -235,6 +235,12 @@ export function PyStrategyCard({
               </span>
               <span className="run-sub">{one.file}</span>
               {one.error && <span className="pyrun-file-why">{one.error}</span>}
+              {!one.error &&
+                (one.notes ?? []).map((text) => (
+                  <span className="pyrun-file-note" key={text}>
+                    {text}
+                  </span>
+                ))}
             </button>
             {/* 지우기는 줄 몸(실행 세우기) 옆에 따로 섭니다 — 단추 안에 단추를 두지 않습니다. */}
             <button
@@ -254,7 +260,7 @@ export function PyStrategyCard({
         ))}
         {list && files.length === 0 && <p className="run-why">전략 파일이 없습니다</p>}
       </div>
-      {/* 공용 모듈 — 전략 파일이 불러 쓰는 코드(STRATEGY 없음). 실행은 못 세우고 이름만 서며 지울 수는 있습니다. */}
+      {/* 공용 모듈 — 전략 파일이 불러 쓰는 코드(전략 클래스 없음). 실행은 못 세우고 이름만 서며 지울 수는 있습니다. */}
       {modules.length > 0 && (
         <div className="pyrun-modules">
           <h3 className="pyrun-modules-title">공용 모듈</h3>

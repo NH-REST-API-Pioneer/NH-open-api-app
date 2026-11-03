@@ -109,8 +109,9 @@ def _read_json(path: Path) -> dict | None:
 # ---------------------------------------------------------------- 전략 파일
 @router.get("/strategies")
 def list_strategies() -> dict[str, Any]:
-    """전략 폴더의 파일 목록. 못 쓰는 파일은 `error` 에 까닭이 담긴다.
-    `modules` 는 오류 없이 불러와지지만 `STRATEGY` 가 없는 파일(공용 코드)의 이름 — 실행은 못 세우고 지울 수는 있다."""
+    """전략 폴더의 파일 목록. 못 쓰는 파일은 `error` 에 까닭이, 알림(예: 익절 목표 없음)은 `notes` 에 담긴다.
+    `modules` 는 오류 없이 불러와지지만 전략 파일이 아닌 파일(공용 코드)의 이름 — 실행은 못 세우고 지울 수는 있다.
+    앱에 든 기본 공용 모듈(`strategy`)은 어디에도 나오지 않는다."""
     folder = registry().strategies
     strategies, modules = scan_all(folder)
     return {"folder": str(folder), "strategies": [dataclasses.asdict(s) for s in strategies], "modules": modules}

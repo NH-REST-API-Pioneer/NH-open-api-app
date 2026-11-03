@@ -6,7 +6,10 @@
 
 week02 와 다른 점(그 외엔 같게 옮겼습니다):
 
-- 익절 목표는 전략의 `target`, 틱·틱가치는 전략 파일의 `TICK`·`TICK_VALUE`(`Loaded`) 를 인자로 받습니다.
+- 익절 목표는 전략의 `target`, 없으면 `current_vwap`(week02 `runner.make_strategy` 가 VWAP 전략에 붙이던 것),
+  둘 다 없으면 익절 없음(`target_of`). 틱·틱가치는 전략 파일의 `TICK`·`TICK_VALUE`(`Loaded`) 를 인자로 받습니다.
+- 전략의 `end_of_day`·`on_entry`·`on_exit` 는 없으면 건너뜁니다(`_hook`). 하루 손절 수(`day.stops`)가 없으면
+  화면의 손절 수는 이 실행기가 센 값입니다.
 - `signal` 줄은 판정 봉마다 전부 남기고, 지표 칸은 그 봉의 숫자 칸을 모두 담습니다.
 - `trade` 줄에 `reason`·`exit_date` 가 있습니다(그날 손절 수 세기용).
 - `halted`(멈춤) 가 있으면 진입도 청산도 하지 않습니다. 청산이 안 됐는데 계좌 잔고가 기대와
@@ -33,6 +36,10 @@ RETRY_SECONDS = 10      # 청산 체결이 확인 안 됐을 때 다시 시도�
 
 #: 신호 줄의 지표 칸에서 뺄 봉 칸 — 나머지 숫자 칸이 지표값이다.
 _BAR_FIELDS = frozenset({"date", "start", "end", "open", "high", "low", "close", "volume"})
+#: 익절 목표를 읽는 전략 이름, 이 순서로. 처음 있는 것을 쓴다.
+TARGET_NAMES = ("target", "current_vwap")
+_MISSING = object()
+
 #: 신호 줄이 이미 쓰는 칸 이름 — 지표 칸이 같은 이름이면 `write` 가 오류를 내거나 값을 덮으므로 지표에서 뺀다.
 _SIGNAL_KEYS = frozenset({"kind", "at", "clock", "date", "bar", "close", "side", "reason", "stop_ticks"})
 
@@ -54,6 +61,17 @@ def minute_of(row: dict) -> Minute:
     """차트(분) 응답의 한 줄(접두를 뗀 것)을 1분봉으로."""
     return Minute(row["ref_dt"], row["exch_tm"], float(row["open_pric"]), float(row["high_pric"]),
                   float(row["low_pric"]), float(row["close_pric"]), float(row.get("cum_trd_qty") or 0))
+
+
+def target_of(strategy: object) -> float | None:
+    """전략의 익절 목표 — `target`, 없으면 `current_vwap`, 둘 다 없으면 None(익절 없음).
+
+    `target` 이 있으면 값이 None 이어도 그것을 쓴다(아직 목표가 없는 것)."""
+    for name in TARGET_NAMES:
+        value = getattr(strategy, name, _MISSING)
+        if value is not _MISSING:
+            return value
+    return None
 
 
 # ---------------------------------------------------------------- 틱 계산
@@ -162,7 +180,7 @@ class Runner:
     def feed(self, m: Minute) -> list:
         """1분봉을 전략에 넣습니다. 날이 바뀌면 백테스트처럼 먼저 전날의 덜 닫힌 판정 봉을 닫습니다."""
         if self.cur_date is not None and m.date != self.cur_date:
-            self.strat.end_of_day()
+            self._hook("end_of_day")
         self.cur_date = m.date
         return self.strat.on_minute(m)
 
@@ -204,7 +222,7 @@ class Runner:
         if self.halted or self.pos is None or clock < self.retry_after:
             return
         side, pos = self.pos["side"], self.pos
-        target = self.strat.target
+        target = target_of(self.strat)
         if clock >= self.p.flatten_at:
             self._exit(clock, price, "장 마감 정리")
         elif side == "buy" and lo <= pos["stop"]:
@@ -239,7 +257,7 @@ class Runner:
         self.pos = {"side": e["side"], "entry": px, "entry_time": clock, "signal_time": e["signal"],
                     "stop_ticks": e["stop_ticks"], "stop": stop_price(e["side"], px, e["stop_ticks"], self.tick),
                     "entry_fee": getattr(self.broker, "last_fill_fee", None)}
-        self.strat.on_entry()
+        self._hook("on_entry")
         self.j.write("event", clock=clock, text=f"진입 {e['side']} {px} · 손절 {self.pos['stop']} ({e['stop_ticks']}틱)")
 
     def _exit(self, clock: str, ref: float, reason: str) -> None:
@@ -281,7 +299,13 @@ class Runner:
         # 보유를 먼저 비운다 — 전략의 on_exit 가 예외를 내도 끝내기 정리가 이미 닫은 보유를 또 닫지 않게
         self.pos = None
         self.retry_after = ""
-        self.strat.on_exit(pnl, stopped=reason == "손절")
+        self._hook("on_exit", pnl, stopped=reason == "손절")
+
+    def _hook(self, name: str, *args, **kwargs) -> None:
+        """전략의 고를 수 있는 메서드(`end_of_day` `on_entry` `on_exit`)를 부른다. 없으면 아무것도 하지 않는다."""
+        fn = getattr(self.strat, name, None)
+        if fn is not None:
+            fn(*args, **kwargs)
 
     def _mine(self, held: int, *, sent_needed: bool = False, want: int | None = None) -> bool:
         """체결가 없이 받은 잔고 held 를 이 실행의 체결로 따라도 되는가(`fill` 이 None 을 돌려준 바로 뒤).
@@ -332,7 +356,7 @@ class Runner:
             "entry": None if pos is None else pos["entry"],
             "stop": None if pos is None else pos["stop"],
             "stop_ticks": None if pos is None else pos["stop_ticks"],
-            "target": self.strat.target,
+            "target": target_of(self.strat),
             "time_exit_at": time_exit,
             "today_pnl": sum(t["pnl"] for t in day),
             "stops": own_stops if day_stops is None else day_stops,

@@ -149,6 +149,9 @@ def get_run(run_id: str) -> dict[str, Any]:
     for key in ("halted", "unresolved_order"):
         if summary.get(key) is not None:
             data.setdefault(key, summary[key])
+    # 그 실행이 쓴 Params(요약 파일의 `strategy.params`). 없으면 null — 화면은 지금 파일 값을 단서와 함께 쓴다
+    strategy = summary.get("strategy")
+    data.setdefault("params", strategy.get("params") if isinstance(strategy, dict) else None)
     return data
 
 

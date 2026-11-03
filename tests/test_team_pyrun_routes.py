@@ -121,6 +121,19 @@ def test_끝난_실행의_멈춤과_결과_모름_주문도_올라온다(client,
     assert body["summary"] == {"trades": 0}
 
 
+def test_끝난_실행은_그때의_Params_를_돌려준다(client):
+    """지난 실행 화면이 지금 파일 값이 아니라 그 실행이 쓴 Params(요약 파일의 `strategy.params`)를 보이게."""
+    body = client.get(f"{BASE}/runs/{FINISHED}").json()
+    assert body["params"]["bar_min"] == 5
+    assert body["params"]["session_start"] == "090000"
+
+
+def test_요약에_전략_정보가_없으면_params_는_null(client, reg):
+    folder = write_run(reg.root, "20261028_fake_old", state="끝")
+    (folder / "summary.json").write_text(json.dumps({"summary": {"trades": 0}}), encoding="utf-8")
+    assert client.get(f"{BASE}/runs/20261028_fake_old").json()["params"] is None
+
+
 def test_없는_실행은_404(client):
     for path in ("", "/journal", "/api-log", "/bars", "/download"):
         assert client.get(f"{BASE}/runs/20200101_none_paper{path}").status_code == 404, path

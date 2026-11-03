@@ -104,7 +104,8 @@ export interface PyRunStatus {
   /** 끝날 때 결과를 모르는 주문이 남았으면 그 내용. */
   unresolved_order?: unknown
   last_signal?: PyJournalRow | null
-  params?: Record<string, unknown>
+  /** 그 실행이 쓴 Params. 지난 실행은 요약 파일의 `strategy.params` 이고, 옛 기록이면 null 입니다. */
+  params?: Record<string, unknown> | null
   summary?: PySummary | null
   sha256?: string
 }

@@ -199,12 +199,15 @@ export function PyRunChart({
   bars,
   decimals,
   barMin,
+  barMinFromFile = false,
   stop,
   rsiGuides,
 }: {
   bars: PyBars | null
   decimals: number
   barMin: number
+  /** 판정 봉 크기를 그 실행이 아니라 지금 전략 파일에서 읽었으면 true — 범례에 단서를 답니다. */
+  barMinFromFile?: boolean
   /** 보유 중이면 손절가 선. */
   stop: StopLine | null
   /** RSI 창의 기준선(전략 Params 의 `rsi_buy`·`rsi_sell` 이 있을 때). */
@@ -382,7 +385,9 @@ export function PyRunChart({
   return (
     <div className="pyrun-chart">
       <div className="pyrun-legend">
-        <span>{barMin}분 판정 봉</span>
+        <span>
+          {barMin}분 판정 봉{barMinFromFile && ' (지금 파일 기준)'}
+        </span>
         {priceKeys.map((line) => (
           <span key={line.key}>
             <i className="pyrun-swatch" style={{ background: line.color }} />

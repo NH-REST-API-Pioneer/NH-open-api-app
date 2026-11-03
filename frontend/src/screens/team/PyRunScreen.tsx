@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Modal } from '../../app/Modal'
-import { usePyRun, usePyRuns, usePyStrategies } from '../../data/pyrun'
+import { usePyRun, usePyRuns, usePyStrategies, type PyRunStatus } from '../../data/pyrun'
 import { PyAddForm, PyRunsCard, PyStrategyCard } from './PyRunSide'
 import { PyRunMain } from './PyRunMain'
 import './pyrun.css'
@@ -20,8 +20,14 @@ let lastShown: string | null = null
 
 export function PyRunScreen() {
   const strategies = usePyStrategies()
-  const { runs, why: runsWhy } = usePyRuns()
+  const { runs: polled, why: runsWhy } = usePyRuns()
   const [picked, setPicked] = useState<string | null>(lastShown)
+  /* 방금 세운 실행. 다음 목록 폴링이 그 실행을 담기 전까지 목록 앞에 끼워 둡니다 — 안 그러면 그 사이
+     `shownId` 가 가장 최근 실행으로 떨어져 앞 실행이 잠깐 보이고 폴링됩니다. 목록에 오면 버립니다. */
+  const [started, setStarted] = useState<PyRunStatus | null>(null)
+  const startedListed = started !== null && (polled?.some((run) => run.id === started.id) ?? false)
+  const runs =
+    started === null || startedListed ? polled : [started, ...(polled ?? []).filter((run) => run.id !== started.id)]
   /* 고른 실행이 목록에 없으면(처음·지워진 폴더) 가장 최근 실행을 봅니다. */
   const shownId = runs?.some((run) => run.id === picked) ? picked : (runs?.[0]?.id ?? null)
   const view = usePyRun(shownId)
@@ -84,6 +90,7 @@ export function PyRunScreen() {
             onStarted={(run) => {
               setAsking(false)
               setAdd(null)
+              setStarted(run)
               show(run.id)
             }}
           />

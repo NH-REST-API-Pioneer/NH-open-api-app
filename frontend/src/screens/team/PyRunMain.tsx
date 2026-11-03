@@ -151,7 +151,12 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
   const params = run.params ?? strategyFile?.params ?? null
   const paramsFromFile = !run.params && !!strategyFile?.params
   const barMin = run.bar_min ?? num(params?.bar_min) ?? 1
-  const rsiGuides = [num(params?.rsi_buy), num(params?.rsi_sell)].filter((v): v is number => v !== null)
+  /* 판정 봉 크기를 그 실행이 아니라 지금 파일에서 읽었는지 — 범례에 단서를 답니다. */
+  const barMinFromFile = run.bar_min === undefined && paramsFromFile
+  /* RSI 기준선은 그 실행이 쓴 값일 때만 긋습니다 — 지금 파일 값으로 그으면 그때와 다른 선이 그때의 선처럼 보입니다. */
+  const rsiGuides = paramsFromFile
+    ? []
+    : [num(params?.rsi_buy), num(params?.rsi_sell)].filter((v): v is number => v !== null)
 
   /* 보유 중이면 손절가 선. 진입 시각은 마지막 진입 표시에서 찾습니다. */
   const holding = (run.position ?? 0) !== 0
@@ -245,7 +250,14 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
       <div className="pyrun-mid">
         {/* ④ 차트 */}
         <div className="card">
-          <PyRunChart bars={bars} decimals={decimals} barMin={barMin} stop={stopLine} rsiGuides={rsiGuides} />
+          <PyRunChart
+            bars={bars}
+            decimals={decimals}
+            barMin={barMin}
+            barMinFromFile={barMinFromFile}
+            stop={stopLine}
+            rsiGuides={rsiGuides}
+          />
         </div>
         {/* ⑤ 지금 판단 */}
         <Decision

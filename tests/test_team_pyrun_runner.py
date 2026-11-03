@@ -30,6 +30,9 @@ def test_볼린저_리플레이는_week02_와_같다(tmp_path):
                    ("buy", 1334.1, 1335.8, "익절", "142500", "144400")]
     assert r["summary"]["net_pnl"] == 54000
     assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))["summary"]["net_pnl"] == 54000
+    # 실시간 실행과 같은 꼴로 전략 정보가 남는다(지난 실행 화면의 Params)
+    strategy = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))["strategy"]
+    assert strategy["file"] == "strategy_bb.py" and strategy["params"]["bar_min"] == 5
 
 
 def test_VWAP_리플레이는_week02_와_같다(tmp_path):

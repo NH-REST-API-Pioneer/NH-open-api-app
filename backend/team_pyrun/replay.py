@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from backend import storage
@@ -63,7 +64,10 @@ def replay(loaded: Loaded, date: str, minutes: list[Minute], folder: Path, sym: 
         r.on_minute_closed(m)
     r.force_flat("153000")
     result = {"trades": r.trades, "summary": summarize(r.trades)}
-    write_summary(folder, result)
+    # 실시간 실행의 summary.json 과 같은 꼴로 전략 정보도 남긴다 — 지난 실행 화면이 그때의 Params 를 보인다
+    write_summary(folder, {**result, "strategy": {
+        "file": loaded.file, "name": loaded.name, "title": loaded.title,
+        "sha256": loaded.sha256, "params": asdict(r.p)}})
     (folder / "run.json").write_text(json.dumps({
         "id": folder.name, "file": loaded.file, "name": loaded.name, "title": loaded.title,
         "sha256": loaded.sha256, "mode": "replay", "sym": sym, "state": "끝",

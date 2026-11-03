@@ -253,6 +253,9 @@ class RawFeed:
         return self._hub
 
     async def _open(self) -> None:
+        if self._closed:
+            # 루프가 늦게 돌려 생성이 이미 시간 초과로 닫혔다 — 아무것도 세우지 않는다(남은 구독이 생기지 않게).
+            return
         engine = self.hub
         client = engine.attach(self.client_name)
         self._attached = True

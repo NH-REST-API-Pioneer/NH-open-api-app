@@ -105,11 +105,15 @@ SNAPSHOT_KEYS = ("position", "entry", "stop", "stop_ticks", "target", "time_exit
 
 @dataclass
 class RunSpec:
-    """무엇을 돌릴지. `sym` 이 없으면 전략 TICK 의 시장 최근월물(MKU 틱이면 MKU, 아니면 미국달러선물)."""
+    """무엇을 돌릴지. `sym` 이 없으면 전략 TICK 의 시장 최근월물(MKU 틱이면 MKU, 아니면 미국달러선물).
+
+    `signal_sym` 은 실시간 실행(`realtime.RealtimeRun`)이 시세로만 보는 KRX 종목(빈칸 = 국내 최근월물).
+    1분봉 실행은 쓰지 않습니다. `sym` 은 언제나 **주문하는** 종목입니다."""
 
     file: str
     mode: Literal["orders", "paper"]
     sym: str | None
+    signal_sym: str | None = None
 
 
 class _WindowOnly:
@@ -152,6 +156,29 @@ def run_market(sym: str | None, loaded: Loaded) -> tuple[Market, str | None]:
 
 def _hhmmss(moment: datetime) -> str:
     return to_kst(moment).strftime("%H%M%S")
+
+
+# ---------------------------------------------------------------- 1분봉·실시간 실행이 같이 쓰는 것 (주문과 무관)
+def write_run_json(folder: Path, data: dict) -> None:
+    """`run.json` — 임시 파일에 쓰고 바꿔 끼운다(읽는 쪽이 덜 쓴 파일을 보지 않게)."""
+    path = Path(folder) / "run.json"
+    tmp = path.with_name(f".run.json.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def run_head(run_id: str, loaded: Loaded, mode: str, sym: str | None, state: str, started_at: str | None,
+             ended_at: str | None, ended_reason: str | None) -> dict:
+    """`run.json`·`status()` 의 앞 칸(순서 고정) — 두 실행기가 같은 꼴로 쓴다."""
+    return {"id": run_id, "file": loaded.file, "name": loaded.name, "title": loaded.title,
+            "mode": mode, "sym": sym, "state": state,
+            "started_at": started_at, "ended_at": ended_at, "ended_reason": ended_reason}
+
+
+def strategy_block(loaded: Loaded, params: object) -> dict:
+    """`summary.json` 의 `strategy` 칸."""
+    return {"file": loaded.file, "name": loaded.name, "title": loaded.title,
+            "sha256": loaded.sha256, "params": asdict(params)}
 
 
 def _window(signal: object) -> str | int | None:
@@ -611,8 +638,7 @@ class LiveRun:
             "trades": r.trades, "summary": summarize(r.trades),
             "account_start": self.account_start, "account_end": self.account_end,
             "api": self.apilog.stats(),
-            "strategy": {"file": self.loaded.file, "name": self.loaded.name, "title": self.loaded.title,
-                         "sha256": self.loaded.sha256, "params": asdict(r.p)},
+            "strategy": strategy_block(self.loaded, r.p),
         }
         if r.halted:
             data["halted"] = r.halted
@@ -685,9 +711,8 @@ class LiveRun:
             snap = {k: None for k in SNAPSHOT_KEYS}
             snap["halted"] = self.runner.halted
         return {
-            "id": self.run_id, "file": self.loaded.file, "name": self.loaded.name, "title": self.loaded.title,
-            "mode": self.spec.mode, "sym": self.sym, "state": self.state,
-            "started_at": self.started_at, "ended_at": self.ended_at, "ended_reason": self.ended_reason,
+            **run_head(self.run_id, self.loaded, self.spec.mode, self.sym, self.state, self.started_at,
+                       self.ended_at, self.ended_reason),
             "bar_min": bar_min, "next_decision_at": self._next_decision(bar_min),
             **{k: snap.get(k) for k in SNAPSHOT_KEYS},
             "params": asdict(p),
@@ -702,15 +727,11 @@ class LiveRun:
     def _write_run(self) -> None:
         """`run.json` — 임시 파일에 쓰고 바꿔 끼운다(읽는 쪽이 덜 쓴 파일을 보지 않게)."""
         data: dict[str, Any] = {
-            "id": self.run_id, "file": self.loaded.file, "name": self.loaded.name, "title": self.loaded.title,
-            "mode": self.spec.mode, "sym": self.sym, "state": self.state,
-            "started_at": self.started_at, "ended_at": self.ended_at, "ended_reason": self.ended_reason,
+            **run_head(self.run_id, self.loaded, self.spec.mode, self.sym, self.state, self.started_at,
+                       self.ended_at, self.ended_reason),
             "sha256": self.loaded.sha256,
             "market": self.market.id, "currency": self.market.currency, "kind": self.kind,
         }
         if self.runner.halted:
             data["halted"] = self.runner.halted
-        path = self.folder / "run.json"
-        tmp = path.with_name(f".run.json.{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
+        write_run_json(self.folder, data)

@@ -530,3 +530,50 @@ def test_앱이_꺼질_때_남은_원문_구독을_닫는다(loop, hub, monkeypa
     assert feed.closed
     assert feed.client_name not in hub._clients
     assert hub.raw_listeners == []
+
+
+# ── Task 7 이 받은 Task 6 남은 일 ───────────────────────
+
+
+def test_세우기가_늦어_닫힌_뒤에_루프가_세우기를_돌려도_구독이_남지_않는다(loop, hub, monkeypatch):
+    """루프가 바빠 `_open` 을 늦게 돌리면 RawFeed 생성이 시간 초과로 닫힌다 — 그 뒤 도는 `_open` 은 아무것도 세우지 않는다."""
+    monkeypatch.setattr(rawfeed, "LOOP_TIMEOUT", 0.05)
+    release = threading.Event()
+
+    async def busy():
+        release.wait(5)     # 루프를 막는다(시험용)
+
+    asyncio.run_coroutine_threadsafe(busy(), loop)
+    with pytest.raises(Exception):
+        RawFeed("late", 원하는것(), hub=hub, loop=loop)
+    release.set()
+    루프에서(loop, lambda: None)      # 늦은 `_open` 까지 돌게 한 번 더 기다린다
+    루프에서(loop, lambda: None)
+    assert "team-pyrun:late" not in hub._clients
+    assert hub.raw_listeners == []
+    assert rawfeed._open_feeds == {}
+
+
+def test_앱이_꺼질_때_중지가_취소돼도_관찰자와_루프를_놓는다(monkeypatch):
+    """`stop_all` 이 BaseException(취소 등)으로 끝나도 원문 구독 정리와 관찰자·루프 놓기는 한다."""
+    from backend.nh_api import client as nh_client
+    from backend.team_pyrun import apilog
+    from backend.team_pyrun import routes as routes_mod
+
+    class 끊김(BaseException):
+        pass
+
+    class 취소되는레지스트리:
+        def stop_all(self):
+            raise 끊김("꺼짐 중 끊김")
+
+    closed = []
+    monkeypatch.setattr(routes_mod, "registry", lambda: 취소되는레지스트리())
+    monkeypatch.setattr(rawfeed, "close_all", lambda: closed.append(True) or [])
+    monkeypatch.setattr(nh_client, "call_observer", apilog.observe)
+    monkeypatch.setattr(rawfeed, "_loop", object())
+    with pytest.raises(끊김):
+        asyncio.run(routes_mod.pyrun_shutdown(None))
+    assert closed == [True]
+    assert nh_client.call_observer is None
+    assert rawfeed._loop is None

@@ -385,19 +385,23 @@ async def pyrun_shutdown(recover_task: asyncio.Task | None) -> None:
         recover_task.cancel()
         await asyncio.gather(recover_task, return_exceptions=True)
     try:
-        pending = await asyncio.to_thread(lambda: registry().stop_all())
-        if pending:
-            logger.warning("꺼질 때까지 끝나지 않은 파이썬 전략 실행: %s", ", ".join(pending))
-    except Exception:
-        logger.exception("파이썬 전략 실행 중지에 실패했습니다")
-    try:
-        # 실행이 닫지 않고 남긴 실시간 원문 구독을 허브를 내리기 전에 닫는다(스레드에서 — 루프 일을 기다리므로).
-        left = await asyncio.to_thread(rawfeed.close_all)
-        if left:
-            logger.warning("닫히지 않고 남은 실시간 원문 구독을 닫았습니다: %s", ", ".join(left))
-    except Exception:
-        logger.exception("실시간 원문 구독 정리에 실패했습니다")
+        try:
+            pending = await asyncio.to_thread(lambda: registry().stop_all())
+            if pending:
+                logger.warning("꺼질 때까지 끝나지 않은 파이썬 전략 실행: %s", ", ".join(pending))
+        except Exception:
+            logger.exception("파이썬 전략 실행 중지에 실패했습니다")
+        finally:
+            # 팀: 중지가 취소 등(BaseException)으로 끝나도 남은 원문 구독은 닫는다
+            try:
+                # 실행이 닫지 않고 남긴 실시간 원문 구독을 허브를 내리기 전에 닫는다(스레드에서 — 루프 일을 기다리므로).
+                left = await asyncio.to_thread(rawfeed.close_all)
+                if left:
+                    logger.warning("닫히지 않고 남은 실시간 원문 구독을 닫았습니다: %s", ", ".join(left))
+            except Exception:
+                logger.exception("실시간 원문 구독 정리에 실패했습니다")
     finally:
+        # 무엇이 실패해도 관찰자와 루프 참조는 놓는다
         if nh_client.call_observer is apilog.observe:
             nh_client.call_observer = None
         rawfeed.unbind_loop()

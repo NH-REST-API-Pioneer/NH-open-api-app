@@ -1,7 +1,7 @@
 """파이썬 전략 실행 라우트 — `/api/team/pyrun/...`.
 
     GET  /strategies · POST /strategies/reload   전략 폴더의 파일 목록(읽을 때마다 폴더를 다시 본다)
-    POST /strategies                             전략 파일 올리기 `{file, content, overwrite}` → 201 목록(같은 이름은 409, 이름·크기는 400)
+    POST /strategies                             전략 파일 올리기 `{file, content, overwrite}` → 201 목록(`folder` `strategies` `modules`)(같은 이름은 409, 이름·크기는 400)
     DELETE /strategies/{file}                    전략 파일 지우기 → 200 목록(없으면 404)
     GET  /runs · POST /runs                      실행 목록 / 시작(거부는 409 `{"detail": 거부 문장}`)
     GET  /runs/{id}                              도는 실행은 `status()`, 끝난 실행은 `run.json` + 요약
@@ -33,7 +33,7 @@ from backend.nh_api import client as nh_client
 from backend.team_pyrun import apilog, strategy_files
 from backend.team_pyrun.journal import Journal
 from backend.team_pyrun.live import RunSpec, StartRefused
-from backend.team_pyrun.loader import scan
+from backend.team_pyrun.loader import scan_all
 from backend.team_pyrun.registry import FINISHED_STATES, registry
 
 logger = logging.getLogger(__name__)
@@ -109,9 +109,11 @@ def _read_json(path: Path) -> dict | None:
 # ---------------------------------------------------------------- 전략 파일
 @router.get("/strategies")
 def list_strategies() -> dict[str, Any]:
-    """전략 폴더의 파일 목록. 못 쓰는 파일은 `error` 에 까닭이 담긴다."""
+    """전략 폴더의 파일 목록. 못 쓰는 파일은 `error` 에 까닭이 담긴다.
+    `modules` 는 오류 없이 불러와지지만 `STRATEGY` 가 없는 파일(공용 코드)의 이름 — 실행은 못 세우고 지울 수는 있다."""
     folder = registry().strategies
-    return {"folder": str(folder), "strategies": [dataclasses.asdict(s) for s in scan(folder)]}
+    strategies, modules = scan_all(folder)
+    return {"folder": str(folder), "strategies": [dataclasses.asdict(s) for s in strategies], "modules": modules}
 
 
 @router.post("/strategies/reload")

@@ -184,12 +184,14 @@ def load(folder: Path, file: str) -> Loaded:
     )
 
 
-def scan(folder: Path) -> list[StrategyFile]:
-    """폴더의 `*.py` 중 `STRATEGY` 가 있거나 불러오기에 실패한 것만, 파일 이름순으로.
+def scan_all(folder: Path) -> tuple[list[StrategyFile], list[str]]:
+    """폴더의 `*.py` 를 한 번 훑어 (전략 목록, 공용 모듈 이름들)을 돌려준다. 파일마다 한 번만 불러온다.
 
-    `STRATEGY` 없는 정상 모듈(공용 코드)은 목록에서 뺀다.
+    전략 목록은 `STRATEGY` 가 있거나 불러오기에 실패한 파일(파일 이름순). 공용 모듈은 오류 없이 불러와지지만
+    `STRATEGY` 가 없는 파일(이름순) — 전략 파일이 `from strategy import …` 처럼 불러 쓰는 공용 코드다.
     """
     out: list[StrategyFile] = []
+    modules: list[str] = []
     for path in sorted(Path(folder).glob("*.py"), key=lambda p: p.name):
         file = path.name
         try:
@@ -198,6 +200,7 @@ def scan(folder: Path) -> list[StrategyFile]:
             out.append(StrategyFile(file, None, None, None, str(e)))
             continue
         if not hasattr(module, "STRATEGY"):
+            modules.append(file)
             continue
         name = getattr(module, "NAME", None)
         title = getattr(module, "TITLE", None)
@@ -209,4 +212,12 @@ def scan(folder: Path) -> list[StrategyFile]:
             out.append(StrategyFile(file, name, title, params, None))
         except LoadError as e:
             out.append(StrategyFile(file, name, title, None, str(e)))
-    return out
+    return out, modules
+
+
+def scan(folder: Path) -> list[StrategyFile]:
+    """폴더의 `*.py` 중 `STRATEGY` 가 있거나 불러오기에 실패한 것만, 파일 이름순으로.
+
+    `STRATEGY` 없는 정상 모듈(공용 코드)은 목록에서 뺀다 — 이름은 `scan_all` 의 두 번째 값.
+    """
+    return scan_all(folder)[0]

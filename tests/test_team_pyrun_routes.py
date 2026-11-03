@@ -404,7 +404,8 @@ def test_올리면_201_과_목록_모양으로_돌려준다(client, reg):
     body = r.json()
     assert body["folder"] == str(reg.strategies)
     files = [s["file"] for s in body["strategies"]]
-    assert files == sorted(files) and "up.py" not in files        # STRATEGY 없는 공용 코드는 목록에 안 나온다
+    assert files == sorted(files) and "up.py" not in files        # STRATEGY 없는 공용 코드는 strategies 가 아니라 modules 에 선다
+    assert body["modules"] == ["up.py"]
     assert (reg.strategies / "up.py").read_text(encoding="utf-8") == GOOD_SRC
     # 전략 파일이면 목록에 나온다
     from tests.test_team_pyrun_live import STRATEGY_SRC
@@ -572,3 +573,36 @@ def test_다른_사이트가_보낸_올리기·지우기는_파일을_건드리�
         r = client.delete(f"{BASE}/strategies/fake.py", headers={"Origin": origin})
         assert (r.status_code, r.json()) == (403, DENIED)
     assert not (reg.strategies / "evil.py").exists() and (reg.strategies / "fake.py").exists()
+
+
+def test_STRATEGY_없는_공용_모듈은_modules_에_서고_지울_수_있다(client, reg):
+    """`helper.py`(STRATEGY 없음)는 `strategies` 에는 안 나오고 `modules` 에 이름만 선다. 지우면 사라진다.
+    깨진 파일은 modules 가 아니라 strategies 의 오류 행이다."""
+    before = client.get(f"{BASE}/strategies").json()
+    assert before["modules"] == []
+    r = _upload(client, "helper.py", "def f():\n    return 1\n")
+    assert r.status_code == 201 and r.json()["modules"] == ["helper.py"]
+    assert "helper.py" not in [s["file"] for s in r.json()["strategies"]]
+    _upload(client, "a_util.py", "Y = 2\n")
+    _upload(client, "broken.py", "raise RuntimeError('깨짐')\n")
+    got = client.get(f"{BASE}/strategies").json()
+    assert got["modules"] == ["a_util.py", "helper.py"]                        # 이름순, 깨진 파일은 없다
+    assert any(s["file"] == "broken.py" and s["error"] for s in got["strategies"])
+    assert [s["file"] for s in got["strategies"]] == sorted([s["file"] for s in before["strategies"]] + ["broken.py"])
+    r = client.delete(f"{BASE}/strategies/helper.py")
+    assert r.status_code == 200 and r.json()["modules"] == ["a_util.py"]
+    assert not (reg.strategies / "helper.py").exists()
+    assert client.get(f"{BASE}/strategies").json()["modules"] == ["a_util.py"]
+    assert client.post(f"{BASE}/strategies/reload").json()["modules"] == ["a_util.py"]
+
+
+def test_목록을_읽을_때_파일은_한_번만_불러온다(client, reg, monkeypatch):
+    """전략·모듈을 나누느라 같은 파일을 두 번 실행하지 않는다."""
+    from backend.team_pyrun import loader
+    calls = []
+    real = loader._exec_module
+    monkeypatch.setattr(loader, "_exec_module", lambda folder, file: (calls.append(file), real(folder, file))[1])
+    _upload(client, "helper.py", "Z = 1\n")
+    calls.clear()
+    client.get(f"{BASE}/strategies")
+    assert sorted(calls) == sorted(set(calls)) and "helper.py" in calls

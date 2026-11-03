@@ -28,6 +28,19 @@
   background: var(--hover);
 }
 
+/* 공용 모듈 소목록 — 전략 줄 아래, 이름만. */
+.pyrun-modules-title {
+  margin: 0;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-label);
+}
+
+.pyrun-modules .run-row {
+  align-items: center;
+}
+
 /* 올리기·지우기 결과 한 줄. */
 .pyrun-upload-note {
   margin: 0;

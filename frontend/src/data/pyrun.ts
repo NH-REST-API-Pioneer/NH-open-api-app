@@ -50,6 +50,8 @@ export interface PyStrategyFile {
 export interface PyStrategies {
   folder: string
   strategies: PyStrategyFile[]
+  /** 오류 없이 불러와지지만 `STRATEGY` 가 없는 파일(공용 코드)의 이름, 이름순. 실행은 못 세우고 지울 수는 있습니다. */
+  modules: string[]
 }
 
 /** 실행 요약(`summary.json` 의 `summary`). */

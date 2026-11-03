@@ -57,16 +57,13 @@ export function isFinished(run: PyRunStatus): boolean {
 /* ── ① 전략 파일 ─────────────────────────────────────── */
 
 /** 카드가 띄우는 확인창. 덮어쓰기는 `resolve` 로 올리기 순서에 답을 돌려줍니다(여러 파일은 하나씩 차례로 묻습니다). */
-type Ask = { kind: 'overwrite'; file: string; resolve: (yes: boolean) => void } | { kind: 'delete'; file: string }
+type Ask = { kind: 'overwrite'; file: string; resolve: (yes: boolean) => void } | { kind: 'delete'; file: string; module?: boolean }
 
 /** 올리기가 끝난 뒤 카드에 남는 한 줄. */
 interface Note {
   text: string
   error: boolean
 }
-
-/** 공용 모듈 — 다른 전략 파일이 `from strategy import …` 로 불러 쓰는 파일입니다. */
-const SHARED_MODULE = 'strategy.py'
 
 export function PyStrategyCard({
   list,
@@ -86,6 +83,7 @@ export function PyStrategyCard({
   onAdd: (file?: string) => void
 }) {
   const files = list?.strategies ?? []
+  const modules = list?.modules ?? []
   const input = useRef<HTMLInputElement>(null)
   const [over, setOver] = useState(false)
   const [working, setWorking] = useState(false)
@@ -106,7 +104,6 @@ export function PyStrategyCard({
     setWorking(true)
     setNote(null)
     const done: string[] = []
-    const hidden: string[] = []
     const declined: string[] = []
     const failed: string[] = []
     for (const one of py) {
@@ -130,14 +127,11 @@ export function PyStrategyCard({
       if (got.ok) {
         onList(got.data)
         done.push(one.name)
-        // 전략이 아닌 공용 코드는 목록에 서지 않습니다 — 올라갔는데 안 보여 헷갈리지 않게 알립니다.
-        if (!got.data.strategies.some((s) => s.file === one.name)) hidden.push(one.name)
       } else failed.push(`${one.name}: ${got.why}`)
     }
     setWorking(false)
     const parts: string[] = []
     if (done.length) parts.push(`올렸습니다: ${done.join(', ')}`)
-    if (hidden.length) parts.push(`목록에 안 서는 파일(STRATEGY 없는 공용 코드): ${hidden.join(', ')}`)
     if (declined.length) parts.push(`덮어쓰지 않음: ${declined.join(', ')}`)
     if (skipped) parts.push(`.py 가 아니라 건너뜀: ${skipped}`)
     parts.push(...failed)
@@ -235,6 +229,32 @@ export function PyStrategyCard({
         ))}
         {list && files.length === 0 && <p className="run-why">전략 파일이 없습니다</p>}
       </div>
+      {/* 공용 모듈 — 전략 파일이 불러 쓰는 코드(STRATEGY 없음). 실행은 못 세우고 이름만 서며 지울 수는 있습니다. */}
+      {modules.length > 0 && (
+        <div className="pyrun-modules">
+          <h3 className="pyrun-modules-title">공용 모듈</h3>
+          {modules.map((file) => (
+            <div className="run-row pyrun-file" key={file}>
+              <span className="run-row-body">
+                <span className="run-sub">{file}</span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-quiet pyrun-row-dl"
+                aria-disabled={working || undefined}
+                title={`${file} 지우기`}
+                onClick={() => {
+                  if (working) return
+                  setDeleteWhy(null)
+                  setAsk({ kind: 'delete', file, module: true })
+                }}
+              >
+                지우기
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="pyrun-side-acts">
         <button type="button" className="btn btn-quiet" aria-disabled={busy || undefined} onClick={() => !busy && onReload()}>
           폴더 다시 읽기
@@ -294,7 +314,7 @@ export function PyStrategyCard({
           head={<span className="modal-title">파일 지우기</span>}
         >
           <p className="pyrun-confirm-text">{ask.file} 을(를) 지울까요?</p>
-          {ask.file === SHARED_MODULE && (
+          {ask.module && (
             <p className="run-hint">다른 전략이 이 파일을 불러 쓰면 그 전략들도 목록에서 오류로 바뀝니다.</p>
           )}
           <p className="run-hint">돌고 있는 실행은 처음 불러온 코드로 계속 갑니다.</p>

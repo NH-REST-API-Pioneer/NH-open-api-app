@@ -28,7 +28,7 @@ BASE = "/api/team/pyrun"
 FINISHED = "20261030_bb_replay"
 STATUS_KEYS = ["id", "file", "name", "title", "mode", "sym", "state", "started_at", "ended_at", "ended_reason",
                "bar_min", "next_decision_at", "position", "entry", "stop", "stop_ticks", "target", "time_exit_at",
-               "today_pnl", "stops", "max_stops", "halted", "last_signal", "params"]
+               "today_pnl", "stops", "max_stops", "halted", "last_signal", "params", "market", "currency"]
 
 
 @pytest.fixture

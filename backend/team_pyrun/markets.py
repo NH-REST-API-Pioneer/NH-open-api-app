@@ -2,10 +2,12 @@
 
 브로커(`MockAccountBroker`)와 실행(`live.py`)이 「어느 시장인지」 몰라도 되게, 시장마다 다른 것을 여기 모읍니다.
 
-    Market      시장 값 — 통화·실행 끝 시각·장 시작·휴장·종이 수수료·종이 슬리피지 (바꿀 수 없음)
+    Market      시장 값 — 통화·실행 끝 시각·장 시작·휴장·종이 수수료·종이 슬리피지·틱·하루 최소 봉 수 (바꿀 수 없음)
     market_of   종목코드로 시장 고르기 (`A75…` 국내, `MKU…` 해외, 그 밖은 ValueError)
+    market_of_tick  종목을 안 줬을 때 전략 `TICK` 으로 시장 고르기 (MKU 틱이면 해외, 아니면 국내)
     in_break    거래소 휴장 중인가 (해외 20:35~20:50, 국내는 없음)
     adapter     그 시장의 `api.py` 함수들을 브로커·1분봉 실행이 부르는 **같은 이름**으로 잇는 객체
+    adapter_for 이미 어댑터면 시장이 같을 때 그대로, 아니면 그 시장 어댑터로 (실행·registry 가 씀)
 
 어댑터 이름 (브로커가 부름 — 국내 `api` 이름 그대로)
 
@@ -16,10 +18,11 @@
 
 어댑터 이름 (1분봉 실행이 부름)
 
-    chart_minute(sym, req_qty=)  price(sym)  spec() → (틱, 1틱 가치)
+    chart_minute(sym, req_qty=)  price(sym)  spec() → (틱, 1틱 가치)  nearest() → 최근월물 (시작 때만)
 
 **어댑터는 종목을 다시 고르지 않습니다.** 실행 하나의 종목은 시작 때 한 번 정해져 끝까지 같습니다
-(월물이 넘어가도 실행 중에 바꾸지 않음). 국내 어댑터에만 시작 때 쓰는 `all_futures`·`nearest_usd` 가 있습니다.
+(월물이 넘어가도 실행 중에 바꾸지 않음). 시작 때 종목을 안 줬으면 `nearest()` 로 한 번 고릅니다 — 국내는
+`nearest_usd(all_futures())`, 해외는 해외 종목 마스터의 MKU 줄로 `nearest_mku`. 국내 어댑터에만 `all_futures`·`nearest_usd` 가 있습니다.
 
 **해외 잔고·주문내역은 쪽을 따라갑니다**(컨트롤러 결정 R5). 다음 쪽 키(`nxt_key`)를 `OVS_MAX_PAGES` 쪽까지 따라
 합칩니다. 끝 규칙은 운영자 `overseas_account.collect_pl` 과 같습니다 — 다음 키가 비었거나 이미 쓴 키면 끝,
@@ -32,6 +35,7 @@
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Literal
@@ -65,17 +69,25 @@ class Market:
     breaks: tuple[tuple[str, str], ...]     # 휴장 [시작, 끝) — 이 사이엔 주문하지 않음
     paper_fee: float                        # 종이 체결 수수료 (체결마다, 그 시장 통화)
     paper_slip_ticks: int                   # 종이 체결 슬리피지 (틱)
+    tick: float                             # 호가 단위 — 종목을 안 줬을 때 전략 TICK 으로 시장을 고르는 값
+    tick_value: float                       # 1틱 가치 (그 시장 통화)
+    min_day_bars: int                       # 리플레이가 이보다 봉이 적은 날을 뺌 (`replay.load_minutes`)
 
 
-#: 국내 미국달러선물 — 기존 값 그대로(실행 끝 `live.END_TIME`, 종이 `runner.PAPER_FEE`·`PAPER_SLIP_TICKS`,
-#: 장 시작은 week02 전략 `session_start` — 모의계좌 주문은 09:00 부터).
+# 팀: 국내 값의 **출처는 여기**입니다 — `live.END_TIME`·`runner.PAPER_FEE`·`PAPER_SLIP_TICKS`·
+# `replay.MIN_BARS_PER_DAY` 는 이 값을 읽어 씁니다(week02 값 그대로).
+#: 국내 미국달러선물 — 실행 끝 15:31, 종이 수수료 690원·슬리피지 1틱, 장 시작은 week02 전략 `session_start`
+#: (모의계좌 주문은 09:00 부터), 틱 0.1 = 1,000원, 하루 250봉 미만인 날(거래가 드문 원월물 시절)은 리플레이에서 뺌.
 DOMESTIC = Market(id="domestic", currency="KRW", end_time="153100", session_start="090000",
-                  breaks=(), paper_fee=690.0, paper_slip_ticks=1)
+                  breaks=(), paper_fee=690.0, paper_slip_ticks=1, tick=0.1, tick_value=1000.0, min_day_bars=250)
 
 #: 해외 SGX 미니 원달러 MKU — 장 08:25~20:35 · 휴장 20:35~20:50 · 20:50~, 실행 끝 23:55,
-#: 종이 수수료 편도 US$2(체결마다)·슬리피지 1틱(전역 약속).
+#: 종이 수수료 편도 US$2(체결마다)·슬리피지 1틱(전역 약속), 틱 0.0001 = US$2.5.
+#: 하루 봉 수로 날을 빼지 않습니다(week03 `backtest.load_minutes` 도 안 뺌) — MKU 는 토요일 새벽(06:15 까지)처럼
+#: 봉이 적은 날이 정상이고, 거래가 드물어도 실제로 열린 날입니다.
 OVERSEAS = Market(id="overseas", currency="USD", end_time="235500", session_start="082500",
-                  breaks=(("203500", "205000"),), paper_fee=2.0, paper_slip_ticks=1)
+                  breaks=(("203500", "205000"),), paper_fee=2.0, paper_slip_ticks=1, tick=0.0001, tick_value=2.5,
+                  min_day_bars=1)
 
 
 def market_of(sym: str) -> Market:
@@ -89,6 +101,15 @@ def market_of(sym: str) -> Market:
     if code.startswith("MKU"):
         return OVERSEAS
     raise ValueError(f"시장을 알 수 없는 종목코드입니다: {sym!r} (A75… 국내 미국달러선물, MKU… 해외만)")
+
+
+def market_of_tick(tick: float) -> Market:
+    """종목을 안 줬을 때의 시장 — 전략 `TICK` 이 MKU 틱(0.0001)이면 해외, 아니면 국내.
+
+    국내가 「그 밖」인 것은 week02 전략(`TICK` 0.1, 또는 `TICK` 이 없어 0.1)이 지금처럼 돌게 하려는 것입니다.
+    틱이 둘 다 아니면(예: 0.2) 국내로 골라도 시작 때 서버 틱 확인이 거부합니다. 시장 가드(종목의 시장 ≠ 이 값이면
+    거부)도 이 함수로 「전략의 시장」을 정합니다."""
+    return OVERSEAS if math.isclose(float(tick), OVERSEAS.tick, rel_tol=1e-9) else DOMESTIC
 
 
 def in_break(market: Market, hhmmss: str) -> bool:
@@ -191,6 +212,10 @@ class DomesticAdapter(MarketAdapter):
     def usd_spec(self, details: list[dict]) -> tuple[float, float]:
         return self.api.usd_spec(details)
 
+    def nearest(self) -> str:
+        """미국달러선물 최근월물 (week02 그대로)."""
+        return self.api.nearest_usd(self.api.all_futures())
+
 
 class OverseasAdapter(MarketAdapter):
     """해외 MKU — `api.py` 의 `ovs_*` 함수로. 국내 함수(`market_order` 등)는 절대 부르지 않습니다."""
@@ -264,6 +289,11 @@ class OverseasAdapter(MarketAdapter):
         """(호가 단위, 1틱 가치 USD) — 해외 품목 세부정보의 `MKU` 줄(큰 계약 KU 아님)."""
         return self.api.mku_spec(self.api.ovs_product_detail())
 
+    # ---- 시작 때만 (종목 고르기)
+    def nearest(self) -> str:
+        """MKU 최근월물 — 해외 종목 마스터(`etc_fut.mst`)의 MKU 줄에서 만기일 기준 근월 (`api.nearest_mku`)."""
+        return self.api.nearest_mku(self.api.mku_master_rows())
+
 
 def _all_pages(page) -> list[dict]:
     """`page(nxt_key) -> (줄, 다음 키)` 를 끝까지 따라 줄을 합칩니다. 끝 규칙은 모듈 설명(운영자 collect_pl 과 같음)."""
@@ -290,6 +320,14 @@ def adapter(market: Market, api_module: ModuleType | Any = default_api) -> Marke
     if market.id == "overseas":
         return OverseasAdapter(api_module)
     raise ValueError(f"모르는 시장입니다: {market.id!r}")
+
+
+def adapter_for(market: Market, api_module: ModuleType | Any = default_api) -> MarketAdapter:
+    """그 시장의 어댑터. `api_module` 이 이미 그 시장 어댑터면 그대로(감싸지 않음), 다른 시장 어댑터면 속의
+    api 로 그 시장 어댑터를 새로, 모듈·가짜면 `adapter(market, api_module)`."""
+    if isinstance(api_module, MarketAdapter):
+        return api_module if api_module.market is market else adapter(market, api_module.api)
+    return adapter(market, api_module)
 
 
 def as_adapter(api_module: ModuleType | Any) -> MarketAdapter:

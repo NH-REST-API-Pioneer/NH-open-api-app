@@ -8,13 +8,21 @@
     recover          앱을 켤 때 — 끝나지 않은 채 남은 폴더를 「끝·재시작」으로 닫는다 (주문은 보내지 않는다)
 
 시작 거부(`StartRefused`) — 폴더를 만들기 **전에** 걸리는 것(주말·장 끝·모의 환경 아님·같은 종목 주문 실행·
-이상한 파일/종목 이름·미국달러선물(`A75…`)이 아닌 종목)은 폴더를 남기지 않고 메시지만 돌려줍니다. 폴더를 만든 **뒤** `LiveRun.prepare()` 에서 걸리는 것
-(시작 잔고·틱 불일치 등)은 `run.json`(상태 「끝」, 까닭 「시작 거부: …」)이 남습니다.
+이상한 파일/종목 이름·미국달러선물(`A75…`)·MKU(`MKU…`)가 아닌 종목·종목의 시장과 전략 틱이 맞지 않음)은 폴더를 남기지 않고
+메시지만 돌려줍니다. 폴더를 만든 **뒤** `LiveRun.prepare()` 에서 걸리는 것(시작 잔고·틱 불일치 등)은 `run.json`
+(상태 「끝」, 까닭 「시작 거부: …」)이 남습니다.
+
+**시장** — 실행의 시장은 `live.run_market`(종목이 있으면 종목의 시장, 없으면 전략 TICK — MKU 틱이면 해외)로 정하고,
+「장 끝」 거부 시각은 그 시장의 끝 시각입니다(국내 15:31, 해외 23:55). 주말 거부는 그대로입니다. 최근월물은 그 시장
+어댑터의 `nearest()`(국내 `nearest_usd`, 해외 마스터의 `nearest_mku`)로 알아냅니다.
+
+**같은 종목 모의 계좌 실행은 하나** — 키는 실행이 **주문하는 종목**(`order_sym`)이고 실행기 종류(1분봉·실시간)와
+상관없습니다. 실시간 실행이 시세로만 보는 종목(leadlag 의 KRX)은 키가 아닙니다.
 
 기록 폴더 이름: `<YYYYMMDD>_<NAME>_<orders|paper>[_<종목>][_<n>]`.
 
 - 종목은 사용자가 `spec.sym` 을 줬고 **최근월물과 다를 때만** 붙입니다(안 줬거나 최근월물이면 안 붙음).
-  최근월물은 `start` 에서 먼저 `api.nearest_usd(api.all_futures())` 로 알아냅니다 — 같은 종목 검사·앞선 손절 수 세기에도
+  최근월물은 `start` 에서 먼저 시장 어댑터의 `nearest()` 로 알아냅니다 — 같은 종목 검사·앞선 손절 수 세기에도
   종목을 알아야 해서 `prepare()` 뒤가 아니라 폴더를 정하기 전에 한 번 더 조회합니다(시세 조회라 주문과 무관).
 - `NAME` 에는 `-` 가 있을 수 있으나 id 는 `[0-9A-Za-z_]+` 만 쓸 수 있어, 폴더 이름에서는 `-` 를 `_` 로 바꿉니다
   (`run.json` 의 `name` 은 그대로).
@@ -48,15 +56,16 @@ from backend.sessions.hours import now_kst, to_kst
 from backend.team_pyrun import api as default_api
 from backend.team_pyrun.apilog import ApiLog, bind, purpose
 from backend.team_pyrun.broker import error_text
-from backend.team_pyrun.journal import Journal, count_stops, summarize, write_summary
-from backend.team_pyrun.live import END_TIME, LiveRun, RunSpec, StartRefused
+from backend.team_pyrun.journal import Journal, count_stops, entered_windows, summarize, write_summary
+from backend.team_pyrun.live import LiveRun, RunSpec, StartRefused, run_market
 from backend.team_pyrun.loader import LoadError, load, strategies_dir
+from backend.team_pyrun.markets import Market, adapter_for, market_of
 
 #: 실행 id(= 폴더 이름)·종목 코드가 쓸 수 있는 글자 — 경로 문자가 섞이지 못하게 한다.
 ID_PATTERN = re.compile(r"[0-9A-Za-z_]+")
 logger = logging.getLogger(__name__)
 
-#: 받는 종목 코드의 앞부분 — 미국달러선물(`A75` + 연도 + 월 + `000`)만 돌린다.
+#: 받는 종목 코드의 앞부분 — 미국달러선물(`A75` + 연도 + 월 + `000`). 해외 MKU(`MKU…`)는 `markets.market_of` 가 받는다.
 USD_PREFIX = "A75"
 #: `RunSpec.mode` 로 쓸 수 있는 값 — 폴더 이름에 들어가므로 이 둘만 받는다.
 MODES = ("orders", "paper")
@@ -98,22 +107,29 @@ class Registry:
         now = to_kst(self._now())
         if now.weekday() >= 5:
             raise StartRefused("주말에는 실행을 시작할 수 없습니다 (토·일은 장이 없습니다)")
-        if now.strftime("%H%M%S") >= END_TIME:
-            raise StartRefused(f"장이 끝난 시각({END_TIME[:2]}:{END_TIME[2:4]}) 뒤에는 실행을 시작할 수 없습니다")
         if spec.mode == "orders" and self._active_env() != "paper":
             raise StartRefused("모의투자 환경에서만 모의 계좌 실행을 세울 수 있습니다")
         if Path(spec.file).name != spec.file or not spec.file.endswith(".py"):
             raise StartRefused(f"전략 파일 이름이 올바르지 않습니다: {spec.file!r}")
         if spec.sym is not None and not ID_PATTERN.fullmatch(spec.sym):
             raise StartRefused(f"종목 코드가 올바르지 않습니다: {spec.sym!r}")
-        if spec.sym is not None and not spec.sym.startswith(USD_PREFIX):
-            # 틱·틱가치는 미국달러선물 줄(`api.usd_spec`)로만 확인한다 — 다른 종목은 그 확인이 맞지 않는다
-            raise StartRefused("미국달러선물(A75…) 종목만 실행할 수 있습니다")
+        if spec.sym is not None:
+            # 틱·틱가치는 시장마다 그 품목 줄(국내 `usd_spec`, 해외 `mku_spec`)로만 확인한다 — 다른 종목은 받지 않는다
+            try:
+                market_of(spec.sym)
+            except ValueError as e:
+                raise StartRefused("미국달러선물(A75…)·SGX 미니 원달러(MKU…) 종목만 실행할 수 있습니다") from e
         try:
             loaded = load(self.strategies, spec.file)
         except LoadError as e:
             raise StartRefused(f"전략 파일을 불러오지 못했습니다 — {e}") from e
-        nearest = self._nearest()                       # 잠금 밖 — 조회가 느려도 다른 시작을 막지 않게
+        market, refusal = run_market(spec.sym, loaded)
+        if refusal:                                     # 시장 가드 — 폴더도 조회도 없이
+            raise StartRefused(refusal)
+        end = market.end_time
+        if now.strftime("%H%M%S") >= end:
+            raise StartRefused(f"장이 끝난 시각({end[:2]}:{end[2:4]}) 뒤에는 실행을 시작할 수 없습니다")
+        nearest = self._nearest(market)                 # 잠금 밖 — 조회가 느려도 다른 시작을 막지 않게
         sym = spec.sym or nearest
         if sym is None:     # 종목을 모르면 같은 종목 검사·손절 이어받기를 할 수 없다 — 열어 두고 가지 않는다
             raise StartRefused("최근월물을 알 수 없습니다 — 잠시 뒤 다시 시작하세요")
@@ -121,15 +137,18 @@ class Registry:
         with self._lock:
             if spec.mode == "orders" and sym is not None:
                 for other in self._runs.values():
+                    # 키 = 주문하는 종목 (실행기 종류와 무관 — 실시간 실행도 같은 이름 `order_sym` 을 가진다)
                     if (other.spec.mode == "orders" and other.state in BUSY_STATES
-                            and other.sym == sym):
+                            and getattr(other, "order_sym", other.sym) == sym):
                         raise StartRefused(f"같은 종목 {sym} 의 모의 계좌 실행이 이미 있습니다 ({other.run_id}) — "
                                            "끝낸 뒤에 시작하세요")
             run_id = self._new_id(today, loaded.name, spec, nearest)
-            stops_before = count_stops(self._folders_of(today, loaded.name, sym, spec.mode), today)
+            earlier = self._folders_of(today, loaded.name, sym, spec.mode)
+            stops_before = count_stops(earlier, today)
+            windows_before = entered_windows(earlier, today)    # 개장마다 한 번 — 앞선 실행이 들어간 개장
             try:    # 전략 생성자(`loaded.new()`)가 여기서 불린다 — 고장 나도 빈 폴더를 남기지 않고 거부로
                 run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
-                              sleep=self._sleep, stops_before=stops_before)
+                              sleep=self._sleep, stops_before=stops_before, windows_before=windows_before)
             except Exception as e:
                 shutil.rmtree(self.root / run_id, ignore_errors=True)
                 raise StartRefused(f"전략을 만들지 못했습니다 — {type(e).__name__}: {e}") from e
@@ -163,10 +182,10 @@ class Registry:
                 self._preparing.discard(run_id)
         return run.status()
 
-    def _nearest(self) -> str | None:
-        """최근월물 종목. 조회가 안 되면 경고를 남기고 None(종목도 안 준 시작은 `start` 가 거부한다)."""
+    def _nearest(self, market: Market) -> str | None:
+        """그 시장의 최근월물 종목. 조회가 안 되면 경고를 남기고 None(종목도 안 준 시작은 `start` 가 거부한다)."""
         try:
-            return self._api.nearest_usd(self._api.all_futures())
+            return adapter_for(market, self._api).nearest()
         except Exception as e:
             logger.warning("최근월물 조회 실패 — %s", error_text(e))
             return None
@@ -311,8 +330,9 @@ class Registry:
             try:
                 if not sym:
                     raise ValueError("종목을 모릅니다")
+                ad = adapter_for(market_of(sym), self._api)   # 해외는 쪽을 따라간 잔고(첫 쪽만 보지 않음)
                 with bind(apilog), purpose("잔고확인"):
-                    held = self._api.net_position(self._api.open_interest(), sym)
+                    held = ad.net_position(ad.open_interest(), sym)
                 j.write("event", text=f"재시작으로 닫음 — 잔고 {sym} {held:+d}계약 (정리 주문은 보내지 않음, 계좌에서 확인하세요)")
             except Exception as e:
                 j.write("event", text="재시작으로 닫음 — 잔고 확인 실패 (정리 주문은 보내지 않음, 계좌에서 확인하세요)",
@@ -320,7 +340,8 @@ class Registry:
         if not (folder / "summary.json").exists():
             trades = [{k: v for k, v in row.items() if k != "kind"} for row in j.read() if row.get("kind") == "trade"]
             write_summary(folder, {
-                "sym": sym, "trades": trades, "summary": summarize(trades),
+                "sym": sym, "market": data.get("market"), "currency": data.get("currency"),
+                "trades": trades, "summary": summarize(trades),
                 "account_start": None, "account_end": None, "api": apilog.stats(),
                 "strategy": {k: data.get(k) for k in ("file", "name", "title", "sha256")},
                 "ended_reason": "재시작",

@@ -626,7 +626,8 @@ def test_status_칸(tmp_path):
     assert list(s) == ["id", "file", "name", "title", "mode", "sym", "state", "started_at", "ended_at",
                        "ended_reason", "bar_min", "next_decision_at", "position", "entry", "stop",
                        "stop_ticks", "target", "time_exit_at", "today_pnl", "stops", "max_stops", "halted",
-                       "last_signal", "params"]
+                       "last_signal", "params", "market", "currency"]
+    assert (s["market"], s["currency"]) == ("domestic", "KRW")
     assert (s["id"], s["mode"], s["sym"], s["state"], s["bar_min"]) == (
         "20261103_fake_orders", "orders", SYM, "진행 중", 1)
     assert s["next_decision_at"] == "090200"               # 09:00 봉 다음 판정 봉은 09:01 시작 → 09:02 마감

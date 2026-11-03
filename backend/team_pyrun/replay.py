@@ -25,12 +25,15 @@ from backend.team_pyrun.loader import DEFAULT_FLATTEN, Loaded, load, strategies_
 from backend.team_pyrun.markets import DOMESTIC, Market
 from backend.team_pyrun.runner import PAPER_FEE, PAPER_SLIP_TICKS, Minute, PaperBroker, Runner
 
-MIN_BARS_PER_DAY = 250      # 이보다 봉이 적은 날(거래가 드문 원월물 시절)은 뺍니다 (week02 와 같음)
+MIN_BARS_PER_DAY = DOMESTIC.min_day_bars   # 국내: 이보다 봉이 적은 날(거래가 드문 원월물 시절)은 뺍니다 (week02 와 같음)
 DEFAULT_SYM = "A756B000"
 
 
-def load_minutes(csv_path: Path) -> list[Minute]:
-    """1분봉 csv(`ref_dt exch_tm open_pric …`)를 읽는다. 하루 250봉 미만인 날은 뺀다."""
+def load_minutes(csv_path: Path, *, market: Market = DOMESTIC) -> list[Minute]:
+    """1분봉 csv(`ref_dt exch_tm open_pric …`)를 읽는다. 하루 봉이 `market.min_day_bars` 미만인 날은 뺀다.
+
+    국내는 250봉(week02 그대로), 해외 MKU 는 빼지 않습니다(1봉) — 토요일 새벽처럼 봉이 적은 날도 열린 날이고,
+    week03 백테스트도 빼지 않습니다."""
     with Path(csv_path).open(encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     per_day: dict[str, int] = {}
@@ -38,7 +41,7 @@ def load_minutes(csv_path: Path) -> list[Minute]:
         per_day[r["ref_dt"]] = per_day.get(r["ref_dt"], 0) + 1
     return [Minute(r["ref_dt"], r["exch_tm"], float(r["open_pric"]), float(r["high_pric"]),
                    float(r["low_pric"]), float(r["close_pric"]), float(r["cum_trd_qty"] or 0))
-            for r in rows if per_day[r["ref_dt"]] >= MIN_BARS_PER_DAY]
+            for r in rows if per_day[r["ref_dt"]] >= market.min_day_bars]
 
 
 def _stamp() -> str:
@@ -61,6 +64,7 @@ def replay(loaded: Loaded, date: str | None, minutes: list[Minute], folder: Path
     j = Journal(folder / "journal.jsonl")
     r = Runner(loaded.new(market), j, PaperBroker(j, loaded.tick, fee=fee, slip_ticks=slip_ticks),
                loaded.tick, loaded.tick_value)
+    r.currency = market.currency      # 기록 글의 손익 통화 (값은 TICK_VALUE 단위 그대로)
     days = sorted({m.date for m in minutes}) if date is None else [date]
     flat_at = DEFAULT_FLATTEN[market.id]
     if days:
@@ -81,13 +85,14 @@ def replay(loaded: Loaded, date: str | None, minutes: list[Minute], folder: Path
         r.force_flat(flat_at)
     result = {"trades": r.trades, "summary": summarize(r.trades)}
     # 실시간 실행의 summary.json 과 같은 꼴로 전략 정보도 남긴다 — 지난 실행 화면이 그때의 Params 를 보인다
-    write_summary(folder, {**result, "strategy": {
+    write_summary(folder, {**result, "market": market.id, "currency": market.currency, "strategy": {
         "file": loaded.file, "name": loaded.name, "title": loaded.title,
         "sha256": loaded.sha256, "params": asdict(r.p)}})
     (folder / "run.json").write_text(json.dumps({
         "id": folder.name, "file": loaded.file, "name": loaded.name, "title": loaded.title,
         "sha256": loaded.sha256, "mode": "replay", "sym": sym, "state": "끝",
         "started_at": started, "ended_at": _stamp(), "ended_reason": "리플레이",
+        "market": market.id, "currency": market.currency, "kind": "minute",
     }, indent=1, ensure_ascii=False), encoding="utf-8")
     return result
 

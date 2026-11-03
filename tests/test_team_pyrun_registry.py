@@ -279,11 +279,14 @@ def test_파일_이름과_종목_코드에_경로_문자가_있으면_거부(tmp
 
 
 def test_미국달러선물이_아닌_종목은_거부(tmp_path):
-    """틱·틱가치는 미국달러선물 줄로만 확인하므로 다른 종목(`A75…` 가 아닌 것)은 받지 않는다."""
+    """틱·틱가치는 시장마다 그 품목 줄로만 확인하므로 미국달러선물(`A75…`)·MKU(`MKU…`)가 아닌 종목은 받지 않는다.
+    국내 틱 전략에 MKU 종목을 주면 시장 가드가 거부한다(해외는 `test_team_pyrun_live_overseas.py`)."""
     reg, fake, _ = make_registry(tmp_path)
-    for sym in ("A016B000", "B756B000", "MKUX26", "a756B000"):
-        with pytest.raises(StartRefused, match=r"미국달러선물\(A75…\) 종목만 실행할 수 있습니다"):
+    for sym in ("A016B000", "B756B000", "a756B000"):
+        with pytest.raises(StartRefused, match=r"미국달러선물\(A75…\)·SGX 미니 원달러\(MKU…\) 종목만 실행할 수 있습니다"):
             reg.start(RunSpec("fake.py", "paper", sym))
+    with pytest.raises(StartRefused, match="종목의 시장과 전략 틱이 맞지 않습니다"):
+        reg.start(RunSpec("fake.py", "paper", "MKUX26"))
     assert not (tmp_path / "pyruns").exists() and fake.calls == []
     assert reg.start(RunSpec("fake.py", "paper", OTHER_SYM))["sym"] == OTHER_SYM      # A75… 는 그대로 받는다
 

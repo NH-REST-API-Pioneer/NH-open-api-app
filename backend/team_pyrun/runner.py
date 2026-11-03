@@ -68,8 +68,18 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
 **`on_entry` 인자** — 매개변수가 없으면 `on_entry()`. 있으면 **이름이 같은 진입 신호 칸의 값**을 넘깁니다
 (ORB `on_entry(window)` ← 신호의 `window`). 신호에 없는 이름은 기본값이 있으면 기본값, 없으면 `TypeError` —
 이 대응은 **진입 주문을 내기 전에** 맞춰 봅니다(틀리면 주문 없이 오류).
-`*args`·`**kwargs` 에는 아무것도 넘기지 않습니다. 진입 신호에 `window` 가 있으면 보유와 `trade` 줄에도 남깁니다
-(같은 날 다시 세운 실행이 개장마다 한 번 규칙을 이어받게).
+`*args`·`**kwargs` 에는 아무것도 넘기지 않습니다. 진입 신호에 `window` 가 있으면 보유와 `trade` 줄, 진입 `event` 줄에도
+남깁니다(같은 날 다시 세운 실행이 개장마다 한 번 규칙을 이어받게 — `journal.entered_windows`).
+
+**주문 막힘 시각(휴장)** — `blocked(clock) -> bool` 을 꽂으면(장중 실행이 해외 휴장 20:35~20:50 으로 꽂음) 그 시각엔
+진입·청산 체결(`broker.fill`)을 하나도 부르지 않습니다. 리플레이와 직접 쓰는 Runner 는 None — 지금 그대로입니다
+(week03 백테스트는 휴장 봉에서도 기한 청산을 하므로 골든이 그대로 맞습니다).
+
+- 진입 대기 신호는 버리지 않고 기다렸다가, 막힘이 풀린 첫 가격에 진입합니다(진입 시간 안이면).
+- 청산 판단은 막힌 동안에도 합니다(전략의 `exit_reason`, 없으면 공통 규칙). 청산하기로 정해지면 그 사유를
+  `break_exit` 에 두고 **다시 묻지 않으며**, 막힘이 풀린 첫 가격(그 가격이 기준가)에 그 사유로 청산합니다 —
+  그 사이 가격이 돌아왔어도. 순서는 앱의 장 마감 정리(`flatten_at`) 다음, 전략·공통 규칙 앞입니다.
+- 청산 재시도(`retry_after`)도 막힌 동안엔 미룹니다. `force_flat` 도 막힌 시각엔 주문하지 않습니다(실행이 「확인 필요」로 끝냄).
 """
 from __future__ import annotations
 
@@ -80,9 +90,11 @@ from decimal import Decimal
 from typing import Protocol
 
 from backend.team_pyrun.journal import Journal
+from backend.team_pyrun.markets import DOMESTIC
 
-PAPER_FEE = 690.0       # 종이 체결 수수료 (1계약 1번 체결) — week02 에서 모의계좌 체결마다 나온 값
-PAPER_SLIP_TICKS = 1    # 종이 체결 슬리피지 (틱)
+# 팀: 국내 값의 출처는 `markets.DOMESTIC` (week02 값 그대로 — 690원, 1틱)
+PAPER_FEE = DOMESTIC.paper_fee              # 종이 체결 수수료 (1계약 1번 체결) — week02 에서 모의계좌 체결마다 나온 값
+PAPER_SLIP_TICKS = DOMESTIC.paper_slip_ticks    # 종이 체결 슬리피지 (틱)
 RETRY_SECONDS = 10      # 청산 체결이 확인 안 됐을 때 다시 시도하기까지
 
 #: 신호 줄의 지표 칸에서 뺄 봉 칸 — 나머지 숫자 칸이 지표값이다.
@@ -258,6 +270,11 @@ def _won(x: float) -> float | int:
     return int(x) if float(x).is_integer() else x
 
 
+def _money(x: float, currency: str) -> str:
+    """기록 글에 쓰는 금액 — 원은 week02 그대로 `+19,000원`, USD 는 `+22.50 USD`."""
+    return f"{x:+,}원" if currency == "KRW" else f"{x:+,.2f} USD"
+
+
 # ---------------------------------------------------------------- 체결 담당
 class Broker(Protocol):
     """체결을 맡는 쪽. 체결가를 못 받으면 `fill` 은 None — 그때 실행기가 `position` 으로 실제 상태를 봅니다."""
@@ -325,6 +342,11 @@ class Runner:
         self.stops_before = 0                 # 오늘 앞선 실행의 손절 수 — 전략에 `day` 가 없을 때 화면의 손절 수에 더한다
         self.entry_signal: object | None = None  # 보유의 진입 신호 객체 — `exit_reason` 의 pos["signal"]
         self.retry_reason: str | None = None  # 확인 안 된 청산의 사유 — 전략이 판단하는 청산은 이 사유로 다시 시도
+        self.currency = "KRW"                 # 손익·수수료 통화 — 기록 글에만 씀(값은 TICK_VALUE 단위 그대로)
+        #: 주문 막힘 시각(휴장)인가 — 실행이 꽂는다. None 이면 막힘 없음(모듈 문서)
+        self.blocked = None
+        self.break_exit: str | None = None    # 막힌 동안 정한 청산 사유 — 막힘이 풀린 첫 가격에 이 사유로 청산
+        self._block_noted: set[str] = set()   # 막힌 동안 한 번만 남기는 기록 (진입 대기·청산 판단)
 
     # ---- 시세 넣기
     def feed(self, m: Minute) -> list:
@@ -334,13 +356,16 @@ class Runner:
         self.cur_date = m.date
         return self.strat.on_minute(m)
 
-    def warmup(self, minutes: list[Minute]) -> None:
-        """준비 봉: 전략에 넣기만 하고 진입하지 않음."""
+    def warmup(self, minutes: list[Minute]) -> list:
+        """준비 봉: 전략에 넣기만 하고 진입하지 않음. 그동안 전략이 낸 신호를 돌려준다(장중 시작 때 이미 신호가 난
+        개장을 알아보는 데 씀 — `live.LiveRun.prepare`)."""
+        signals: list = []
         for m in minutes:
-            self.feed(m)
+            signals.extend(self.feed(m) or [])
         if minutes:
             self.j.write("event", text=f"준비 봉 {len(minutes)}개 ({minutes[0].date} {minutes[0].time} ~ "
                                        f"{minutes[-1].date} {minutes[-1].time})")
+        return signals
 
     def on_minute_closed(self, m: Minute) -> None:
         for s in self.feed(m):
@@ -366,31 +391,53 @@ class Runner:
         self.last_price = price
         if self.halted:
             return      # 멈춘 실행은 진입도 청산도 하지 않는다
+        # 팀: 휴장 — 이 시각엔 체결을 부르지 않는다(모듈 문서 「주문 막힘 시각」)
+        blocked = self.blocked is not None and bool(self.blocked(clock))
+        if not blocked and self._block_noted:
+            self._block_noted = set()       # 막힘이 풀리면 다음 막힘에 다시 한 번 기록
         if self.pending and self.pos is None and self.p.entry_start <= clock < self.p.entry_end:
-            self._enter(clock, price)
+            if blocked:
+                self._note_block("entry", clock, "휴장 중 — 진입 대기 신호는 휴장이 끝난 첫 가격에 진입")
+            else:
+                self._enter(clock, price)
         elif self.pending and not (self.p.entry_start <= clock < self.p.entry_end):
             self.j.write("event", clock=clock, text="진입 시간이 지나 신호를 버림")
             self.pending = None
-        if self.halted or self.pos is None or clock < self.retry_after:
+        if self.halted or self.pos is None:
+            return
+        if blocked:
+            self._decide_in_break(clock, price, lo, hi, ref_low, ref_high)
+            return
+        if clock < self.retry_after:
             return
         judge = getattr(self.strat, EXIT_HOOK, None)
         if judge is not None:       # 전략이 청산을 판단한다 — 공통 손절·익절·시간 청산은 쓰지 않음
             self._judged_exit(judge, clock, price, ref_low, ref_high)
             return
+        got = self._common_exit(clock, price, lo, hi, ref_low, ref_high)
+        if got is not None:
+            self._exit(clock, *got)
+
+    def _common_exit(self, clock: str, price: float, lo: float, hi: float,
+                     ref_low: float | None, ref_high: float | None) -> tuple[float, str] | None:
+        """앱의 공통 청산 규칙(week02) — (기준가, 사유) 또는 None. 막힘(휴장) 뒤 정해 둔 청산이 장 마감 정리 다음에 온다."""
         side, pos = self.pos["side"], self.pos
         target = target_of(self.strat)
         if clock >= self.p.flatten_at:
-            self._exit(clock, price, FLATTEN_REASON)
-        elif side == "buy" and lo <= pos["stop"]:
-            self._exit(clock, min(price, pos["stop"]) if ref_low is None else pos["stop"], "손절")
-        elif side == "sell" and hi >= pos["stop"]:
-            self._exit(clock, max(price, pos["stop"]) if ref_high is None else pos["stop"], "손절")
-        elif target is not None and side == "buy" and hi >= (tp := take_profit_price(side, target, self.tick)):
-            self._exit(clock, max(price, tp) if ref_high is None else tp, "익절")
-        elif target is not None and side == "sell" and lo <= (tp := take_profit_price(side, target, self.tick)):
-            self._exit(clock, min(price, tp) if ref_low is None else tp, "익절")
-        elif _minutes_of(clock) - _minutes_of(pos["entry_time"]) >= self.p.hold_min:
-            self._exit(clock, price, "시간 청산")
+            return price, FLATTEN_REASON
+        if self.break_exit is not None:     # 팀: 휴장 중 정한 청산 — 풀린 첫 가격에
+            return price, self.break_exit
+        if side == "buy" and lo <= pos["stop"]:
+            return (min(price, pos["stop"]) if ref_low is None else pos["stop"]), "손절"
+        if side == "sell" and hi >= pos["stop"]:
+            return (max(price, pos["stop"]) if ref_high is None else pos["stop"]), "손절"
+        if target is not None and side == "buy" and hi >= (tp := take_profit_price(side, target, self.tick)):
+            return (max(price, tp) if ref_high is None else tp), "익절"
+        if target is not None and side == "sell" and lo <= (tp := take_profit_price(side, target, self.tick)):
+            return (min(price, tp) if ref_low is None else tp), "익절"
+        if _minutes_of(clock) - _minutes_of(pos["entry_time"]) >= self.p.hold_min:
+            return price, "시간 청산"
+        return None
 
     def _judged_exit(self, judge, clock: str, price: float, ref_low: float | None, ref_high: float | None) -> None:
         """전략의 `exit_reason` 으로 청산할지 정한다. 앱의 안전 규칙이 먼저다(모듈 문서의 순서 3·4)."""
@@ -400,16 +447,48 @@ class Runner:
         if self.retry_reason is not None:   # 앞서 정한 청산이 확인 안 됨 — 결정을 되묻지 않고 같은 사유로 다시
             self._exit(clock, price, self.retry_reason)
             return
+        if self.break_exit is not None:     # 팀: 휴장 중 정한 청산 — 되묻지 않고 풀린 첫 가격에
+            self._exit(clock, price, self.break_exit)
+            return
+        got = self._judged(judge, clock, price, ref_low, ref_high)
+        if got is not None:
+            self._exit(clock, *got)
+
+    def _judged(self, judge, clock: str, price: float, ref_low: float | None,
+                ref_high: float | None) -> tuple[float, str] | None:
+        """전략에 묻고 (묶은 기준가, 사유) 또는 None."""
         got = _exit_answer(judge(clock, price, ref_low, ref_high, self._pos_view()), price)
         if got is None:
-            return
+            return None
         reason, asked = got
         # 기준가 묶기 — 가격 하나면 그 가격, 범위면 [저가, 고가] 안 (전략이 체결가를 지어내지 못하게)
         ref = price if ref_low is None or ref_high is None else min(max(asked, ref_low), ref_high)
         if ref != asked:
             self.j.write("event", clock=clock, text=f"전략 기준가 {asked:g} → {ref:g} ({reason}) — "
                                                     "가격 범위 밖이라 범위 안으로 묶음")
-        self._exit(clock, ref, reason)
+        return ref, reason
+
+    def _decide_in_break(self, clock: str, price: float, lo: float, hi: float,
+                         ref_low: float | None, ref_high: float | None) -> None:
+        """막힌(휴장) 시각의 가격 — 청산을 정하기만 하고 주문하지 않는다. 정한 사유는 `break_exit` 에 두고 다시 묻지 않음.
+
+        청산 재시도를 기다리는 중(`retry_reason`)이면 그 사유가 이미 정해져 있어 묻지 않는다."""
+        if self.break_exit is not None or self.retry_reason is not None:
+            return
+        judge = getattr(self.strat, EXIT_HOOK, None)
+        if judge is not None:
+            got = self._judged(judge, clock, price, ref_low, ref_high)
+        else:
+            got = self._common_exit(clock, price, lo, hi, ref_low, ref_high)
+        if got is None:
+            return
+        self.break_exit = got[1]
+        self.j.write("event", clock=clock, text=f"휴장 중 청산 판단 ({got[1]}) — 휴장이 끝난 첫 가격에 주문")
+
+    def _note_block(self, key: str, clock: str, text: str) -> None:
+        if key not in self._block_noted:
+            self._block_noted.add(key)
+            self.j.write("event", clock=clock, text=text)
 
     def _pos_view(self) -> dict:
         """`exit_reason` 에 넘기는 보유의 사본 — 진입 날짜와 진입 신호 객체를 더한다."""
@@ -450,7 +529,10 @@ class Runner:
         if fn is not None and entry_call is not None:
             args, kwargs = entry_call
             fn(*args, **kwargs)
-        self.j.write("event", clock=clock, text=f"진입 {e['side']} {px} · 손절 {self.pos['stop']} ({e['stop_ticks']}틱)")
+        # 진입 줄에도 window — trade 없이 끝난 실행(확인 필요·앱 꺼짐)도 같은 날 다시 세운 실행이 이어받게
+        tag = {"window": self.pos["window"]} if "window" in self.pos else {}
+        self.j.write("event", clock=clock, text=f"진입 {e['side']} {px} · 손절 {self.pos['stop']} ({e['stop_ticks']}틱)",
+                     **tag)
 
     def _exit(self, clock: str, ref: float, reason: str) -> None:
         side = "sell" if self.pos["side"] == "buy" else "buy"
@@ -485,16 +567,20 @@ class Runner:
              "pnl_after_fee": None if fee is None else pnl - fee,
              "entry_date": self.live_date, "exit_date": self.live_date}
         self.trades.append(t)
-        fee_txt = "" if fee is None else f" · 수수료 {fee:,.0f}원 → {t['pnl_after_fee']:+,.0f}원"
+        if self.currency == "KRW":
+            fee_txt = "" if fee is None else f" · 수수료 {fee:,.0f}원 → {t['pnl_after_fee']:+,.0f}원"
+        else:
+            fee_txt = "" if fee is None else f" · 수수료 {fee:,.2f} USD → {t['pnl_after_fee']:+,.2f} USD"
         row = {k: t[k] for k in ("side", "entry", "exit", "entry_time", "exit_time", "ticks", "pnl",
                                  "fee", "pnl_after_fee", "reason", "exit_date")}
         if "window" in t:
             row["window"] = t["window"]
-        self.j.write("trade", clock=clock, text=f"{reason} {ticks:+d}틱 ({pnl:+,}원){fee_txt}", **row)
+        self.j.write("trade", clock=clock, text=f"{reason} {ticks:+d}틱 ({_money(pnl, self.currency)}){fee_txt}", **row)
         # 보유를 먼저 비운다 — 전략의 on_exit 가 예외를 내도 끝내기 정리가 이미 닫은 보유를 또 닫지 않게
         self.pos = None
         self.retry_after = ""
         self.retry_reason = None
+        self.break_exit = None
         self.entry_signal = None
         self._hook("on_exit", pnl, stopped=reason == "손절")
 
@@ -521,6 +607,8 @@ class Runner:
         """실행을 끝내며 남은 보유를 마지막 가격으로 정리. 멈춘 실행은 건드리지 않는다(잔고가 어긋나 있다)."""
         if self.halted:
             return
+        if self.blocked is not None and self.blocked(clock):
+            return      # 팀: 휴장 중엔 정리 주문도 내지 않는다 — 실행이 「확인 필요」로 끝낸다
         if self.pos is not None and self.last_price is not None:
             self._exit(clock, self.last_price, END_REASON)
 

@@ -162,6 +162,33 @@ def count_stops(folders: Iterable[Path], date: str) -> int:
     return total
 
 
+def entered_windows(folders: Iterable[Path], date: str) -> set:
+    """`date`(YYYYMMDD)에 앞선 실행들이 **들어간 개장(window)** — 같은 날 다시 세운 실행이 개장마다 한 번 규칙을 이어받게.
+
+    두 곳에서 읽습니다: `trade` 줄의 `window`(그날 청산한 것), 그리고 진입 `event` 줄의 `window` (진입만 하고
+    trade 없이 끝난 실행 — 확인 필요로 멈췄거나 앱이 꺼진 것 — 도 들어간 개장으로 셉니다). event 줄엔 날짜 칸이
+    없어서, 부르는 쪽이 그날 폴더만 넘깁니다(`Registry._folders_of`). 파일이 없거나 깨진 줄은 건너뜁니다."""
+    out: set = set()
+    for folder in folders:
+        try:
+            text = (Path(folder) / "journal.jsonl").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            window = row.get("window")
+            if not isinstance(window, (str, int)) or isinstance(window, bool):
+                continue
+            if (row.get("kind") == "trade" and row.get("exit_date") == date) or row.get("kind") == "event":
+                out.add(window)
+    return out
+
+
 def write_summary(folder: Path, data: dict) -> Path:
     """`summary.json` 을 쓰고 경로를 돌려줍니다(들여쓰기 1, 한글 그대로).
 

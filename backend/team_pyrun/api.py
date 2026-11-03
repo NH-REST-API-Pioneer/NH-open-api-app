@@ -334,6 +334,24 @@ def nearest_mku(master_rows: list[dict]) -> str:
     return str(min(flagged or candidates, key=lambda r: str(r.get("yymm", "")))["code"]).strip()
 
 
+def mku_master_rows(base_dir: Any = None) -> list[dict]:
+    """받아 둔 해외 종목 마스터(`etc_fut.mst`, 가장 최근 날짜 폴더)에서 MKU 줄만 dict 로 (`nearest_mku` 의 인자).
+
+    마스터는 앱이 날마다 받아 `~/NHFutures/master/<날짜>/` 에 둡니다(운영자 `master_store`). 조회 API 가 아니라
+    파일 읽기라 재시도가 없습니다. `base_dir` 는 시험에서 다른 폴더를 줄 때.
+
+    Raises:
+        ValueError: 받아 둔 마스터가 없거나 읽지 못했을 때(까닭을 담아) — 실행 시작이 거부됩니다.
+    """
+    from backend.master import master_store
+    from backend.master.master_files import MASTER_FILES_BY_NAME
+
+    got = master_store.load_master(MASTER_FILES_BY_NAME["etc_fut"], base_dir)
+    if not got.ok or got.table is None:
+        raise ValueError(f"해외 종목 마스터(etc_fut)를 읽지 못했습니다 — {got.error or '표 없음'}")
+    return [r for r in got.table.rows_as_dicts() if str(r.get("comd", "")).strip() == "MKU"]
+
+
 def ovs_deposit(cur_cd: str = "USD", *, biz_dt: str = "", client: TradeClient | None = None) -> dict:
     """해외 예수금 — 본문 한 덩어리. 통화별(`cvs_div` 1). 수수료 `fee`·`fut_fee`, 실현손익 `cls_pl_amt`, 주문가능금액 `ord_psb_amt`.
 

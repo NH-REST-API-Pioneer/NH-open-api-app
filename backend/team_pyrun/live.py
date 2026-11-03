@@ -1,6 +1,8 @@
 """장중 실행 — week02 `runner.py` 의 `live()` 를 1초 한 번 부르는 `step()` 으로 나눠 옮긴 것.
 
 실행 하나 = 전략 파일 하나 × 종목 하나 × 하루. 모든 호출은 모의 서버(`environment="paper"`)로 갑니다.
+시장(국내 미국달러선물 · 해외 SGX 미니 원달러 MKU)은 `markets` 가 알고, 실행은 그 시장 어댑터로만 1분봉·현재가·
+틱 확인·주문·잔고·예수금을 부릅니다(해외 잔고·주문내역은 어댑터가 쪽을 따라감 — 첫 쪽만 보는 `api.ovs_*` 를 직접 부르지 않음).
 
     prepare()      시작 검사와 준비 봉 (Registry 스레드에서 한 번). 안 되면 `StartRefused`
     step(now)      1초 한 번 — 분이 바뀌고 3초 뒤 1분봉, 매초 현재가, 정리 요청, 잔고 대조
@@ -15,8 +17,8 @@
 week02 와 다른 점
 
 - 시작할 때 이 종목 잔고가 있으면 **정리하지 않고 시작을 거부**합니다(누구의 잔고인지 모르므로).
-- 실시간 전략(`Loaded.kind == "realtime"`)이나, Params 에 장 시간 칸이 빠진 전략(`Loaded.params_missing`)은
-  조회·주문 없이 시작을 거부합니다 — 시장 시간표로 칸을 채우는 것은 해외 실행에서 합니다.
+- 실시간 전략(`Loaded.kind == "realtime"`)은 조회·주문 없이 시작을 거부합니다. Params 에 장 시간 칸이 빠진 전략
+  (`Loaded.params_missing`)은 해외면 해외 시간표로 채우고(`Loaded.new(market)`), 국내면 week02 처럼 거부합니다.
 - 전략 파일의 sha256 과 Params 를 처음 기록에 남깁니다.
 - 계좌 잔고를 대조해 실행이 아는 보유와 다르면 **주문을 멈추고 「확인 필요」**로 둡니다: 보유 중 30초마다,
   보유가 바뀌고 5초 뒤, 체결을 못 받은 주문 바로 뒤. 결과를 모르는 주문이 있었으면 보유가 없어도 30초마다.
@@ -29,6 +31,29 @@ week02 와 다른 점
 
 시각은 생성자에 넣은 `now()`(한국시간)만 씁니다. 상태(`대기` `진행 중` `확인 필요` `끝` `오류`)가 바뀔 때마다
 `run.json` 을 새로 씁니다(임시 파일에 쓰고 바꿔 끼움).
+
+**시장 고르기** — `RunSpec.sym` 이 있으면 `markets.market_of(sym)`, 비었으면 전략 `TICK` 으로
+(`markets.market_of_tick`: MKU 틱 0.0001 이면 해외 → 해외 마스터의 MKU 최근월물 `nearest_mku`, 아니면 국내 →
+`nearest_usd`). **시장 가드**: 종목의 시장과 전략 TICK 의 시장이 다르면(MKU 틱 전략을 `A75…` 에, 또는 반대)
+조회·주문 없이 시작을 거부합니다. 끝 시각은 `market.end_time`(국내 15:31, 해외 23:55). `run.json`·`status()`·
+`summary.json` 에 `market`·`currency`(손익·수수료의 통화 — 값은 그 통화, TICK_VALUE 단위)를 둡니다.
+
+**휴장(해외 20:35~20:50)엔 주문이 하나도 나가지 않습니다.** 갈래마다:
+
+    전략·공통 청산 판단    Runner 가 막힌 시각엔 판단만 하고(`break_exit`) 20:50 이후 첫 가격에 그 사유로 청산
+    진입 대기 신호         버리지 않고 기다렸다가 20:50 이후 첫 가격에 진입 (Runner)
+    청산 재시도            막힌 동안 미룸 (Runner)
+    정리 요청(flatten)     요청을 들고 있다가 휴장이 끝난 첫 step 에서 정리
+    중지 요청(보유 중)     휴장이 끝난 첫 step 에서 현재가를 한 번 받고 정리한 뒤 끝냄
+    오류·앱 종료로 끝남     정리 주문 없이 멈춤 → 「정리 안 함 — 확인 필요」 (보유는 계좌에 남음)
+
+**장중 시작·같은 날 다시 세우기(개장마다 한 번)** — 준비 봉에서 **오늘** 진입 신호(`side`)가 난 개장(신호의
+`window`)과, 오늘 같은 NAME·종목·방식의 앞선 실행이 들어간 개장(`windows_before`, registry 가 `journal.entered_windows`
+로 셈)은 「이미 진입함」입니다. 준비 봉 뒤 그 개장마다 전략의 `on_entry(window)` 를 불러 되살리고, **바로**
+`day.in_position` 을 False 로 되돌립니다(보유는 없으므로). `on_exit` 는 부르지 않습니다 — 그날 손절 수는
+`stops_before`(앞선 실행의 실제 손절)로 `day.stops` 에 **한 번만** 넣습니다. 장 전에 켜 오늘 첫 봉에서 전략이 하루를
+새로 만들면 손절 수와 개장을 다시 넣고, 그 봉에서 이미 진입한 개장의 대기 신호가 났으면 버립니다.
+개장(`window`) 칸이 없는 전략(week02)은 지금처럼 손절 수만 이어받습니다.
 
 **시작 거부(`StartRefused`)여도 `run.json` 은 남습니다** — 상태 「끝」, 끝 까닭 「시작 거부: …」. 화면이 왜
 못 시작했는지 보일 수 있게. 주문은 하나도 나가지 않고 `summary.json` 은 쓰지 않습니다.
@@ -53,9 +78,11 @@ from backend.team_pyrun.apilog import ApiLog, bind, purpose
 from backend.team_pyrun.broker import MockAccountBroker, error_text
 from backend.team_pyrun.journal import Journal, summarize, write_summary
 from backend.team_pyrun.loader import Loaded
-from backend.team_pyrun.runner import Minute, PaperBroker, Runner, minute_of
+from backend.team_pyrun.markets import DOMESTIC, Market, adapter_for, in_break, market_of, market_of_tick
+from backend.team_pyrun.runner import Minute, PaperBroker, Runner, _entry_args, minute_of
 
-END_TIME = "153100"         # 15:30 정리 뒤 이 시각에 끝냄 (week02 와 같음)
+# 팀: 출처는 `markets.DOMESTIC` — 국내 15:30 정리 뒤 이 시각에 끝냄 (week02 와 같음). 해외는 `market.end_time`
+END_TIME = DOMESTIC.end_time
 WARMUP_BARS = 1500          # 준비 봉 개수
 LIVE_BARS = 10              # 장중 1분봉 조회 개수
 MINUTE_DELAY_SECONDS = 3    # 분이 바뀌고 이만큼 뒤에 막 끝난 1분봉을 받음
@@ -70,11 +97,18 @@ SNAPSHOT_KEYS = ("position", "entry", "stop", "stop_ticks", "target", "time_exit
 
 @dataclass
 class RunSpec:
-    """무엇을 돌릴지. `sym` 이 없으면 미국달러선물 최근월물."""
+    """무엇을 돌릴지. `sym` 이 없으면 전략 TICK 의 시장 최근월물(MKU 틱이면 MKU, 아니면 미국달러선물)."""
 
     file: str
     mode: Literal["orders", "paper"]
     sym: str | None
+
+
+class _WindowOnly:
+    """`on_entry(window)` 에 개장 이름만 넘기려는 신호 꼴 — `runner._entry_args` 가 이름으로 칸을 찾는다."""
+
+    def __init__(self, window: str | int):
+        self.window = window
 
 
 class StartRefused(Exception):
@@ -90,6 +124,36 @@ def _minutes(hhmmss: str) -> int:
     return int(hhmmss[:2]) * 60 + int(hhmmss[2:4])
 
 
+def run_market(sym: str | None, loaded: Loaded) -> tuple[Market, str | None]:
+    """(실행의 시장, 거부 까닭 또는 None). 모듈 문서 「시장 고르기」 — registry 와 실행이 같은 규칙을 쓴다.
+
+    종목이 있으면 그 종목의 시장, 없으면 전략 TICK 의 시장. 종목의 시장이 모르는 것이거나 전략 TICK 의 시장과
+    다르면 까닭을 돌려준다(이때 시장은 전략 TICK 의 것 — 전략 Params 를 채우는 데만 쓰고 조회는 하지 않음)."""
+    by_tick = market_of_tick(loaded.tick)
+    if not sym:
+        return by_tick, None
+    try:
+        by_sym = market_of(sym)
+    except ValueError as e:
+        return by_tick, str(e)
+    if by_sym is not by_tick:
+        return by_tick, (f"종목의 시장과 전략 틱이 맞지 않습니다 — 종목 {sym} 은 {by_sym.id}({by_sym.currency}), "
+                         f"전략 TICK {loaded.tick:g} 는 {by_tick.id}({by_tick.currency})")
+    return by_sym, None
+
+
+def _window(signal: object) -> str | int | None:
+    """신호의 개장 이름(`window`) — 문자·정수만."""
+    w = getattr(signal, "window", None)
+    return w if isinstance(w, (str, int)) and not isinstance(w, bool) else None
+
+
+def _signal_date(signal: object) -> str | None:
+    """신호 판정 봉의 날짜(`bar` 또는 `minute` 의 `date`). 모르면 None."""
+    b = getattr(signal, "bar", None) or getattr(signal, "minute", None)
+    return getattr(b, "date", None)
+
+
 class LiveRun:
     """장중 실행 하나. Registry 가 만들고 `prepare()` 뒤 데몬 스레드에서 `run_forever()` 를 돌린다.
 
@@ -98,18 +162,29 @@ class LiveRun:
 
     def __init__(self, run_id: str, folder: Path, loaded: Loaded, spec: RunSpec, *,
                  api_module: ModuleType | Any = default_api, now: Callable[[], datetime] = now_kst,
-                 sleep: Callable[[float], None] = time.sleep, stops_before: int = 0):
+                 sleep: Callable[[float], None] = time.sleep, stops_before: int = 0,
+                 windows_before: tuple | list | set | frozenset = ()):
         self.run_id, self.folder, self.loaded, self.spec = run_id, Path(folder), loaded, spec
-        self.api, self.now, self.sleep = api_module, now, sleep
+        self.now, self.sleep = now, sleep
+        self.kind = "minute"
         self.stops_before = int(stops_before)
+        #: 오늘 앞선 실행이 들어간 개장 — prepare 에서 「이미 진입함」으로 되살린다
+        self.windows_before: tuple = tuple(sorted(windows_before, key=str))
+        # 팀: 시장과 그 어댑터 — 1분봉·현재가·틱·브로커·예수금은 전부 이 어댑터로
+        self.market, self._market_refusal = run_market(spec.sym, loaded)
+        self.api = adapter_for(self.market, api_module)
         self.folder.mkdir(parents=True, exist_ok=True)
         self.j = Journal(self.folder / "journal.jsonl")
         self.apilog = ApiLog(self.folder / "api_log.jsonl", run_id)
         self.orders = spec.mode == "orders"
-        # orders 의 MockAccountBroker 는 종목이 정해지는 prepare() 에서 만든다
-        self.broker: MockAccountBroker | PaperBroker | None = None if self.orders else PaperBroker(self.j, loaded.tick)
-        self.runner = Runner(loaded.new(), self.j, self.broker, loaded.tick, loaded.tick_value)
+        # orders 의 MockAccountBroker 는 종목이 정해지는 prepare() 에서 만든다. 종이 체결 값은 시장 값
+        self.broker: MockAccountBroker | PaperBroker | None = None if self.orders else PaperBroker(
+            self.j, loaded.tick, fee=self.market.paper_fee, slip_ticks=self.market.paper_slip_ticks)
+        # 빠진 Params 장 시간 칸은 시장 값으로 채운다(국내면 prepare 가 거부)
+        self.runner = Runner(loaded.new(self.market), self.j, self.broker, loaded.tick, loaded.tick_value)
         self.runner.stops_before = self.stops_before   # 화면의 오늘 손절 수용(전략에 day 가 없을 때)
+        self.runner.currency = self.market.currency
+        self.runner.blocked = lambda clock: in_break(self.market, clock)    # 휴장 중엔 체결을 부르지 않음
         self.sym: str | None = spec.sym
         self.state = "대기"
         self.started_at: str | None = None
@@ -129,6 +204,9 @@ class LiveRun:
         self._last_exp = 0                             # 마지막 step 의 기대 보유
         self._recheck_at: datetime | None = None       # 기대 보유가 바뀐 뒤 한 번 더 대조할 시각
         self._day_obj: object | None = None            # 앞선 손절 수를 넣어 둔 전략의 하루 상태 객체
+        self._windows: tuple = ()                      # 「이미 진입함」으로 되살린 개장 (준비 봉 신호 + 앞선 실행)
+        self._stop_deferred = False                    # 휴장 중 중지 요청을 미뤘음 — 풀리면 현재가를 받고 정리
+        self._break_noted: set[str] = set()            # 이번 휴장에 「요청을 미룬다」 기록을 남긴 요청 (stop·flatten)
 
     # ------------------------------------------------------------ 시작
     def prepare(self) -> None:
@@ -158,25 +236,35 @@ class LiveRun:
         # 0. 이 실행기로 돌릴 수 있는 전략인가 — 조회·주문 전에 거부
         if loaded.kind != "minute":
             raise StartRefused("실시간 전략(on_krx·on_quote)은 1분봉 실행으로 시작할 수 없습니다")
-        if loaded.params_missing:
-            # 빠진 칸을 시장 시간표로 채우는 것은 해외 실행부터 — 국내는 week02 처럼 Params 에 적힌 칸으로만 돈다
+        if self._market_refusal:        # 시장 가드 — 조회 전에 (모듈 문서 「시장 고르기」)
+            raise StartRefused(self._market_refusal)
+        if loaded.params_missing and self.market is DOMESTIC:
+            # 빠진 칸을 시장 시간표로 채우는 것은 해외 실행만 — 국내는 week02 처럼 Params 에 적힌 칸으로만 돈다
             raise StartRefused(f"Params 에 장 시간 칸이 없습니다 ({', '.join(loaded.params_missing)}) — "
                                "국내 1분봉 실행은 이 칸을 Params 에 적어야 합니다")
+        market = self.market
         # 1. 어디로·무엇을
         j.write("event", text=f"서버 paper · 주문 {'모의계좌' if self.orders else '종이'}")
+        if market is not DOMESTIC:
+            j.write("event", text=f"시장 {market.id} · 통화 {market.currency} · 실행 끝 {market.end_time[:2]}:"
+                                  f"{market.end_time[2:4]} · 휴장 "
+                                  + (", ".join(f"{a[:2]}:{a[2:4]}~{b[:2]}:{b[2:4]}" for a, b in market.breaks) or "없음"))
         j.write("event", text=f"전략 {loaded.file} · sha256 {loaded.sha256[:12]} · Params {asdict(r.p)}")
         # 2. 종목과 틱
         sym = self.spec.sym
         if not sym:
             with purpose("종목 찾기"):
-                sym = api.nearest_usd(api.all_futures())
+                sym = api.nearest()
         self.sym = sym
         with purpose("틱 확인"):
-            tick, value = api.usd_spec(api.product_detail())
+            tick, value = api.spec()
         if not (math.isclose(tick, loaded.tick, rel_tol=1e-9) and math.isclose(value, loaded.tick_value, rel_tol=1e-9)):
             raise StartRefused(f"틱·틱가치가 전략 가정과 다릅니다 — 서버 {tick:g}·{value:g}, "
                                f"전략 {loaded.tick:g}·{loaded.tick_value:g}")
-        j.write("event", text=f"종목 {sym} · 틱 {tick:g} · 틱가치 {value:,.0f}")
+        if market is DOMESTIC:
+            j.write("event", text=f"종목 {sym} · 틱 {tick:g} · 틱가치 {value:,.0f}")
+        else:
+            j.write("event", text=f"종목 {sym} · 틱 {tick:g} · 틱가치 {value:g} {market.currency}")
         self._write_run()
         # 3. 모의계좌: 시작 잔고가 0 이어야 한다
         if self.orders:
@@ -197,7 +285,7 @@ class LiveRun:
         with purpose("준비 봉"):
             got = [minute_of(x) for x in api.chart_minute(sym, req_qty=WARMUP_BARS)]
         hist = sorted((m for m in got if (m.date, m.time) < (today, now_min)), key=lambda m: (m.date, m.time))
-        r.warmup(hist)
+        signals = r.warmup(hist)
         r.live_date = today       # 준비 봉에서 난 오늘 신호로는 진입하지 않음 — 이 뒤로 닫히는 봉부터
         day = getattr(r.strat, "day", None)
         if self.stops_before and day is not None:
@@ -206,10 +294,37 @@ class LiveRun:
                                   f"(한도 {getattr(r.p, 'max_stops_per_day', '?')}회)")
         elif self.stops_before:     # 하루 상태(`day`)가 없는 전략 — 손절 수를 넣을 자리가 없다
             j.write("event", text=f"전략에 하루 상태(day)가 없어 오늘 앞선 실행의 손절 {self.stops_before}회를 이어받지 않음")
+        # 개장마다 한 번 — 준비 봉에서 오늘 진입 신호가 난 개장 + 앞선 실행이 들어간 개장 (모듈 문서)
+        fired = {w for s in signals if getattr(s, "side", None) and _signal_date(s) == today
+                 and (w := _window(s)) is not None}
+        self._windows = tuple(sorted(fired | set(self.windows_before), key=str))
+        if self._windows:
+            self._restore_windows()
+            parts = [f"{w}({'준비 봉 신호' if w in fired else ''}{'·' if w in fired and w in self.windows_before else ''}"
+                     f"{'앞선 실행' if w in self.windows_before else ''})" for w in self._windows]
+            j.write("event", text=f"이미 진입한 개장 — {', '.join(parts)}: 오늘 다시 들어가지 않음",
+                    windows=list(self._windows))
         self._day_obj = getattr(r.strat, "day", None)
         self._last_fed = (hist[-1].date, hist[-1].time) if hist else ("", "")
         self._seen_minute = now.strftime("%H%M")
         self._last_check = now
+
+    def _restore_windows(self) -> None:
+        """「이미 진입함」 개장을 전략에 되살린다 — `on_entry(window)` 뒤 바로 `day.in_position = False`.
+
+        `on_exit` 는 부르지 않는다(손절 수를 또 세지 않게 — 그날 손절은 `stops_before` 로 한 번만).
+        `on_entry` 가 없는 전략이면 되살릴 자리가 없으니 기록만 남기고, 앱이 대기 신호를 버리는 것으로 막는다."""
+        r = self.runner
+        fn = getattr(r.strat, "on_entry", None)
+        if fn is None:
+            self.j.write("event", text="전략에 on_entry 가 없어 개장을 되살리지 않음 — 그 개장의 신호는 앱이 버림")
+            return
+        for w in self._windows:
+            args, kwargs = _entry_args(fn, _WindowOnly(w))     # 인자 대응이 틀리면 TypeError → 시작 거부
+            fn(*args, **kwargs)
+            day = getattr(r.strat, "day", None)
+            if day is not None and hasattr(day, "in_position"):
+                day.in_position = False     # 되살리기만 — 이 실행은 보유가 없다
 
     def _refuse(self, msg: str) -> None:
         self.j.write("event", text=f"시작 거부 · {msg}")
@@ -231,10 +346,20 @@ class LiveRun:
     def _step(self, now: datetime) -> None:
         r = self.runner
         clock = now.strftime("%H%M%S")
-        if clock >= END_TIME:
+        in_brk = in_break(self.market, clock)
+        held_in_break = in_brk and r.pos is not None and not r.halted
+        if not in_brk and self._break_noted:
+            self._break_noted = set()
+        if clock >= self.market.end_time:
             self._finish("장 끝", now)
             return
-        if self._stop_requested:
+        if self._stop_requested and held_in_break:
+            # 팀: 휴장 중엔 정리 주문을 낼 수 없다 — 휴장이 끝난 첫 step 에서 현재가를 받고 정리한 뒤 끝낸다
+            self._stop_deferred = True
+            self._note_break("stop", clock, "휴장 중 중지 요청 — 휴장이 끝나면 정리하고 끝냄")
+        elif self._stop_requested:
+            if self._stop_deferred and r.pos is not None and not r.halted:
+                self._fresh_price(clock)    # 정리 기준가를 휴장 전 가격이 아니라 지금 가격으로 (전략에는 안 넣음)
             self._finish("중지", now)
             return
         if clock < r.p.session_start:
@@ -246,7 +371,9 @@ class LiveRun:
             self._feed_minutes(now, clock)
             self._reconcile(now, clock)     # 주문이 나갈 수 있는 현재가·정리 요청보다 먼저 대조
             self._feed_price(clock)
-            if self._flatten_requested:
+            if self._flatten_requested and in_break(self.market, clock) and r.pos is not None:
+                self._note_break("flatten", clock, "휴장 중 정리 요청 — 휴장이 끝난 첫 가격에 정리")   # 요청은 들고 있는다
+            elif self._flatten_requested:
                 self._flatten_requested = False
                 self.j.write("event", clock=clock, text="정리 요청 — 보유가 있으면 정리")
                 r.force_flat(clock)
@@ -256,6 +383,12 @@ class LiveRun:
             return
         if r.halted:
             self._set_state("확인 필요")
+
+    def _note_break(self, key: str, clock: str, text: str) -> None:
+        """휴장 중 미룬 요청 — 요청마다 휴장 하나에 한 번만 기록."""
+        if key not in self._break_noted:
+            self._break_noted.add(key)
+            self.j.write("event", clock=clock, text=text)
 
     def _feed_minutes(self, now: datetime, clock: str) -> None:
         """분이 바뀌고 3초 뒤: 막 끝난 1분봉(들)을 시각순으로 한 번씩 전략에 넣는다."""
@@ -276,6 +409,7 @@ class LiveRun:
             self.runner.on_minute_closed(m)
             self._last_fed = (m.date, m.time)
             self._carry_stops(m)
+            self._drop_entered_window(m)
         self._seen_minute = hhmm
 
     def _carry_stops(self, m: Minute) -> None:
@@ -283,13 +417,40 @@ class LiveRun:
 
         장 전에 켜면 준비 봉이 어제 것뿐이라, prepare 에서 넣은 값이 오늘 첫 봉에서 지워지기 때문입니다."""
         day = getattr(self.runner.strat, "day", None)
-        if not self.stops_before or day is None or day is self._day_obj or m.date != self._today:
+        if not (self.stops_before or self._windows) or day is None or day is self._day_obj or m.date != self._today:
             return
         self._day_obj = day
-        if getattr(day, "stops", 0) < self.stops_before:
+        if self.stops_before and getattr(day, "stops", 0) < self.stops_before:
             day.stops = self.stops_before
             self.j.write("event", clock=m.time, text=f"오늘 앞선 실행의 손절 {self.stops_before}회를 다시 넣음 "
                                                      f"(전략이 하루를 새로 시작함)")
+        if self._windows:       # 하루를 새로 만들며 지운 「이미 진입함」 개장도 다시 넣는다
+            self._restore_windows()
+            self.j.write("event", clock=m.time, text=f"이미 진입한 개장 {', '.join(map(str, self._windows))} 를 다시 넣음 "
+                                                     f"(전략이 하루를 새로 시작함)")
+
+    def _drop_entered_window(self, m: Minute) -> None:
+        """「이미 진입함」 개장의 대기 신호는 버린다 — 오늘 첫 봉에서 전략이 하루를 새로 만들어 되살리기 전에 신호를
+        낸 경우, 또는 `on_entry` 가 없어 전략에 되살릴 수 없는 경우를 막는 마지막 자리."""
+        pending = self.runner.pending
+        if not self._windows or pending is None or m.date != self._today:
+            return
+        w = _window(pending.get("obj"))
+        if w is not None and w in self._windows:
+            self.runner.pending = None
+            self.j.write("event", clock=m.time, text=f"{w} 개장은 오늘 이미 진입함 — 대기 신호를 버림")
+
+    def _fresh_price(self, clock: str) -> None:
+        """현재가 한 번 — 실행기의 마지막 가격만 바꾼다(전략 판단 없음). 실패·0 이면 그대로."""
+        try:
+            with purpose("현재가"):
+                q = self.api.price(self.sym)
+            px = self.api.num(q.get("last_pric")) if isinstance(q, dict) else None
+        except Exception as e:
+            self.j.write("event", clock=clock, text="현재가 처리 실패 — 마지막 가격으로 정리", error=error_text(e))
+            return
+        if px is not None and px > 0:
+            self.runner.last_price = px
 
     def _feed_price(self, clock: str) -> None:
         """현재가 한 번. 0·빈 값이면 판단하지 않는다."""
@@ -375,6 +536,11 @@ class LiveRun:
     def _wrap_up(self, reason: str, clock: str) -> str:
         """보유 정리·끝 잔고·summary.json. 바뀐 끝 까닭을 돌려준다."""
         r, b, j = self.runner, self.broker, self.j
+        if not r.halted and r.pos is not None and in_break(self.market, clock):
+            # 팀: 휴장 중 끝남(오류·앱 종료) — 정리 주문을 내지 않는다. 보유는 계좌에 남으니 확인 필요
+            start, end = next((a, z) for a, z in self.market.breaks if a <= clock < z)
+            r.halt(f"휴장 중({start[:2]}:{start[2:4]}~{end[:2]}:{end[2:4]}) 끝 — 정리 주문을 내지 않음 · "
+                   f"보유 {r.expected_position():+d}")
         if not r.halted and r.pos is not None:
             try:
                 if isinstance(b, MockAccountBroker):
@@ -405,7 +571,8 @@ class LiveRun:
         if isinstance(b, MockAccountBroker):
             self.account_end = b.account(clock, "끝 (수수료·확정손익은 하루 누적)")
         data: dict[str, Any] = {
-            "sym": self.sym, "trades": r.trades, "summary": summarize(r.trades),
+            "sym": self.sym, "market": self.market.id, "currency": self.market.currency,
+            "trades": r.trades, "summary": summarize(r.trades),
             "account_start": self.account_start, "account_end": self.account_end,
             "api": self.apilog.stats(),
             "strategy": {"file": self.loaded.file, "name": self.loaded.name, "title": self.loaded.title,
@@ -445,6 +612,11 @@ class LiveRun:
         self._flatten_requested = True
 
     # ------------------------------------------------------------ 상태
+    @property
+    def order_sym(self) -> str | None:
+        """이 실행이 주문하는 종목 — registry 의 「같은 종목 모의 계좌 실행은 하나」 규칙의 키(실행기 종류와 무관)."""
+        return self.sym
+
     def _next_decision(self, bar_min: int) -> str | None:
         """마지막으로 넣은 1분봉 뒤 다음 판정 봉이 닫히는 시각(HHMMSS). 판정 봉은 session_start 부터 bar_min 분씩."""
         date, t = self._last_fed
@@ -477,6 +649,7 @@ class LiveRun:
             "bar_min": bar_min, "next_decision_at": self._next_decision(bar_min),
             **{k: snap.get(k) for k in SNAPSHOT_KEYS},
             "params": asdict(p),
+            "market": self.market.id, "currency": self.market.currency,
         }
 
     def _set_state(self, state: str) -> None:
@@ -491,6 +664,7 @@ class LiveRun:
             "mode": self.spec.mode, "sym": self.sym, "state": self.state,
             "started_at": self.started_at, "ended_at": self.ended_at, "ended_reason": self.ended_reason,
             "sha256": self.loaded.sha256,
+            "market": self.market.id, "currency": self.market.currency, "kind": self.kind,
         }
         if self.runner.halted:
             data["halted"] = self.runner.halted

@@ -50,7 +50,8 @@ def folder(tmp_path):
 
 
 def _minutes():
-    return [m for m in load_minutes(CSV) if DATA_FROM <= m.date <= DATA_TO]
+    # 해외 날은 하루 봉 수로 빼지 않는다(week03 backtest.load_minutes 와 같음 — 국내 250봉 거르기는 쓰지 않음)
+    return [m for m in load_minutes(CSV, market=OVERSEAS) if DATA_FROM <= m.date <= DATA_TO]
 
 
 def _plus_minute(hhmmss: str) -> str:

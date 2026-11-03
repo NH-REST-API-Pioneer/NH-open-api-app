@@ -61,15 +61,35 @@ def _encode(content: object) -> bytes:
     return data
 
 
+def _existing(folder: Path, name: str) -> str | None:
+    """폴더에 이미 있는 같은 이름의 파일(디스크에 적힌 그대로의 이름). 없으면 None.
+
+    **대소문자를 무시하고** 비교한다 — 맥(APFS)은 대소문자를 가리지 않아 `Case.py` 가 있는데 `case.py` 를 쓰면
+    같은 파일이 되므로, 대소문자를 가리는 파일 시스템에서도 같게 다뤄 이름이 갈라지지 않게 한다.
+    정확히 같은 이름이 있으면 그것을, 아니면 이름순 첫 번째를 돌려준다."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return None
+    if name in names:
+        return name
+    lowered = name.lower()
+    return next((n for n in sorted(names) if n.lower() == lowered), None)
+
+
 def save(folder: Path, file: object, content: object, overwrite: bool) -> str:
     """전략 파일 하나를 폴더에 쓴다. 쓴 파일 이름을 돌려준다.
 
-    같은 이름이 이미 있는데 `overwrite` 가 아니면 `FileExists`. 컴파일·실행은 하지 않는다."""
+    같은 이름(대소문자 무시)이 이미 있는데 `overwrite` 가 아니면 `FileExists` — 메시지에는 디스크에 있는 이름을 적는다.
+    덮어쓸 때는 그 디스크 파일 이름으로 쓴다. 컴파일·실행은 하지 않는다."""
     name = check_name(file)
     data = _encode(content)
+    existing = _existing(Path(folder), name)
+    if existing is not None and not overwrite:
+        raise FileExists(f"같은 이름의 파일이 있습니다: {existing}")
+    if existing is not None:
+        name = existing          # 대소문자만 다른 이름이어도 디스크의 그 파일을 바꾼다
     target = Path(folder) / name
-    if (target.exists() or target.is_symlink()) and not overwrite:
-        raise FileExists(f"같은 이름의 파일이 있습니다: {name}")
     temp: str | None = None
     try:
         fd, temp = tempfile.mkstemp(prefix=_TEMP_PREFIX, suffix=".tmp", dir=folder)

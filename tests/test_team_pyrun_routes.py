@@ -606,3 +606,64 @@ def test_목록을_읽을_때_파일은_한_번만_불러온다(client, reg, mon
     calls.clear()
     client.get(f"{BASE}/strategies")
     assert sorted(calls) == sorted(set(calls)) and "helper.py" in calls
+
+
+def test_대소문자만_다른_이름도_있는_파일로_보고_디스크의_그_파일을_덮어쓴다(client, reg):
+    """대소문자를 가리지 않는 파일 시스템(맥 APFS)에서 `Case.py` 와 `case.py` 가 갈라지지 않게 —
+    어느 파일 시스템에서든 대소문자를 무시하고 비교한다. 409 는 디스크에 있는 이름을 알려 준다."""
+    assert _upload(client, "Case.py", "A = 1\n").status_code == 201
+    r = _upload(client, "case.py", "A = 2\n")
+    assert (r.status_code, r.json()) == (409, {"detail": "같은 이름의 파일이 있습니다: Case.py"})
+    assert (reg.strategies / "Case.py").read_text(encoding="utf-8") == "A = 1\n"
+    r = _upload(client, "CASE.py", "A = 3\n", overwrite=True)
+    assert r.status_code == 201
+    names = sorted(p.name for p in reg.strategies.glob("*.py") if p.name.lower() == "case.py")
+    assert names == ["Case.py"]                                  # 새 이름으로 갈라지지 않는다
+    assert (reg.strategies / "Case.py").read_text(encoding="utf-8") == "A = 3\n"
+    assert r.json()["modules"].count("Case.py") == 1 and "CASE.py" not in r.json()["modules"]
+    # 정확히 같은 이름이 있으면 그것을 쓴다(대소문자 구분 파일 시스템에서 둘이 따로 있는 경우)
+    from backend.team_pyrun import strategy_files
+    assert strategy_files._existing(reg.strategies, "Case.py") == "Case.py"
+    assert strategy_files._existing(reg.strategies, "nothing.py") is None
+
+
+HELPER_V1 = "def double(v):\n    return v * 2\n"
+HELPER_V2 = "def double(v):\n    return v * 3\n"
+
+
+def _uses_helper_src():
+    from tests.test_team_pyrun_live import STRATEGY_SRC
+    src = STRATEGY_SRC.replace('NAME = "fake"', 'NAME = "uses"').replace(
+        "from dataclasses import dataclass\n", "from dataclasses import dataclass\nfrom helper import double\n", 1)
+    src = src.replace("        self.seen.append((m.date, m.time))", "        self.seen.append((m.date, m.time, double(m.close)))")
+    assert "from helper import double" in src and "double(m.close)" in src
+    return src
+
+
+def test_올리고_지워도_공용_모듈을_불러온_실행은_계속_돈다(client, reg):
+    """전략이 맨 위에서 `from helper import double` 한다. 실행을 세운 뒤 helper.py 를 덮어쓰고 지워도
+    그 실행은 처음 불러온 helper 로 다음 분봉을 처리하고 오류 없이 이어진다(새 실행은 바뀐 파일을 쓴다)."""
+    from tests.test_team_pyrun_live import at, bar
+    assert _upload(client, "helper.py", HELPER_V1).status_code == 201
+    assert _upload(client, "uses.py", _uses_helper_src()).status_code == 201
+    run = reg.start(RunSpec("uses.py", "paper", None))
+    live = reg.get(run["id"])
+    reg.fake.chart = [bar("090000", 1335.0)]
+    live.step(at("090104"))
+    assert live.runner.strat.seen == [("20261103", "090000", 2670.0)] and live.state == "진행 중"
+
+    assert _upload(client, "helper.py", HELPER_V2, overwrite=True).status_code == 201
+    reg.fake.chart = [bar("090000", 1335.0), bar("090100", 1336.0)]
+    live.step(at("090204"))
+    assert live.state == "진행 중" and live.ended_reason is None
+    assert live.runner.strat.seen[-1] == ("20261103", "090100", 2672.0)          # 처음 불러온 v1 (v2 라면 4008.0)
+
+    assert client.delete(f"{BASE}/strategies/helper.py").status_code == 200
+    reg.fake.chart = [bar("090000", 1335.0), bar("090100", 1336.0), bar("090200", 1337.0)]
+    live.step(at("090304"))
+    assert live.state == "진행 중" and live.ended_reason is None
+    assert live.runner.strat.seen[-1] == ("20261103", "090200", 2674.0)
+    assert client.get(f"{BASE}/runs/{run['id']}").json()["state"] == "진행 중"
+    # helper 가 없어진 뒤 새로 세우는 실행은 불러오지 못해 거부된다
+    refused = client.post(f"{BASE}/runs", json={"file": "uses.py", "mode": "paper", "sym": None})
+    assert refused.status_code == 409

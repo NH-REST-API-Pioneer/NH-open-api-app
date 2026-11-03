@@ -39,6 +39,12 @@
 
 .pyrun-modules .run-row {
   align-items: center;
+  cursor: default;
+}
+
+/* 이름만 서는 줄 — 눌러 무언가 하는 줄이 아니라 마우스를 올려도 바탕이 변하지 않습니다. */
+.pyrun-modules .run-row:hover {
+  background: none;
 }
 
 /* 올리기·지우기 결과 한 줄. */

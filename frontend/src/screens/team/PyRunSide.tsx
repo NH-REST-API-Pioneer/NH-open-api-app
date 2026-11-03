@@ -65,6 +65,9 @@ interface Note {
   error: boolean
 }
 
+/** 올리는 중에 또 파일이 오면 알리는 문장. */
+const BUSY_TEXT = '올리는 중입니다 — 끝난 뒤 다시 올려 주세요'
+
 export function PyStrategyCard({
   list,
   why,
@@ -94,7 +97,11 @@ export function PyStrategyCard({
 
   /** 고른 파일들을 하나씩 올립니다. 같은 이름이 있으면(409) 그 자리에서 덮어쓸지 묻고 답을 기다립니다. */
   async function upload(picked: File[]) {
-    if (working || picked.length === 0) return
+    if (picked.length === 0) return
+    if (working) {
+      setNote({ text: BUSY_TEXT, error: false })
+      return
+    }
     const py = picked.filter((one) => one.name.toLowerCase().endsWith('.py'))
     const skipped = picked.length - py.length
     if (py.length === 0) {
@@ -107,11 +114,20 @@ export function PyStrategyCard({
     const declined: string[] = []
     const failed: string[] = []
     for (const one of py) {
-      let content: string
+      let bytes: ArrayBuffer
       try {
-        content = await one.text()
+        bytes = await one.arrayBuffer()
       } catch {
         failed.push(`${one.name}: 파일을 읽지 못했습니다`)
+        continue
+      }
+      /* `File.text()` 는 깨진 바이트를 조용히 바꿔 버립니다 — 엄격하게 풀어 UTF-8 이 아니면 올리지 않습니다.
+         BOM 은 풀면서 떼어집니다(파이썬은 BOM 이 없어도 읽습니다). */
+      let content: string
+      try {
+        content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      } catch {
+        failed.push(`${one.name}: UTF-8 이 아닌 파일은 올릴 수 없습니다`)
         continue
       }
       let got = await uploadStrategy(one.name, content, false)
@@ -152,16 +168,21 @@ export function PyStrategyCard({
   }
 
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
+  /* 확인창이 떠 있거나 올리는 중에는 끌어다 놓기를 받지 않습니다. 확인창은 이 카드 안에 그려져 놓기가
+     여기까지 올라오는데, 그때 올리기를 또 시작하면 묻던 지우기 확인이 덮어쓰기 확인으로 바뀌어 사라집니다.
+     그래도 `preventDefault` 는 해야 합니다 — 안 그러면 브라우저가 놓은 파일을 열어 앱을 떠납니다. */
+  const closed = ask !== null || working
   const drop = {
     onDragEnter: (event: DragEvent) => {
       if (!hasFiles(event)) return
       event.preventDefault()
+      if (closed) return
       setOver(true)
     },
     onDragOver: (event: DragEvent) => {
       if (!hasFiles(event)) return
       event.preventDefault() // 이게 있어야 놓을 수 있습니다
-      event.dataTransfer.dropEffect = 'copy'
+      event.dataTransfer.dropEffect = closed ? 'none' : 'copy'
     },
     onDragLeave: (event: DragEvent) => {
       // 카드 안의 자식 사이를 오갈 때는 켜 둡니다.
@@ -171,6 +192,10 @@ export function PyStrategyCard({
       if (!hasFiles(event)) return
       event.preventDefault()
       setOver(false)
+      if (closed) {
+        if (working) setNote({ text: BUSY_TEXT, error: false })
+        return
+      }
       void upload(Array.from(event.dataTransfer.files))
     },
   }

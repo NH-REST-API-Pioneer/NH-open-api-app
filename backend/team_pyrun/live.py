@@ -717,7 +717,7 @@ class LiveRun:
             "bar_min": bar_min, "next_decision_at": self._next_decision(bar_min),
             **{k: snap.get(k) for k in SNAPSHOT_KEYS},
             "params": asdict(p),
-            "market": self.market.id, "currency": self.market.currency,
+            "market": self.market.id, "currency": self.market.currency, "kind": self.kind,
         }
 
     def _set_state(self, state: str) -> None:

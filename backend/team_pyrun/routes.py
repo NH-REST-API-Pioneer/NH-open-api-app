@@ -4,10 +4,10 @@
     POST /strategies                             전략 파일 올리기 `{file, content, overwrite}` → 201 목록(`folder` `strategies` `modules`)(같은 이름은 409, 이름·크기는 400)
     DELETE /strategies/{file}                    전략 파일 지우기 → 200 목록(없으면 404)
     GET  /convention                             전략 파일 작성 규칙 `{"markdown": 문서 글}`(문서가 없으면 404)
-    GET  /runs · POST /runs                      실행 목록 / 시작(거부는 409 `{"detail": 거부 문장}`)
-    GET  /runs/{id}                              도는 실행은 `status()`, 끝난 실행은 `run.json` + 요약
+    GET  /runs · POST /runs                      실행 목록 / 시작 `{file, mode, sym?, signal_sym?}`(거부는 409 `{"detail": 거부 문장}`)
+    GET  /runs/{id}                              도는 실행은 `status()`, 끝난 실행은 `run.json` + 요약 (`kind` 로 1분봉·실시간 구별)
     GET  /runs/{id}/journal · /api-log           `?after=N` 이어 읽기 → `{"rows": […], "next": 줄 수}`
-    GET  /runs/{id}/bars                         차트용 `{"bars": […], "marks": […]}`
+    GET  /runs/{id}/bars                         차트용 `{"kind": "minute"|"realtime", "bars": […], "marks": […]}`
     POST /runs/{id}/stop · /flatten              204 (요청만 하고 바로 돌아온다)
     GET  /runs/{id}/download                     결과 zip(`journal` `summary` `api_log` 만 — `run.json` 은 넣지 않는다)
 
@@ -136,11 +136,15 @@ CONVENTION_DOC = Path(__file__).resolve().parents[2] / "docs" / "team" / "strate
 
 
 class StartBody(BaseModel):
-    """시작 요청. `mode` 는 일부러 문자열로 받는다 — 이상한 값은 422 가 아니라 거부 문장(409)으로 알린다."""
+    """시작 요청. `mode` 는 일부러 문자열로 받는다 — 이상한 값은 422 가 아니라 거부 문장(409)으로 알린다.
+
+    `sym` 은 주문하는 종목, `signal_sym` 은 실시간 전략이 시세로만 보는 KRX 종목(빈칸·생략 = 국내 최근월물, 1분봉은 비움).
+    종목 글자·시장 검사는 registry 가 한다(거부는 409)."""
 
     file: str
     mode: str
     sym: str | None = None
+    signal_sym: str | None = None
 
 
 def _folder(run_id: str) -> Path:
@@ -229,11 +233,14 @@ def list_runs() -> dict[str, Any]:
     return {"runs": registry().list()}
 
 
+# 팀: 반드시 `def`(동기) — FastAPI 가 스레드 풀에서 부른다. 실시간 실행의 `prepare()` 는 원문 구독(RawFeed)을 만들며
+# 이벤트 루프에 일을 맡기고 **기다리므로**, `async def` 로 바꿔 루프 스레드에서 부르면 루프가 막힌다
+# (시험 `test_시작_라우트는_동기라_원문_구독이_이벤트_루프_밖에서_만들어진다`).
 @router.post("/runs", status_code=201, dependencies=[Depends(require_json)])
 def start_run(body: StartBody) -> dict[str, Any]:
-    """실행을 세운다. 거부는 409(문장 그대로 `detail`). 준비(준비 봉 조회)가 끝난 뒤에 돌아온다."""
+    """실행을 세운다. 거부는 409(문장 그대로 `detail`). 준비(준비 봉 조회·원문 구독)가 끝난 뒤에 돌아온다."""
     try:
-        return registry().start(RunSpec(body.file, body.mode, body.sym))  # type: ignore[arg-type]
+        return registry().start(RunSpec(body.file, body.mode, body.sym, body.signal_sym))  # type: ignore[arg-type]
     except StartRefused as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
 
@@ -286,14 +293,35 @@ def run_api_log(run_id: str, after: int = Query(0, ge=0)) -> dict[str, Any]:
     return _tail(_folder(run_id), "api_log.jsonl", after)
 
 
+#: 실시간 차트 줄(`minute`)에서 내보내는 칸 — 실행기가 1분마다 쓰는 요약(`realtime._minute_line`).
+REALTIME_BAR_KEYS = ("date", "time", "krx", "mku_mid", "bid", "ask", "spread_ticks", "mku_last", "position")
+
+
+def _run_info(run_id: str, folder: Path) -> dict[str, Any]:
+    """실행의 `kind`·`started_at` — 도는 실행은 객체에서, 아니면 `run.json`(없으면 빈 dict → 1분봉으로 본다)."""
+    live = registry().get(run_id)
+    if live is not None:
+        return {"kind": live.kind, "started_at": live.started_at}
+    return _read_json(folder / "run.json") or {}
+
+
 @router.get("/runs/{run_id}/bars")
 def run_bars(run_id: str) -> dict[str, Any]:
-    """차트용. `bars` 는 판정 봉마다(= `signal` 줄) `date start end open high low close` + 지표 칸 + `side reason stop_ticks`.
+    """차트용 `{"kind", "bars", "marks"}`. `kind` 는 실행의 종류(`minute` 1분봉 · `realtime` 실시간).
 
+    1분봉: `bars` 는 판정 봉마다(= `signal` 줄) `date start end open high low close` + 지표 칸 + `side reason stop_ticks`.
     시가·고가·저가는 이 기능 이전에 남긴 기록에는 없어 null 이다.
-    `marks` 는 체결(`fill`)의 `entry`/`exit` 와 거래(`trade`, 손익·까닭 라벨용) 줄 —
-    체결이 없는 기록에서는 `trade` 만 나온다. 체결 줄에는 날짜가 없어 앞선 신호 줄의 날짜를 따른다."""
-    rows, _ = Journal(_folder(run_id) / "journal.jsonl").tail(0)
+    실시간: `bars` 는 1분 요약(`minute` 줄)마다 `date time krx mku_mid bid ask spread_ticks mku_last position`
+    (`time` 은 그 분의 시작 HHMMSS, 값이 없던 칸은 null). 실시간의 `signal` 줄(Engine 행동)은 봉이 아니라 내보내지 않는다.
+
+    `marks` 는 두 종류 같은 모양 — 체결(`fill`)의 `entry`/`exit` 와 거래(`trade`, 손익·까닭 라벨용) 줄.
+    체결이 없는 기록에서는 `trade` 만 나온다. 체결 줄에는 날짜가 없어 앞선 신호(1분봉)·1분(실시간) 줄의 날짜를 따른다
+    (실시간은 그 줄이 아직 없으면 실행 시작 날짜)."""
+    folder = _folder(run_id)
+    info = _run_info(run_id, folder)
+    rows, _ = Journal(folder / "journal.jsonl").tail(0)
+    if info.get("kind") == "realtime":
+        return _realtime_bars(rows, str(info.get("started_at") or "")[:10].replace("-", ""))
     bars: list[dict[str, Any]] = []
     marks: list[dict[str, Any]] = []
     day = ""                 # 가장 최근 신호 줄의 날짜 — 체결·거래 줄에는 봉 날짜가 없다
@@ -308,17 +336,38 @@ def run_bars(run_id: str) -> dict[str, Any]:
             bar["close"] = row.get("close")
             bar.update({k: v for k, v in row.items() if k not in bar and k not in _ROW_TAGS})
             bars.append(bar)
-        elif kind == "fill":
-            marks.append({"kind": "exit" if holding else "entry", "date": day or str(row.get("at", ""))[:10],
-                          "time": row.get("clock"), "side": row.get("side"), "price": row.get("price")})
-            holding = not holding
-        elif kind == "trade":
-            holding = False
-            marks.append({"kind": "trade", "date": row.get("exit_date") or day, "time": row.get("exit_time"),
-                          "side": row.get("side"), "price": row.get("exit"), "reason": row.get("reason"),
-                          "pnl": row.get("pnl"), "ticks": row.get("ticks"), "entry": row.get("entry"),
-                          "entry_time": row.get("entry_time")})
-    return {"bars": bars, "marks": marks}
+        elif kind in ("fill", "trade"):
+            holding = _mark(marks, row, day or str(row.get("at", ""))[:10], day, holding)
+    return {"kind": "minute", "bars": bars, "marks": marks}
+
+
+def _mark(marks: list[dict[str, Any]], row: dict[str, Any], fill_day: str, trade_day: str, holding: bool) -> bool:
+    """체결·거래 줄 하나를 표시로 더하고 다음 `holding`(진입 체결 뒤 = 보유 중)을 돌려준다. 두 종류가 같이 쓴다.
+    날짜는 체결 줄이 `fill_day`, 거래 줄은 `exit_date` 가 없을 때 `trade_day`."""
+    if row.get("kind") == "fill":
+        marks.append({"kind": "exit" if holding else "entry", "date": fill_day,
+                      "time": row.get("clock"), "side": row.get("side"), "price": row.get("price")})
+        return not holding
+    marks.append({"kind": "trade", "date": row.get("exit_date") or trade_day, "time": row.get("exit_time"),
+                  "side": row.get("side"), "price": row.get("exit"), "reason": row.get("reason"),
+                  "pnl": row.get("pnl"), "ticks": row.get("ticks"), "entry": row.get("entry"),
+                  "entry_time": row.get("entry_time")})
+    return False
+
+
+def _realtime_bars(rows: list[dict[str, Any]], start_day: str) -> dict[str, Any]:
+    """실시간 실행의 차트 — `minute` 줄이 봉, 체결·거래 줄이 표시(`run_bars` 문서)."""
+    bars: list[dict[str, Any]] = []
+    marks: list[dict[str, Any]] = []
+    day, holding = start_day, False
+    for row in rows:
+        kind = row.get("kind")
+        if kind == "minute":
+            day = row.get("date") or day
+            bars.append({k: row.get(k) for k in REALTIME_BAR_KEYS})
+        elif kind in ("fill", "trade"):
+            holding = _mark(marks, row, day or str(row.get("at", ""))[:10].replace("-", ""), day, holding)
+    return {"kind": "realtime", "bars": bars, "marks": marks}
 
 
 @router.get("/runs/{run_id}/download")

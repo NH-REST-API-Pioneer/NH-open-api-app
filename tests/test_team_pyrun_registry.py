@@ -12,12 +12,15 @@ from pathlib import Path
 import pytest
 
 from backend.team_pyrun.journal import Journal
-from backend.team_pyrun.live import RunSpec, StartRefused
+from backend.team_pyrun.live import LiveRun, RunSpec, StartRefused
+from backend.team_pyrun.realtime import RealtimeRun
 from backend.team_pyrun.registry import Registry
 from tests.test_team_pyrun_live import STRATEGY_SRC, SYM, TODAY, FakeApi, at, bar
+from tests.test_team_pyrun_live_overseas import MKU_SRC, FakeLive
 
 FIXTURES = Path(__file__).parent / "fixtures" / "team_pyrun" / "strategies"
 OTHER_SYM = "A756C000"
+KRX_SYM = SYM           # 실시간 전략이 시세로만 보는 KRX 종목 (국내 최근월물)
 
 
 def make_registry(tmp_path, *, now="085000", date=TODAY, env="paper", fake=None, start_thread=False, bb=False, sleep=None):
@@ -39,13 +42,13 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def write_run(root, run_id, *, state="진행 중", mode="paper", sym=SYM, name="fake", trades=()):
-    """이미 있는 실행 폴더 하나(`run.json` + 손절·거래 기록)를 만든다."""
+def write_run(root, run_id, *, state="진행 중", mode="paper", sym=SYM, name="fake", trades=(), **extra):
+    """이미 있는 실행 폴더 하나(`run.json` + 손절·거래 기록)를 만든다. `extra` 는 run.json 에 더 넣을 칸(`kind` 등)."""
     folder = root / run_id
     folder.mkdir(parents=True)
     (folder / "run.json").write_text(json.dumps(
         {"id": run_id, "file": f"{name}.py", "name": name, "title": "시험", "mode": mode, "sym": sym, "state": state,
-         "started_at": "2026-11-03T09:00:00", "ended_at": None, "ended_reason": None, "sha256": "ab" * 32}),
+         "started_at": "2026-11-03T09:00:00", "ended_at": None, "ended_reason": None, "sha256": "ab" * 32, **extra}),
         encoding="utf-8")
     j = Journal(folder / "journal.jsonl")
     for t in trades:
@@ -417,3 +420,224 @@ def test_켜질_때_정리는_방금_세운_실행의_run_json_을_건드리지_
     assert reg.recover() == ["20261029_fake_paper"]
     assert path.read_text(encoding="utf-8") == before and reg.get(run["id"]).state == "대기"
     assert read_json(stale / "run.json")["ended_reason"] == "재시작"
+
+
+# ================================================================ 실시간·해외 실행 (Task 9)
+MKU = "MKUX26"          # 해외 마스터 시험 줄의 최근월물
+MKU_NEXT = "MKUZ26"     # 그 다음 월물
+RT_FILE = FIXTURES.parent / "realtime" / "strategy_rt_fake.py"
+
+
+class 둘다(FakeLive):
+    """국내(`FakeApi`)·해외(`FakeLive`) 이름을 다 가진 가짜 — 해외 이름은 이 객체, 없는 이름은 국내 가짜(`dom`)로."""
+
+    def __init__(self):
+        super().__init__()
+        self.dom = FakeApi()
+
+    def __getattr__(self, name):
+        dom = self.__dict__.get("dom")
+        if dom is None:
+            raise AttributeError(name)
+        return getattr(dom, name)
+
+
+class 빈원문:
+    """원문이 오지 않는 가짜 구독. `get` 은 잠깐 쉬고 None, `close` 는 닫힘만 적는다."""
+
+    def __init__(self, run_id, wants):
+        self.run_id, self.wants = run_id, list(wants)
+        self.closed = False
+        self.overflow = False
+        self.pending = 0
+
+    def get(self, timeout=None):
+        time.sleep(min(timeout or 0.0, 0.01))
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+def make_rt_registry(tmp_path, *, now="085000", date=TODAY, env="paper", start_thread=False):
+    """국내 1분봉(`fake.py`)·해외 1분봉(`fakemku.py`)·실시간(`strategy_rt_fake.py`) 전략과, 국내·해외 이름을 다 가진
+    가짜 api, 가짜 원문 구독을 쓰는 `Registry`."""
+    folder = tmp_path / "strategies"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "fake.py").write_text(STRATEGY_SRC, encoding="utf-8")
+    (folder / "fakemku.py").write_text(MKU_SRC, encoding="utf-8")
+    shutil.copy(RT_FILE, folder / "strategy_rt_fake.py")
+    fake = 둘다()
+    clock = {"now": at(now, date)}
+    feeds: list[빈원문] = []
+
+    def factory(run_id, wants):
+        feed = 빈원문(run_id, wants)
+        feeds.append(feed)
+        return feed
+
+    reg = Registry(tmp_path / "pyruns", folder, now=lambda: clock["now"], active_env=lambda: env,
+                   start_thread=start_thread, api_module=fake, sleep=lambda s: None, feed_factory=factory)
+    return reg, fake, clock, feeds
+
+
+def rt(mode="orders", sym=None, signal_sym=KRX_SYM):
+    return RunSpec("strategy_rt_fake.py", mode, sym, signal_sym)
+
+
+def test_실시간_전략은_RealtimeRun_으로_세우고_원문을_구독한다(tmp_path):
+    reg, fake, _, feeds = make_rt_registry(tmp_path)
+    status = reg.start(rt())
+    run = reg.get(status["id"])
+    assert isinstance(run, RealtimeRun) and status["kind"] == "realtime"
+    assert status["id"] == f"{TODAY}_rtfake_orders" and status["sym"] == MKU and status["signal_sym"] == KRX_SYM
+    assert (status["market"], status["currency"], status["state"]) == ("overseas", "USD", "대기")
+    assert [f.run_id for f in feeds] == [status["id"]]
+    assert [(w.api_id, w.sym) for w in feeds[0].wants] == [("KA", KRX_SYM), ("FB", MKU), ("FA", MKU)]
+    data = read_json(tmp_path / "pyruns" / status["id"] / "run.json")
+    assert (data["kind"], data["signal_sym"], data["market"]) == ("realtime", KRX_SYM, "overseas")
+    # 1분봉 전략은 여전히 LiveRun
+    minute = reg.get(reg.start(RunSpec("fakemku.py", "paper", None))["id"])
+    assert isinstance(minute, LiveRun) and minute.status()["kind"] == "minute"
+    assert fake.orders == []
+
+
+def test_신호_종목_빈칸이면_국내_최근월물(tmp_path):
+    reg, fake, _, feeds = make_rt_registry(tmp_path)
+    for blank in (None, ""):
+        status = reg.start(rt("paper", signal_sym=blank))
+        assert status["signal_sym"] == SYM
+    assert all(f.wants[0].sym == SYM for f in feeds)
+
+
+@pytest.mark.parametrize("spec,why", [
+    (RunSpec("fakemku.py", "paper", None, KRX_SYM), "실시간"),          # 1분봉 전략에 신호 종목
+    (RunSpec("strategy_rt_fake.py", "paper", None, MKU), "A75"),       # 신호 종목이 MKU
+    (RunSpec("strategy_rt_fake.py", "paper", None, "../A75"), "종목 코드"),
+    (RunSpec("strategy_rt_fake.py", "paper", KRX_SYM, None), "시장"),   # 실시간 주문 종목이 A75
+])
+def test_신호_종목·주문_종목이_틀리면_폴더_없이_거부(tmp_path, spec, why):
+    reg, fake, _, feeds = make_rt_registry(tmp_path)
+    with pytest.raises(StartRefused, match=why):
+        reg.start(spec)
+    assert feeds == [] and not (tmp_path / "pyruns").exists() and fake.orders == []
+
+
+def test_같은_MKU_주문_실행은_1분봉·실시간_통틀어_하나(tmp_path):
+    # ① 1분봉(ORB 자리) MKU 모의 계좌 실행이 있으면 실시간 MKU 모의 계좌 실행은 거부
+    reg, fake, _, feeds = make_rt_registry(tmp_path / "a")
+    minute = reg.start(RunSpec("fakemku.py", "orders", None))
+    assert minute["sym"] == MKU
+    for sym in (None, MKU):
+        with pytest.raises(StartRefused, match=f"같은 종목 {MKU} .*이미"):
+            reg.start(rt(sym=sym))
+    assert feeds == [] and sorted(p.name for p in (tmp_path / "a" / "pyruns").iterdir()) == [minute["id"]]
+    assert reg.start(rt("paper"))["state"] == "대기"                   # 종이는 막지 않는다
+    assert reg.start(rt(sym=MKU_NEXT))["sym"] == MKU_NEXT              # 다른 월물은 된다
+    # ② 거꾸로 — 실시간이 먼저면 1분봉 MKU 모의 계좌 실행이 거부
+    reg, fake, _, feeds = make_rt_registry(tmp_path / "b")
+    first = reg.start(rt())
+    for sym in (None, MKU):
+        with pytest.raises(StartRefused, match="이미"):
+            reg.start(RunSpec("fakemku.py", "orders", sym))
+    with pytest.raises(StartRefused, match="이미"):                   # 실시간 둘째도
+        reg.start(rt(signal_sym=None))
+    # 실시간이 시세로만 보는 KRX 종목은 막지 않는다 — 국내 1분봉 모의 계좌 실행은 된다
+    domestic = reg.start(RunSpec("fake.py", "orders", None))
+    assert domestic["sym"] == SYM == first["signal_sym"]
+    # 끝나면 같은 MKU 를 다시 세울 수 있다
+    reg.stop(first["id"])
+    assert reg.get(first["id"]).state == "끝"
+    assert reg.start(RunSpec("fakemku.py", "orders", None))["sym"] == MKU
+    assert fake.orders == []
+
+
+def test_해외_끝_시각_뒤엔_폴더_없이_시작_거부(tmp_path):
+    # 해외 1분봉 — 끝 23:55 (국내 15:31 이 지나도 해외는 된다)
+    reg, fake, _, _ = make_rt_registry(tmp_path / "late", now="235500")
+    with pytest.raises(StartRefused, match="23:55"):
+        reg.start(RunSpec("fakemku.py", "paper", None))
+    assert fake.calls == [] and not (tmp_path / "late" / "pyruns").exists()
+    reg, _, _, _ = make_rt_registry(tmp_path / "evening", now="170000")
+    assert reg.start(RunSpec("fakemku.py", "paper", None))["market"] == "overseas"
+    with pytest.raises(StartRefused, match="15:31"):                    # 국내는 그대로 15:31
+        reg.start(RunSpec("fake.py", "paper", None))
+    # 실시간 — 끝 = 전략 flatten_at 15:40 + 5분
+    reg, fake, _, feeds = make_rt_registry(tmp_path / "rt", now="154500")
+    with pytest.raises(StartRefused, match="15:45"):
+        reg.start(rt("paper"))
+    assert fake.calls == [] and feeds == [] and not (tmp_path / "rt" / "pyruns").exists()
+    reg, _, _, _ = make_rt_registry(tmp_path / "rt_ok", now="154459")
+    assert reg.start(rt("paper"))["state"] == "진행 중"
+
+
+def test_모의_환경이_아니면_실시간_주문_실행도_폴더_없이_거부(tmp_path):
+    for env in ("real", None):
+        reg, fake, _, feeds = make_rt_registry(tmp_path / str(env), env=env)
+        with pytest.raises(StartRefused, match="모의투자 환경에서만"):
+            reg.start(rt())
+        assert fake.calls == [] and feeds == [] and not (tmp_path / str(env) / "pyruns").exists()
+        assert reg.start(rt("paper"))["mode"] == "paper"
+
+
+def test_실시간·MKU_폴더_이름도_최근월물이_아닐_때만_종목을_붙인다(tmp_path):
+    reg, _, _, _ = make_rt_registry(tmp_path)
+    ids = [reg.start(spec)["id"] for spec in (
+        rt("paper"), rt("paper", sym=MKU), rt("paper", sym=MKU_NEXT),
+        rt("paper", signal_sym="A756C000"),                              # 신호 종목은 이름에 안 붙는다
+        RunSpec("fakemku.py", "paper", None), RunSpec("fakemku.py", "paper", MKU),
+        RunSpec("fakemku.py", "paper", MKU_NEXT))]
+    assert ids == [f"{TODAY}_rtfake_paper", f"{TODAY}_rtfake_paper_2", f"{TODAY}_rtfake_paper_{MKU_NEXT}",
+                   f"{TODAY}_rtfake_paper_3", f"{TODAY}_fakemku_paper", f"{TODAY}_fakemku_paper_2",
+                   f"{TODAY}_fakemku_paper_{MKU_NEXT}"]
+
+
+def test_실시간도_그날_같은_방식의_앞선_손절을_이어받는다(tmp_path):
+    reg, _, _, _ = make_rt_registry(tmp_path)
+    root = tmp_path / "pyruns"
+    write_run(root, f"{TODAY}_rtfake_orders", state="끝", mode="orders", sym=MKU, name="rtfake",
+              trades=[trade(), trade()], kind="realtime")
+    write_run(root, f"{TODAY}_rtfake_paper", state="끝", sym=MKU, name="rtfake", trades=[trade()], kind="realtime")
+    run = reg.get(reg.start(rt())["id"])
+    assert run.stops_before == 2 and run.engine.stops == 2
+
+
+def test_재시작하면_실시간_실행_폴더도_해외_잔고_한_번으로_닫는다(tmp_path):
+    cases = (("zero", 0, None, "재시작"), ("held", -1, None, "재시작 · 확인 필요"),
+             ("unread", 0, {}, "재시작 · 확인 필요"))
+    for name, held, pages, why in cases:
+        reg, fake, _, feeds = make_rt_registry(tmp_path / name)
+        fake.held, fake.oi_pages = held, pages
+        folder = write_run(tmp_path / name / "pyruns", f"{TODAY}_rtfake_orders", mode="orders", sym=MKU,
+                           name="rtfake", kind="realtime", market="overseas", currency="USD", signal_sym=KRX_SYM)
+        paper = write_run(tmp_path / name / "pyruns", f"{TODAY}_rtfake_paper", state="확인 필요", sym=MKU,
+                          name="rtfake", kind="realtime", market="overseas", currency="USD", signal_sym=KRX_SYM)
+        assert reg.recover() == [folder.name, paper.name]
+        run = read_json(folder / "run.json")
+        assert (run["state"], run["ended_reason"], run["kind"]) == ("끝", why, "realtime"), name
+        summary = read_json(folder / "summary.json")
+        assert (summary["kind"], summary["currency"], summary["signal_sym"]) == ("realtime", "USD", KRX_SYM)
+        assert read_json(paper / "run.json")["ended_reason"] == "재시작"         # 종이는 계좌가 없다
+        # 잔고는 해외 어댑터(쪽 따라가기)로 한 번 — 국내 잔고·첫 쪽만 보는 함수·주문은 부르지 않는다
+        assert [c[0] for c in fake.calls] == ["ovs_open_interest_page"], name
+        assert fake.dom.calls == [] and fake.orders == [] and feeds == []
+        events = [r["text"] for r in Journal(folder / "journal.jsonl").read() if r["kind"] == "event"]
+        assert any(("확인 실패" if pages == {} else f"{held:+d}계약") in t for t in events), name
+
+
+def test_앱을_끄면_실시간_실행도_앱_종료_중지로_정리한다(tmp_path):
+    # 스레드 없는 실행 — stop_all 이 바로 끝낸다
+    reg, fake, _, feeds = make_rt_registry(tmp_path / "direct")
+    status = reg.start(rt())
+    run = reg.get(status["id"])
+    assert reg.stop_all(timeout=1) == []
+    assert run._shutdown and run.state == "끝" and feeds[0].closed
+    assert read_json(tmp_path / "direct" / "pyruns" / status["id"] / "run.json")["state"] == "끝"
+    # 스레드가 도는 실행 — 1분봉·실시간 모두 앱 종료 중지를 받고 한 마감 시각 안에 끝난다
+    reg, fake, _, feeds = make_rt_registry(tmp_path / "threads", start_thread=True)
+    a = reg.get(reg.start(rt())["id"])
+    b = reg.get(reg.start(rt("paper"))["id"])
+    c = reg.get(reg.start(RunSpec("fakemku.py", "paper", None))["id"])
+    assert reg.stop_all(timeout=5) == []
+    assert all(r._shutdown and r.state == "끝" for r in (a, b, c))
+    assert all(f.closed for f in feeds) and fake.orders == []

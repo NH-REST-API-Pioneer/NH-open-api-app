@@ -1,6 +1,7 @@
 """실행 관리 — 실행을 세우고(시작 거부 규칙), 기록 폴더 이름을 정하고, 목록을 내고, 앱을 끌 때·켤 때 정리한다.
 
-    start(spec)      거부 규칙을 지나면 `LiveRun` 을 만들어 `prepare()`(부른 스레드에서) 뒤 데몬 스레드로 돌린다
+    start(spec)      거부 규칙을 지나면 전략 종류(`Loaded.kind`)대로 `LiveRun`(1분봉) 또는 `RealtimeRun`(실시간)을 만들어
+                     `prepare()`(부른 스레드에서) 뒤 데몬 스레드로 돌린다
     list()           도는 실행의 `status()` + `root` 아래 폴더의 `run.json` (최근 시작순, 중복 없음)
     get / folder     실행 객체 / 기록 폴더 (id 는 폴더 이름 — `[0-9A-Za-z_]+` 만, 아니면 `KeyError`)
     stop / flatten   요청만 하고 바로 돌아온다 (실제 정리는 실행 스레드의 다음 step)
@@ -8,9 +9,19 @@
     recover          앱을 켤 때 — 끝나지 않은 채 남은 폴더를 「끝·재시작」으로 닫는다 (주문은 보내지 않는다)
 
 시작 거부(`StartRefused`) — 폴더를 만들기 **전에** 걸리는 것(주말·장 끝·모의 환경 아님·같은 종목 주문 실행·
-이상한 파일/종목 이름·미국달러선물(`A75…`)·MKU(`MKU…`)가 아닌 종목·종목의 시장과 전략 틱이 맞지 않음)은 폴더를 남기지 않고
-메시지만 돌려줍니다. 폴더를 만든 **뒤** `LiveRun.prepare()` 에서 걸리는 것(시작 잔고·틱 불일치 등)은 `run.json`
+이상한 파일/종목 이름·미국달러선물(`A75…`)·MKU(`MKU…`)가 아닌 종목·종목의 시장과 전략 틱이 맞지 않음·신호 종목 규칙)은
+폴더를 남기지 않고 메시지만 돌려줍니다. 폴더를 만든 **뒤** `prepare()` 에서 걸리는 것(시작 잔고·틱 불일치 등)은 `run.json`
 (상태 「끝」, 까닭 「시작 거부: …」)이 남습니다.
+
+| 규칙 | 1분봉(`LiveRun`) | 실시간(`RealtimeRun`) |
+|---|---|---|
+| 방식 | `orders`·`paper` 만 | 같음 |
+| 주말 | 거부 | 거부 |
+| 모의 환경 아님 | `orders` 거부 (`paper` 는 됨) | 같음 |
+| 끝 시각 뒤 | 시장 끝 시각 — 국내 15:31 · 해외 23:55 | 전략 `flatten_at` + 5분(해외 23:55 를 넘지 않음, 없으면 23:55) |
+| 주문 종목(`sym`) | `A75…` 또는 `MKU…`, 전략 TICK 의 시장과 같아야 | `MKU…` 만 (전략 TICK 이 MKU 틱이어야) |
+| 신호 종목(`signal_sym`) | 주면 거부 (1분봉은 안 씀) | `A75…` 만, 빈칸(None·"") = 국내 최근월물 |
+| 같은 종목 모의 계좌 실행 | 주문 종목 하나에 하나 — 두 종류를 통틀어 | 같음 (신호 종목은 키가 아님) |
 
 **시장** — 실행의 시장은 `live.run_market`(종목이 있으면 종목의 시장, 없으면 전략 TICK — MKU 틱이면 해외)로 정하고,
 「장 끝」 거부 시각은 그 시장의 끝 시각입니다(국내 15:31, 해외 23:55). 주말 거부는 그대로입니다. 최근월물은 그 시장
@@ -32,7 +43,13 @@
 직접 `finish()` 를 부르면 그 잠금에서 기다리게 되므로. 준비가 끝난 `start()` 가 중지 요청을 보면 스레드를 시작하지 않고
 스스로 끝냅니다(주문 없음).
 
-스레드 규칙: `LiveRun.finish()` 는 체결 확인 때문에 15초 넘게 걸릴 수 있어, 실행 스레드가 살아 있는 동안엔 요청·종료
+**앱을 끌 때(`stop_all`)** — 두 종류 모두 `request_stop(shutdown=True)`(휴장이어도 미루지 않는 중지)를 받고, 한 마감 시각
+(기본 20초) 안에서 스레드를 기다립니다. 체결 확인 중이던 실행이 그 뒤 정리 주문까지 하면 20초를 넘길 수 있고, 그 실행은
+기다리지 않고 돌려줍니다(데몬 스레드라 앱과 함께 멈춤). 그렇게 끝을 못 쓴 폴더는 다음에 켤 때 `recover` 가 잔고 한 번으로
+닫고, 잔고가 0 이 아니거나 못 읽으면 끝 까닭이 「재시작 · 확인 필요」입니다. 실시간 원문 구독은 `routes.pyrun_shutdown` 이
+`stop_all` 뒤에 `rawfeed.close_all` 로 한 번 더 닫습니다.
+
+스레드 규칙: `finish()` 는 체결 확인 때문에 15초 넘게 걸릴 수 있어, 실행 스레드가 살아 있는 동안엔 요청·종료
 스레드에서 직접 부르지 않고 `request_stop()` 만 합니다. 스레드가 없는 실행(`start_thread=False`, 시험)만 바로 `finish("중지")`.
 """
 from __future__ import annotations
@@ -58,8 +75,9 @@ from backend.team_pyrun.apilog import ApiLog, bind, purpose
 from backend.team_pyrun.broker import error_text
 from backend.team_pyrun.journal import Journal, count_stops, entered_windows, summarize, write_summary
 from backend.team_pyrun.live import LiveRun, RunSpec, StartRefused, run_market
-from backend.team_pyrun.loader import LoadError, load, strategies_dir
-from backend.team_pyrun.markets import Market, adapter_for, market_of
+from backend.team_pyrun.loader import Loaded, LoadError, load, strategies_dir
+from backend.team_pyrun.markets import DOMESTIC, Market, adapter_for, market_of
+from backend.team_pyrun.realtime import RealtimeRun, _end_at, default_feed_factory
 
 #: 실행 id(= 폴더 이름)·종목 코드가 쓸 수 있는 글자 — 경로 문자가 섞이지 못하게 한다.
 ID_PATTERN = re.compile(r"[0-9A-Za-z_]+")
@@ -73,6 +91,10 @@ MODES = ("orders", "paper")
 BUSY_STATES = ("대기", "진행 중", "확인 필요")
 #: 끝난 상태 — `recover()` 가 건드리지 않는다.
 FINISHED_STATES = ("끝", "오류")
+
+#: 실행 하나 — 1분봉 또는 실시간. 둘 다 prepare·run_forever·finish·request_stop(shutdown)·request_flatten·status·
+#: order_sym·state·spec·run_id·folder 를 가진다.
+Run = LiveRun | RealtimeRun
 
 
 def _read_run_json(folder: Path) -> dict | None:
@@ -89,12 +111,14 @@ class Registry:
 
     def __init__(self, root: Path, strategies: Path, *, now: Callable[[], datetime] = now_kst,
                  active_env: Callable[[], str | None] = runtime.active_environment, start_thread: bool = True,
-                 api_module: ModuleType | Any = default_api, sleep: Callable[[float], None] = time.sleep):
+                 api_module: ModuleType | Any = default_api, sleep: Callable[[float], None] = time.sleep,
+                 feed_factory: Callable[..., Any] = default_feed_factory):
         self.root, self.strategies = Path(root), Path(strategies)
         self._now, self._active_env, self._start_thread = now, active_env, start_thread
         self._api, self._sleep = api_module, sleep
+        self._feed_factory = feed_factory              # 실시간 실행의 원문 구독 (시험은 가짜)
         self._lock = threading.Lock()                  # 시작 검사 + 폴더 정하기를 한 줄로
-        self._runs: dict[str, LiveRun] = {}
+        self._runs: dict[str, Run] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._preparing: set[str] = set()              # 준비 중(스레드를 시작하기 전)인 실행 id
         self._stop_asked: set[str] = set()             # 준비 중에 중지 요청이 들어온 실행 id
@@ -113,6 +137,16 @@ class Registry:
             raise StartRefused(f"전략 파일 이름이 올바르지 않습니다: {spec.file!r}")
         if spec.sym is not None and not ID_PATTERN.fullmatch(spec.sym):
             raise StartRefused(f"종목 코드가 올바르지 않습니다: {spec.sym!r}")
+        signal_sym = spec.signal_sym or None           # 빈칸("") = 국내 최근월물(실행이 prepare 에서 찾음)
+        if signal_sym is not None:
+            if not ID_PATTERN.fullmatch(signal_sym):
+                raise StartRefused(f"신호 종목 코드가 올바르지 않습니다: {signal_sym!r}")
+            try:
+                signal_market = market_of(signal_sym)
+            except ValueError:
+                signal_market = None
+            if signal_market is not DOMESTIC:
+                raise StartRefused(f"신호 종목(KRX)은 미국달러선물(A75…)이어야 합니다: {signal_sym}")
         if spec.sym is not None:
             # 틱·틱가치는 시장마다 그 품목 줄(국내 `usd_spec`, 해외 `mku_spec`)로만 확인한다 — 다른 종목은 받지 않는다
             try:
@@ -123,12 +157,18 @@ class Registry:
             loaded = load(self.strategies, spec.file)
         except LoadError as e:
             raise StartRefused(f"전략 파일을 불러오지 못했습니다 — {e}") from e
+        realtime = loaded.kind == "realtime"
+        if signal_sym is not None and not realtime:
+            raise StartRefused("신호 종목은 실시간 전략(on_krx·on_quote)에서만 씁니다 — 1분봉 전략은 비워 두세요")
         market, refusal = run_market(spec.sym, loaded)
         if refusal:                                     # 시장 가드 — 폴더도 조회도 없이
             raise StartRefused(refusal)
-        end = market.end_time
+        if realtime and market is DOMESTIC:             # 실시간 실행은 MKU 만 주문한다 (KRX 는 시세만)
+            raise StartRefused(f"실시간 실행은 MKU 만 주문합니다 — 전략 TICK {loaded.tick:g} 는 MKU 틱(0.0001)이 아닙니다")
+        end, end_what = (self._realtime_end(loaded, market), "실행 끝 시각") if realtime else (market.end_time, "장이 끝난 시각")
         if now.strftime("%H%M%S") >= end:
-            raise StartRefused(f"장이 끝난 시각({end[:2]}:{end[2:4]}) 뒤에는 실행을 시작할 수 없습니다")
+            raise StartRefused(f"{end_what}({end[:2]}:{end[2:4]}) 뒤에는 실행을 시작할 수 없습니다")
+        spec = RunSpec(spec.file, spec.mode, spec.sym, signal_sym)
         nearest = self._nearest(market)                 # 잠금 밖 — 조회가 느려도 다른 시작을 막지 않게
         sym = spec.sym or nearest
         if sym is None:     # 종목을 모르면 같은 종목 검사·손절 이어받기를 할 수 없다 — 열어 두고 가지 않는다
@@ -147,8 +187,15 @@ class Registry:
             stops_before = count_stops(earlier, today)
             windows_before = entered_windows(earlier, today)    # 개장마다 한 번 — 앞선 실행이 들어간 개장
             try:    # 전략 생성자(`loaded.new()`)가 여기서 불린다 — 고장 나도 빈 폴더를 남기지 않고 거부로
-                run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
-                              sleep=self._sleep, stops_before=stops_before, windows_before=windows_before)
+                run: Run
+                if realtime:
+                    # 원문 구독(RawFeed)은 prepare 가 만든다 — 그 prepare 는 아래에서 **부른 스레드**(라우트의 스레드 풀)에서 돈다
+                    run = RealtimeRun(run_id, self.root / run_id, loaded, spec, api_module=self._api,
+                                      feed_factory=self._feed_factory, now=self._now, sleep=self._sleep,
+                                      active_env=self._active_env, stops_before=stops_before)
+                else:
+                    run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
+                                  sleep=self._sleep, stops_before=stops_before, windows_before=windows_before)
             except Exception as e:
                 shutil.rmtree(self.root / run_id, ignore_errors=True)
                 raise StartRefused(f"전략을 만들지 못했습니다 — {type(e).__name__}: {e}") from e
@@ -181,6 +228,15 @@ class Registry:
             with self._lock:
                 self._preparing.discard(run_id)
         return run.status()
+
+    @staticmethod
+    def _realtime_end(loaded: Loaded, market: Market) -> str:
+        """실시간 실행의 끝 시각(HHMMSS) — 실행과 같은 규칙(`realtime._end_at`, 전략 기본 Params 의 flatten_at + 5분)."""
+        try:
+            params = loaded.params_cls()
+        except Exception:           # 기본 Params 를 못 만들면 실행 생성에서 거부된다 — 여기선 시장 끝 시각으로
+            return market.end_time
+        return _end_at(params, market.end_time)[0]
 
     def _nearest(self, market: Market) -> str | None:
         """그 시장의 최근월물 종목. 조회가 안 되면 경고를 남기고 None(종목도 안 준 시작은 `start` 가 거부한다)."""
@@ -232,7 +288,7 @@ class Registry:
             rows[run.run_id] = run.status()             # 도는 것은 폴더 기록보다 최신
         return sorted(rows.values(), key=lambda r: r.get("started_at") or "", reverse=True)
 
-    def get(self, run_id: str) -> LiveRun | None:
+    def get(self, run_id: str) -> Run | None:
         """이 앱에서 세운 실행(끝난 것 포함). 모르면 None."""
         return self._runs.get(run_id)
 
@@ -246,7 +302,7 @@ class Registry:
         return path
 
     # ------------------------------------------------------------ 요청
-    def _run(self, run_id: str) -> LiveRun:
+    def _run(self, run_id: str) -> Run:
         run = self.get(run_id)
         if run is None:
             raise KeyError(run_id)
@@ -273,8 +329,9 @@ class Registry:
         self._run(run_id).request_flatten()
 
     def stop_all(self, timeout: float = 20.0) -> list[str]:
-        """앱을 끌 때. 모두에게 중지를 요청하고 하나의 마감 시각(`timeout` 초) 안에서 스레드를 기다린다.
-        마감까지 안 끝난 실행의 id 를 돌려준다(그 실행은 건드리지 않는다 — 스레드가 마저 끝낸다)."""
+        """앱을 끌 때. 1분봉·실시간 모두에게 앱 종료 중지(`request_stop(shutdown=True)`)를 요청하고 하나의 마감 시각
+        (`timeout` 초) 안에서 스레드를 기다린다. 마감까지 안 끝난 실행의 id 를 돌려준다(그 실행은 건드리지 않는다 —
+        스레드가 마저 끝내거나, 앱과 함께 멈추면 다음에 켤 때 `recover` 가 「재시작」/「재시작 · 확인 필요」로 닫는다)."""
         deadline = time.monotonic() + timeout
         with self._lock:
             runs = list(self._runs.items())
@@ -301,8 +358,9 @@ class Registry:
     def recover(self) -> list[str]:
         """끝나지 않은 채 남은 폴더(앱이 꺼졌거나 죽은 것)를 닫고 닫은 id 를 돌려준다. **주문은 보내지 않는다.**
 
-        orders 는 잔고를 한 번 조회해 `journal.jsonl` 에 남기고(못 읽으면 「확인 실패」 — 잔고가 0 이 아니거나 못 읽으면
-        끝 까닭은 「재시작 · 확인 필요」), `summary.json` 이 없으면
+        1분봉·실시간 폴더 모두 같다(`run.json` 의 `kind` 와 무관). orders 는 그 종목 시장의 어댑터로 잔고를 한 번 조회해
+        (해외는 쪽을 따라감 — 첫 쪽만 보는 `api.ovs_*` 를 직접 부르지 않음) `journal.jsonl` 에 남기고(못 읽으면 「확인 실패」 —
+        잔고가 0 이 아니거나 못 읽으면 끝 까닭은 「재시작 · 확인 필요」), `summary.json` 이 없으면
         `trade` 줄로 만든다. 끝에 `run.json` 을 상태 「끝」·까닭 「재시작」으로 바꾼다 — 그래서 중간에 죽어도 다음에 다시 한다."""
         closed: list[str] = []
         if not self.root.is_dir():
@@ -347,6 +405,7 @@ class Registry:
             trades = [{k: v for k, v in row.items() if k != "kind"} for row in j.read() if row.get("kind") == "trade"]
             write_summary(folder, {
                 "sym": sym, "market": data.get("market"), "currency": data.get("currency"),
+                "kind": data.get("kind") or "minute", "signal_sym": data.get("signal_sym"),
                 "trades": trades, "summary": summarize(trades),
                 "account_start": None, "account_end": None, "api": apilog.stats(),
                 "strategy": {k: data.get(k) for k in ("file", "name", "title", "sha256")},

@@ -4,6 +4,7 @@
 끝난 실행 폴더는 Task 3 의 리플레이로 만듭니다(`20261030_bb_replay`).
 """
 import asyncio
+import inspect
 import io
 import json
 import zipfile
@@ -21,14 +22,17 @@ from backend.team_pyrun.journal import Journal
 from backend.team_pyrun.live import RunSpec
 from backend.team_pyrun.loader import load
 from backend.team_pyrun.replay import load_minutes, replay
-from tests.test_team_pyrun_registry import FIXTURES, make_registry, write_run
+from tests.test_team_pyrun_registry import FIXTURES, KRX_SYM, MKU, make_registry, make_rt_registry, write_run
 
 DATA = FIXTURES.parent / "bars_1m_A756B000_20261030.csv"
 BASE = "/api/team/pyrun"
 FINISHED = "20261030_bb_replay"
 STATUS_KEYS = ["id", "file", "name", "title", "mode", "sym", "state", "started_at", "ended_at", "ended_reason",
                "bar_min", "next_decision_at", "position", "entry", "stop", "stop_ticks", "target", "time_exit_at",
-               "today_pnl", "stops", "max_stops", "halted", "last_signal", "params", "market", "currency"]
+               "today_pnl", "stops", "max_stops", "halted", "last_signal", "params", "market", "currency", "kind"]
+#: 실시간 실행의 `status()` — 1분봉 칸 뒤에 실시간 칸 (화면 Task 10 이 쓴다)
+RT_STATUS_KEYS = STATUS_KEYS + ["signal_sym", "end_at", "side", "held_s", "krx", "bid", "ask", "mku_last",
+                                "last_dk", "last_rho", "last_krx_at", "last_quote_at", "pending"]
 
 
 @pytest.fixture
@@ -296,6 +300,7 @@ def test_라우터와_수명_연결이_main_에_있다():
 DENIED = {"detail": "다른 사이트에서 온 요청은 받지 않습니다"}
 UNSAFE = [("post", "/runs/20261030_bb_replay/stop", None), ("post", "/runs/20261030_bb_replay/flatten", None),
           ("post", "/runs", {"file": "fake.py", "mode": "paper", "sym": None}),
+          ("post", "/runs", {"file": "strategy_rt_fake.py", "mode": "orders", "sym": "MKUX26", "signal_sym": "A756B000"}),
           ("post", "/strategies/reload", None),
           ("post", "/strategies", {"file": "up.py", "content": "x = 1\n", "overwrite": True}),
           ("delete", "/strategies/fake.py", None)]
@@ -837,3 +842,106 @@ def test_익절_목표가_없는_전략은_목록에_알림이_선다(client, re
     (reg.strategies / "no_target.py").write_text(src, encoding="utf-8")
     row = next(s for s in client.get(f"{BASE}/strategies").json()["strategies"] if s["file"] == "no_target.py")
     assert row["error"] is None and row["notes"] == ["target·current_vwap 이 없어 익절 없이 돕니다"]
+
+
+# ================================================================ 실시간·해외 실행 (Task 9)
+@pytest.fixture
+def rt_reg(tmp_path, monkeypatch):
+    """국내·해외 가짜 api 와 가짜 원문 구독을 쓰는 시험용 `Registry` 를 싱글턴 자리에."""
+    r, fake, clock, feeds = make_rt_registry(tmp_path)
+    monkeypatch.setattr(registry_mod, "_registry", r)
+    r.fake, r.feeds, r.clock = fake, feeds, clock
+    return r
+
+
+#: 신호 종목은 일부러 최근월물이 아닌 것 — 빈칸(최근월물)과 구별되게
+SIGNAL = "A756C000"
+RT_BODY = {"file": "strategy_rt_fake.py", "mode": "orders", "sym": None, "signal_sym": SIGNAL}
+
+
+def test_실시간_시작은_신호_종목을_받고_실시간_상태_칸을_돌려준다(rt_reg):
+    client = TestClient(app)
+    r = client.post(f"{BASE}/runs", json=RT_BODY)
+    assert r.status_code == 201
+    status = r.json()
+    assert list(status) == RT_STATUS_KEYS
+    assert (status["kind"], status["market"], status["currency"]) == ("realtime", "overseas", "USD")
+    assert (status["sym"], status["signal_sym"], status["end_at"]) == (MKU, SIGNAL, "154500")
+    assert list(client.get(f"{BASE}/runs/{status['id']}").json()) == RT_STATUS_KEYS
+    # 같은 MKU 모의 계좌 실행은 1분봉으로도 둘째가 안 된다 — 409
+    dup = client.post(f"{BASE}/runs", json={"file": "fakemku.py", "mode": "orders", "sym": MKU})
+    assert dup.status_code == 409 and "이미" in dup.json()["detail"]
+    # 1분봉 실행은 kind 가 minute, signal_sym 은 생략해도 된다
+    minute = client.post(f"{BASE}/runs", json={"file": "fakemku.py", "mode": "paper"}).json()
+    assert list(minute) == STATUS_KEYS and minute["kind"] == "minute"
+    assert rt_reg.fake.orders == []
+
+
+def test_신호_종목_칸_거부는_409_모양이_틀리면_422(rt_reg):
+    client = TestClient(app)
+    r = client.post(f"{BASE}/runs", json={"file": "fakemku.py", "mode": "paper", "signal_sym": KRX_SYM})
+    assert r.status_code == 409 and "실시간" in r.json()["detail"]
+    r = client.post(f"{BASE}/runs", json={**RT_BODY, "signal_sym": MKU})
+    assert r.status_code == 409 and "A75" in r.json()["detail"]
+    assert client.post(f"{BASE}/runs", json={**RT_BODY, "signal_sym": ["A756B000"]}).status_code == 422
+    assert rt_reg.feeds == []
+
+
+def test_시작_라우트는_동기라_원문_구독이_이벤트_루프_밖에서_만들어진다(rt_reg):
+    """`RealtimeRun.prepare()` 가 RawFeed 를 만든다 — RawFeed 는 루프에 일을 맡기고 기다리므로 루프 스레드에서 만들면 막힌다.
+    `start_run` 은 `def`(스레드 풀)여야 한다."""
+    assert not inspect.iscoroutinefunction(routes_mod.start_run)
+    seen = []
+    inner = rt_reg._feed_factory
+
+    def factory(run_id, wants):
+        try:
+            asyncio.get_running_loop()
+            seen.append("루프 스레드")
+        except RuntimeError:
+            seen.append("루프 밖")
+        return inner(run_id, wants)
+
+    rt_reg._feed_factory = factory
+    assert TestClient(app).post(f"{BASE}/runs", json=RT_BODY).status_code == 201
+    assert seen == ["루프 밖"]
+
+
+def test_실시간_차트는_1분_줄과_진입·청산_표시(rt_reg):
+    folder = write_run(rt_reg.root, "20261103_rtfake_paper", state="끝", sym=MKU, name="rtfake", kind="realtime",
+                       signal_sym=KRX_SYM)
+    j = Journal(folder / "journal.jsonl")
+    j.write("event", text="시작")
+    j.write("signal", clock="090105", act="enter", side="sell", ref=0.7499, reason=None, time="090105",
+            bid=0.7499, ask=0.7501, krx=1400.6, dk=0.6, rho=0.9)
+    j.write("fill", clock="090105", side="sell", price=0.7499, source="paper", fee=2.0, text="종이 체결")
+    minute = {"date": "20261103", "time": "090100", "krx": 1400.6, "mku_mid": 0.75, "bid": 0.7499, "ask": 0.7501,
+              "spread_ticks": 2, "mku_last": 0.75, "last_krx_at": "090105", "last_quote_at": "090101", "position": -1}
+    j.write("minute", clock="090200", **minute)
+    j.write("signal", clock="090230", act="exit", side="buy", ref=0.7495, reason="익절", time="090230")
+    j.write("fill", clock="090230", side="buy", price=0.7495, source="paper", fee=2.0, text="종이 체결")
+    j.write("trade", clock="090230", side="sell", entry=0.7499, exit=0.7495, entry_time="090105", exit_time="090230",
+            ticks=4, pnl=10.0, reason="익절", exit_date="20261103", entry_date="20261103", net_usd=6.0, held_s=85.0)
+    j.write("minute", clock="090300", **{**minute, "time": "090200", "krx": 1400.1, "position": 0})
+    body = TestClient(app).get(f"{BASE}/runs/{folder.name}/bars").json()
+    assert body["kind"] == "realtime"
+    assert body["bars"] == [{k: v for k, v in minute.items() if k not in ("last_krx_at", "last_quote_at")},
+                            {"date": "20261103", "time": "090200", "krx": 1400.1, "mku_mid": 0.75, "bid": 0.7499,
+                             "ask": 0.7501, "spread_ticks": 2, "mku_last": 0.75, "position": 0}]
+    assert [(m["kind"], m["date"], m["time"], m["side"], m["price"]) for m in body["marks"]] == [
+        ("entry", "20261103", "090105", "sell", 0.7499),       # 1분 줄보다 먼저 온 체결은 실행 시작 날짜
+        ("exit", "20261103", "090230", "buy", 0.7495),
+        ("trade", "20261103", "090230", "sell", 0.7495)]
+    trade = body["marks"][-1]
+    assert (trade["reason"], trade["pnl"], trade["ticks"], trade["entry"], trade["entry_time"]) == \
+        ("익절", 10.0, 4, 0.7499, "090105")
+
+
+def test_도는_실시간_실행의_차트도_실시간_모양(rt_reg):
+    client = TestClient(app)
+    run_id = client.post(f"{BASE}/runs", json={**RT_BODY, "mode": "paper"}).json()["id"]
+    assert client.get(f"{BASE}/runs/{run_id}/bars").json() == {"kind": "realtime", "bars": [], "marks": []}
+
+
+def test_1분봉_차트는_kind_minute(client):
+    assert client.get(f"{BASE}/runs/{FINISHED}/bars").json()["kind"] == "minute"

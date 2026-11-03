@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 from urllib.parse import urlparse
 
@@ -21,6 +22,12 @@ def public_hosts() -> frozenset[str]:
     for item in os.environ.get("NH_PUBLIC_HOSTS", "").split(","):
         item = item.strip()
         if not item:
+            continue
+        # `*`(와 `*.도메인`)이 목록에 들어가면 TrustedHostMiddleware 가 모든 Host 를 받아 리바인딩 방어가 조용히 꺼진다 → 버린다.
+        if "*" in item:
+            logging.getLogger(__name__).warning(
+                "NH_PUBLIC_HOSTS 에서 와일드카드 항목을 뺐습니다: %r — 공개 주소는 호스트 이름을 하나씩 적어 주세요.", item
+            )
             continue
         try:
             host = urlparse("//" + item.split("://")[-1]).hostname

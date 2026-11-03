@@ -451,6 +451,15 @@ def test_프록시_머리글이_있어도_Host_로_견준다(reg):
     assert rebind.status_code == 400
 
 
+def test_NH_PUBLIC_HOSTS_의_와일드카드는_버리고_경고한다(monkeypatch, caplog):
+    from backend.team_hosts import allowed_host_patterns, public_hosts
+    monkeypatch.setenv("NH_PUBLIC_HOSTS", "*,nh.example.com,*.evil.com")
+    with caplog.at_level("WARNING", logger="backend.team_hosts"):
+        assert public_hosts() == {"nh.example.com"}
+    assert "*" not in allowed_host_patterns()
+    assert "'*'" in caplog.text and "'*.evil.com'" in caplog.text
+
+
 def test_NH_PUBLIC_HOSTS_읽기():
     from backend.team_hosts import allowed_host_patterns, public_hosts
     import os

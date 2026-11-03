@@ -266,6 +266,7 @@ def _first_arg_type(strategy_cls: type) -> object:
 def _params_class(module: ModuleType, strategy_cls: type, names: tuple[str, ...] = ("Params",)) -> type:
     """Params 클래스를 이 순서로 찾는다(모두 dataclass 여야 한다). 못 찾으면 `LoadError`.
 
+    0. (실시간 전략만) 전략 `__init__` 첫 인자 주석이 이 파일에서 정의한 dataclass 면 그것
     1. 이 파일에서 정의한 `Params` (실시간 전략은 그다음 `LiveParams` — `names` 순서)
     2. 전략 `__init__` 첫 인자의 주석
     3. 가져온 `Params`(예: `from strategy import Params`) — 파일이 자기 Params 를 주석으로 밝혔는데
@@ -274,10 +275,14 @@ def _params_class(module: ModuleType, strategy_cls: type, names: tuple[str, ...]
         return isinstance(candidate, type) and dataclasses.is_dataclass(candidate)
 
     found = [getattr(module, n, None) for n in names]
+    annotated = _first_arg_type(strategy_cls)
+    # 실시간 전략: 같은 파일에 Params 와 LiveParams 가 함께 있으면 `__init__` 이 밝힌 것(그 파일 정의)을 먼저 —
+    # leadlag `Engine(p: LiveParams)` 이 옆의 다른 Params 로 돌지 않게
+    if len(names) > 1 and ok(annotated) and annotated.__module__ == module.__name__:
+        return annotated
     for own in found:
         if ok(own) and own.__module__ == module.__name__:
             return own
-    annotated = _first_arg_type(strategy_cls)
     if ok(annotated):
         return annotated
     for own in found:
@@ -342,7 +347,7 @@ def _check(module: ModuleType, file: str) -> _Checked:
         # 틱 가치: TICK_VALUE, 없으면 TICK_USD(leadlag), 둘 다 없으면 미국달러선물 값
         tick_value = float(getattr(module, "TICK_VALUE", getattr(module, "TICK_USD", DEFAULT_TICK_VALUE)))
     except (TypeError, ValueError) as e:
-        raise LoadError(f"TICK·TICK_VALUE 는 숫자여야 합니다: {e}") from e
+        raise LoadError(f"TICK·TICK_VALUE(또는 TICK_USD) 는 숫자여야 합니다: {e}") from e
     kind = _kind(strategy_cls)
     params_cls = _params_class(module, strategy_cls, PARAMS_NAMES[kind])
     notes: list[str] = []
@@ -362,6 +367,8 @@ def _check(module: ModuleType, file: str) -> _Checked:
         if kind == "minute":
             if not callable(instance.on_minute):
                 raise LoadError("on_minute 은 부를 수 있는 메서드여야 합니다")
+            if hasattr(instance, EXIT_HOOK) and not callable(getattr(instance, EXIT_HOOK)):
+                raise LoadError(f"{EXIT_HOOK} 은 부를 수 있는 메서드여야 합니다")
             # 청산을 전략이 판단하면 앱의 익절 규칙을 쓰지 않으므로 익절 목표 알림이 필요 없다
             if not any(hasattr(instance, n) for n in (*TARGET_NAMES, EXIT_HOOK)):
                 notes.append(NO_TARGET_NOTE)

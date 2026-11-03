@@ -37,7 +37,10 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
   `stop`(진입가 ∓ `stop_ticks` 틱) `stop_ticks` `signal`(진입 신호 객체, 모르면 None) `window`(진입 신호에 있으면).
 - 돌려주는 값: None 이면 들고 있음. 사유 문자열이면 지금 가격을 기준가로 청산. `(사유, 기준가)` 면 그 가격을
   기준가로 청산 — 기준가는 종이 체결가(∓ 슬리피지)와 체결가를 못 받았을 때 기록할 가격이고, 모의 계좌의 실제 주문은
-  언제나 시장가입니다. 사유가 `"손절"` 이면 `on_exit(..., stopped=True)`. 그 밖의 값은 `TypeError`(장중이면 「오류」).
+  언제나 시장가입니다. **앱이 기준가를 묶습니다**: 가격 하나일 때는 언제나 그 가격, 범위일 때는 `[low, high]` 안으로
+  (`min(max(기준가, low), high)`). 바뀌면 `event` 줄을 남깁니다 — 전략이 엉뚱한 가격으로 체결을 지어내지 못하게.
+  사유가 `"손절"` 이면 `on_exit(..., stopped=True)`. 사유는 40자까지, 앱이 쓰는 사유(`RESERVED_REASONS`:
+  「장 마감 정리」·「실행 종료 정리」)는 쓸 수 없습니다. 그 밖의 값은 `TypeError`(장중이면 「오류」).
 
 앞서는 순서 (위가 먼저, 앞에 걸리면 전략에 묻지 않음)
 
@@ -53,12 +56,14 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
 
 **신호 꼴** — 신호에 `bar` 가 있으면 그것이 판정 봉(week02), 없고 `minute`(1분봉: `date` `time` `open` …)이
 있으면 그 1분봉이 판정 봉입니다. 1분봉이면 기록의 `bar` = 그 분 시작 시각, `clock` = 그 분이 끝난 시각(+1분).
-`signal` 줄에는 판정 봉의 숫자 지표 칸(소수 3자리)과 시가·고가·저가에 더해, **신호 자신의 숫자·문자 칸**(dataclass 칸,
+`signal` 줄에는 판정 봉의 숫자 지표 칸(소수 3자리, 틱이 더 잘면 틱 자릿수 + 2 — MKU 6자리)과
+시가·고가·저가(소수 4자리, 틱이 더 잘면 틱 자릿수)에 더해, **신호 자신의 숫자·문자 칸**(dataclass 칸,
 예: `window` `range_high` `range_low` `target_ticks` `exit_by`, 수는 소수 6자리)을 남깁니다. 예약 칸(`kind` `clock`
 `side` `reason` 등)·봉 칸 이름·참거짓·비유한수는 뺍니다.
 
 **`on_entry` 인자** — 매개변수가 없으면 `on_entry()`. 있으면 **이름이 같은 진입 신호 칸의 값**을 넘깁니다
-(ORB `on_entry(window)` ← 신호의 `window`). 신호에 없는 이름은 기본값이 있으면 기본값, 없으면 `TypeError`.
+(ORB `on_entry(window)` ← 신호의 `window`). 신호에 없는 이름은 기본값이 있으면 기본값, 없으면 `TypeError` —
+이 대응은 **진입 주문을 내기 전에** 맞춰 봅니다(틀리면 주문 없이 오류).
 `*args`·`**kwargs` 에는 아무것도 넘기지 않습니다. 진입 신호에 `window` 가 있으면 보유와 `trade` 줄에도 남깁니다
 (같은 날 다시 세운 실행이 개장마다 한 번 규칙을 이어받게).
 """
@@ -83,6 +88,11 @@ TARGET_NAMES = ("target", "current_vwap")
 _MISSING = object()
 #: 전략이 청산을 판단하는 메서드 이름(고를 수 있음). 있으면 공통 손절·익절·시간 청산 대신 쓴다 — 모듈 문서.
 EXIT_HOOK = "exit_reason"
+#: 앱이 스스로 내는 청산의 사유 — 전략의 `exit_reason` 은 이 이름을 돌려줄 수 없다(기록에서 앱 정리와 섞이지 않게).
+FLATTEN_REASON, END_REASON = "장 마감 정리", "실행 종료 정리"
+RESERVED_REASONS = frozenset({FLATTEN_REASON, END_REASON})
+#: 전략 청산 사유의 최대 길이(글자).
+MAX_REASON_LEN = 40
 #: 신호 자신의 칸에서 뺄 이름 — 판정 봉 객체 칸.
 _BAR_HOLDERS = frozenset({"bar", "minute"})
 
@@ -196,9 +206,13 @@ def _exit_answer(got: object, price: float) -> tuple[str, float] | None:
     """`exit_reason` 의 답을 (사유, 기준가) 로. None 이면 들고 있음. 약속에 없는 값은 `TypeError`."""
     if got is None:
         return None
-    if isinstance(got, str) and got:
+    def ok(reason: object) -> bool:
+        return (isinstance(reason, str) and bool(reason.strip()) and len(reason) <= MAX_REASON_LEN
+                and reason.strip() not in RESERVED_REASONS)
+
+    if ok(got):
         return got, price
-    if (isinstance(got, tuple) and len(got) == 2 and isinstance(got[0], str) and got[0]
+    if (isinstance(got, tuple) and len(got) == 2 and ok(got[0])
             and isinstance(got[1], (int, float)) and not isinstance(got[1], bool)
             and math.isfinite(got[1]) and got[1] > 0):
         return got[0], float(got[1])
@@ -289,6 +303,9 @@ class Runner:
         self.p = strategy.p
         self.j, self.broker = journal, broker
         self.tick, self.tick_value = tick, tick_value
+        # 신호 줄 자릿수 — 국내(틱 0.1)는 지표 3·봉 4 그대로, 틱이 잘면(MKU 0.0001) 지표 6·봉 4
+        self.ind_digits = max(3, _digits(tick) + 2)
+        self.ohlc_digits = max(4, _digits(tick))
         self.pos: dict | None = None
         self.pending: dict | None = None      # 판정 봉 신호 → 다음 가격에서 진입
         self.trades: list[dict] = []
@@ -322,11 +339,11 @@ class Runner:
         for s in self.feed(m):
             b, start, end = _decision_bar(s)        # week02 는 `bar`, 1분봉 신호(ORB)는 `minute`
             bar_fields = asdict(b) if is_dataclass(b) else dict(vars(b))
-            ind = {k: round(v, 3) for k, v in bar_fields.items()
+            ind = {k: round(v, self.ind_digits) for k, v in bar_fields.items()
                    if k not in _BAR_FIELDS and k not in _SIGNAL_KEYS and isinstance(k, str)
                    and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)}
             # 차트가 봉을 그리도록 시가·고가·저가도 남긴다(종가는 원래 있음). 지표 칸에서는 빠지는 이름이라 겹치지 않는다
-            ohlc = {k: round(v, 4) for k in ("open", "high", "low") if isinstance(v := bar_fields.get(k), (int, float))
+            ohlc = {k: round(v, self.ohlc_digits) for k in ("open", "high", "low") if isinstance(v := bar_fields.get(k), (int, float))
                     and not isinstance(v, bool) and math.isfinite(v)}
             # 신호 자신의 칸(ORB 의 window·range_high 등). 봉 지표와 이름이 같으면 신호 칸이 이긴다
             extra = {**ind, **_signal_fields(s)}
@@ -356,7 +373,7 @@ class Runner:
         side, pos = self.pos["side"], self.pos
         target = target_of(self.strat)
         if clock >= self.p.flatten_at:
-            self._exit(clock, price, "장 마감 정리")
+            self._exit(clock, price, FLATTEN_REASON)
         elif side == "buy" and lo <= pos["stop"]:
             self._exit(clock, min(price, pos["stop"]) if ref_low is None else pos["stop"], "손절")
         elif side == "sell" and hi >= pos["stop"]:
@@ -371,15 +388,21 @@ class Runner:
     def _judged_exit(self, judge, clock: str, price: float, ref_low: float | None, ref_high: float | None) -> None:
         """전략의 `exit_reason` 으로 청산할지 정한다. 앱의 안전 규칙이 먼저다(모듈 문서의 순서 3·4)."""
         if clock >= self.p.flatten_at:
-            self._exit(clock, price, "장 마감 정리")
+            self._exit(clock, price, FLATTEN_REASON)
             return
         if self.retry_reason is not None:   # 앞서 정한 청산이 확인 안 됨 — 결정을 되묻지 않고 같은 사유로 다시
             self._exit(clock, price, self.retry_reason)
             return
         got = _exit_answer(judge(clock, price, ref_low, ref_high, self._pos_view()), price)
-        if got is not None:
-            reason, ref = got
-            self._exit(clock, ref, reason)
+        if got is None:
+            return
+        reason, asked = got
+        # 기준가 묶기 — 가격 하나면 그 가격, 범위면 [저가, 고가] 안 (전략이 체결가를 지어내지 못하게)
+        ref = price if ref_low is None or ref_high is None else min(max(asked, ref_low), ref_high)
+        if ref != asked:
+            self.j.write("event", clock=clock, text=f"전략 기준가 {asked:g} → {ref:g} ({reason}) — "
+                                                    "가격 범위 밖이라 범위 안으로 묶음")
+        self._exit(clock, ref, reason)
 
     def _pos_view(self) -> dict:
         """`exit_reason` 에 넘기는 보유의 사본 — 진입 날짜와 진입 신호 객체를 더한다."""
@@ -391,6 +414,10 @@ class Runner:
     # ---- 진입·청산
     def _enter(self, clock: str, price: float) -> None:
         e, self.pending = self.pending, None
+        sig = e.get("obj")
+        fn = getattr(self.strat, "on_entry", None)
+        # on_entry 인자 대응은 주문 전에 맞춰 본다 — 틀리면 주문을 내지 않고 오류(체결 뒤 오류면 정리 주문이 또 나간다)
+        entry_call = None if fn is None else _entry_args(fn, sig)
         px = self.broker.fill(e["side"], price, clock, f"진입 ({e['side']})")
         if px is None:
             held = self.broker.position()
@@ -409,14 +436,12 @@ class Runner:
         self.pos = {"side": e["side"], "entry": px, "entry_time": clock, "signal_time": e["signal"],
                     "stop_ticks": e["stop_ticks"], "stop": stop_price(e["side"], px, e["stop_ticks"], self.tick),
                     "entry_fee": getattr(self.broker, "last_fill_fee", None)}
-        sig = e.get("obj")
         window = getattr(sig, "window", None)
         if isinstance(window, (str, int)) and not isinstance(window, bool):
             self.pos["window"] = window     # trade 줄에 남겨 같은 날 다시 세운 실행이 이어받게
         self.entry_signal = sig
-        fn = getattr(self.strat, "on_entry", None)
-        if fn is not None:
-            args, kwargs = _entry_args(fn, sig)
+        if fn is not None and entry_call is not None:
+            args, kwargs = entry_call
             fn(*args, **kwargs)
         self.j.write("event", clock=clock, text=f"진입 {e['side']} {px} · 손절 {self.pos['stop']} ({e['stop_ticks']}틱)")
 
@@ -490,7 +515,7 @@ class Runner:
         if self.halted:
             return
         if self.pos is not None and self.last_price is not None:
-            self._exit(clock, self.last_price, "실행 종료 정리")
+            self._exit(clock, self.last_price, END_REASON)
 
     # ---- 상태
     def expected_position(self) -> int:

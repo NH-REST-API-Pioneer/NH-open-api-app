@@ -489,3 +489,80 @@ def test_ORB_꼴_기한은_그_분_시가에서(tmp_path):
     assert b.fills == []
     r.on_price("113000", 1335.2)
     assert b.fills == [("sell", 1335.2, "113000", "청산 · 다음 개장 전 청산")]
+
+
+# ---------------------------------------------------------------- 고침 1차: 기준가 묶기·on_entry 먼저·예약 사유·자릿수
+def test_전략_기준가는_가격_하나면_그_가격_범위면_범위_안으로(tmp_path):
+    b = FakeBroker(fill_px=1335.0)
+    r = _judge(tmp_path, b, answer=("익절", 9999.0))
+    r.on_price("100100", 1335.0)                                    # 가격 하나 → 지금 가격
+    assert b.fills[-1][1] == 1335.0
+    r2 = _judge(tmp_path / "b", b2 := FakeBroker(fill_px=1336.0), answer=("익절", 9999.0))
+    r2.on_price("100100", 1335.2, ref_low=1334.8, ref_high=1336.0)  # 범위 → 고가로 묶음
+    assert b2.fills[-1][1] == 1336.0
+    r3 = _judge(tmp_path / "c", b3 := FakeBroker(fill_px=1334.8), answer=("손절", 1.0))
+    r3.on_price("100100", 1335.2, ref_low=1334.8, ref_high=1336.0)  # 범위 → 저가로 묶음
+    assert b3.fills[-1][1] == 1334.8
+    for out in (tmp_path, tmp_path / "b"):
+        texts = [x.get("text", "") for x in Journal(out / "journal.jsonl").read() if x["kind"] == "event"]
+        assert any("기준가" in t and "9999" in t for t in texts)
+
+
+def test_전략_기준가가_범위_안이면_그대로_알림도_없다(tmp_path):
+    b = FakeBroker(fill_px=1334.0)
+    r = _judge(tmp_path, b, answer=("손절", 1334.0))
+    r.on_price("100100", 1333.0, ref_low=1332.0, ref_high=1335.5)
+    assert b.fills[-1][1] == 1334.0
+    assert not any("기준가" in x.get("text", "") for x in Journal(tmp_path / "journal.jsonl").read())
+
+
+def test_on_entry_인자가_틀리면_주문_전에_멈춘다(tmp_path):
+    b = FakeBroker(fill_px=1335.1)
+    r = _runner(tmp_path, b)
+    r.pos = None
+    r.strat.on_entry = lambda window: None
+    r.pending = {"side": "buy", "stop_ticks": 5, "signal": "100000", "obj": SimpleNamespace(side="buy")}
+    with pytest.raises(TypeError, match="on_entry 의 인자 window"):
+        r.on_price("100100", 1335.0)
+    assert b.fills == [] and r.pos is None and r.pending is None
+
+
+@pytest.mark.parametrize("bad", ["장 마감 정리", "실행 종료 정리", " 장 마감 정리 ", "가" * 41, ("실행 종료 정리", 1334.0)])
+def test_앱_예약_사유와_긴_사유는_받지_않는다(tmp_path, bad):
+    r = _judge(tmp_path, FakeBroker(fill_px=1333.0), answer=bad)
+    with pytest.raises(TypeError, match="exit_reason"):
+        r.on_price("100100", 1333.0)
+    assert r.pos is not None and r.trades == []
+
+
+def test_사유는_40자까지(tmp_path):
+    r = _judge(tmp_path, FakeBroker(fill_px=1333.0), answer="가" * 40)
+    r.on_price("100100", 1333.0)
+    assert r.trades[0]["reason"] == "가" * 40
+
+
+def test_지표_자릿수는_틱을_따른다_국내는_3자리_그대로(tmp_path):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Bar:
+        date: str = "20261030"
+        start: str = "100000"
+        end: str = "100500"
+        open: float = 0.7433
+        high: float = 0.7435
+        low: float = 0.7431
+        close: float = 0.7434
+        ema: float = 0.7433456789
+
+    sig = SimpleNamespace(bar=Bar(), side=None, reason="", stop_ticks=None)
+    j = Journal(tmp_path / "journal.jsonl")
+    strat = SimpleNamespace(p=SimpleNamespace(), on_minute=lambda m: [sig])
+    r = Runner(strat, j, PaperBroker(j, 0.0001, fee=2.0), 0.0001, 2.5)
+    r.on_minute_closed(Minute("20261030", "100400", 1, 1, 1, 1, 0))
+    row = j.read()[-1]
+    assert row["ema"] == 0.743346 and (row["open"], row["high"], row["low"]) == (0.7433, 0.7435, 0.7431)
+    r2 = _runner(tmp_path / "d", FakeBroker())                     # 국내(틱 0.1)는 기존 3자리
+    r2.strat.on_minute = lambda m: [SimpleNamespace(bar=Bar(ema=55.55555), side=None, reason="", stop_ticks=None)]
+    r2.on_minute_closed(Minute("20261030", "100400", 1, 1, 1, 1, 0))
+    assert Journal(tmp_path / "d" / "journal.jsonl").read()[-1]["ema"] == 55.556

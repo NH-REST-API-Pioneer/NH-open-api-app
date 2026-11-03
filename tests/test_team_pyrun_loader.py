@@ -321,3 +321,21 @@ def test_hold_min_은_시장이_채우지_않는다(tmp_path):
     src = ORB_LIKE.replace("    hold_min: int = 120\n", "")
     with pytest.raises(LoadError, match="Params 에 없는 이름: hold_min"):
         load(_put(tmp_path, "orb.py", src), "orb.py")
+
+
+def test_실시간은_init_주석의_LiveParams_가_같은_파일_Params_보다_먼저(tmp_path):
+    src = ENGINE.replace("@dataclass\nclass LiveParams:", "@dataclass\nclass Params:\n    other: int = 1\n\n\n@dataclass\nclass LiveParams:")
+    got = load(_put(tmp_path, "e.py", src), "e.py")
+    assert got.params_cls.__name__ == "LiveParams" and got.new().p.flatten_at == "154000"
+
+
+def test_부를_수_없는_exit_reason_은_LoadError(tmp_path):
+    src = ORB_LIKE.replace("    def exit_reason(self, clock, price, low, high, pos):\n        return None\n",
+                           "    exit_reason = 3\n")
+    with pytest.raises(LoadError, match="exit_reason 은 부를 수 있는 메서드여야 합니다"):
+        load(_put(tmp_path, "orb.py", src), "orb.py")
+
+
+def test_TICK_오류_메시지에_TICK_USD(tmp_path):
+    with pytest.raises(LoadError, match="TICK_USD"):
+        load(_put(tmp_path, "e.py", ENGINE.replace("TICK_USD = 2.5", 'TICK_USD = "x"')), "e.py")

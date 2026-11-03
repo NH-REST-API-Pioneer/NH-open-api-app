@@ -31,6 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from backend.nh_api import client as nh_client
+from backend.team_hosts import LOCAL_HOSTS, public_hosts
 from backend.team_pyrun import apilog, strategy_files
 from backend.team_pyrun.journal import Journal
 from backend.team_pyrun.live import RunSpec, StartRefused
@@ -41,8 +42,7 @@ logger = logging.getLogger(__name__)
 
 #: 쓰는(상태를 바꾸는) 메서드 — 다른 사이트 검사를 받는다.
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-#: `Origin` 으로 받는 호스트 이름 — 포트는 가리지 않는다(개발 서버는 :5173 에서 프록시로 부른다).
-LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+#: 로컬 호스트 이름 — `Origin` 의 포트는 가리지 않는다(개발 서버는 :5173 에서 프록시로 부른다). `backend/team_hosts.py`.
 FOREIGN_SITE = "다른 사이트에서 온 요청은 받지 않습니다"
 
 
@@ -62,50 +62,56 @@ def _origin_endpoint(origin: str) -> tuple[str, int] | None:
     return host, port if port is not None else DEFAULT_PORTS[parts.scheme]
 
 
-def _same_as_host(origin: str, host_header: str | None) -> bool:
-    """`Origin` 이 브라우저가 이 서버를 부른 주소(`Host` 머리글)와 같은 출처인지.
+def _host_header(request: Request) -> tuple[str, int] | None:
+    """`Host` 머리글을 (호스트, 포트)로. 포트가 없으면 요청이 들어온 방식(`request.url.scheme`)의 기본 포트.
 
-    터널 뒤에서는 브라우저가 `https://nh.예시.com` 으로 열어 `Origin` 도 `Host` 도 그 주소다.
-    `Host` 에 포트가 없으면 `Origin` 은 그 방식의 기본 포트(80·443)여야 한다 — 프록시가 http 로 넘기든 https 로 넘기든 같다.
-    `X-Forwarded-Host` 는 보지 않는다(uvicorn 도 안 쓴다) — 밖에서 마음대로 적어 보낼 수 있는 값이다."""
-    endpoint = _origin_endpoint(origin)
-    if endpoint is None or not host_header:
-        return False
+    uvicorn `--proxy-headers` 는 `X-Forwarded-Proto: https` 로 scheme 만 https 로 바꾼다(Host 는 그대로) — 터널 뒤에서 포트 없는
+    `nh.예시.com` 은 443 이다. `X-Forwarded-Host` 는 보지 않는다(밖에서 마음대로 적어 보낼 수 있다)."""
+    raw = request.headers.get("host")
+    if not raw:
+        return None
     try:
-        wanted = urlparse("//" + host_header)
-        wanted_host, wanted_port = wanted.hostname, wanted.port
+        parts = urlparse("//" + raw)
+        host, port = parts.hostname, parts.port
     except ValueError:
+        return None
+    if not host:
+        return None
+    return host, port if port is not None else DEFAULT_PORTS.get(request.url.scheme, 80)
+
+
+def _origin_allowed(request: Request, origin: str) -> bool:
+    """`Origin` 을 받아도 되는지.
+
+    - 로컬 Origin(localhost·127.0.0.1·::1, 포트 불문)은 **Host 도 로컬일 때만**. 리바인딩된 `rebind.attacker.tld` 나 공개 주소의
+      Host 에 localhost Origin 이 붙은 요청은 거절한다.
+    - 그 밖의 Origin 은 Host 와 호스트·포트가 같고(스킴을 따진 기본 포트: http 80, https 443), 그 호스트가 `NH_PUBLIC_HOSTS` 에 있어야 한다.
+    - `null`·뜻을 알 수 없는 값은 거절."""
+    endpoint = _origin_endpoint(origin)
+    host = _host_header(request)
+    if endpoint is None or host is None:
         return False
-    if not wanted_host:
-        return False
-    host, port = endpoint
-    if wanted_port is None:
-        return host == wanted_host and port in DEFAULT_PORTS.values()
-    return host == wanted_host and port == wanted_port
+    if endpoint[0] in LOCAL_HOSTS:
+        return host[0] in LOCAL_HOSTS
+    return endpoint == host and host[0] in public_hosts()
 
 
 def refuse_cross_site(request: Request) -> None:
     """다른 사이트의 웹 페이지가 사용자 브라우저로 보낸 쓰기 요청을 막는다(CSRF) — 이 앱은 로그인이 없고,
-    흘려보낸 `POST .../flatten` 한 번이 모의계좌 주문이 된다. 조회(GET)는 보지 않는다.
+    흘려보낸 `POST .../flatten` 한 번이 모의계좌 주문이 되며 `POST /strategies` 는 서버에서 파이썬을 돌린다. 조회(GET)는 보지 않는다.
+    (Host 자체를 거르는 DNS 리바인딩 방어는 `main.py` 의 `TrustedHostMiddleware` 가 앱 전체에 한다.)
 
     - `Sec-Fetch-Site: cross-site` 면 거절.
-    - `Origin` 이 있으면 다음 중 하나여야 한다. 아니면(`null` 포함) 거절.
-        1. 호스트·포트가 요청의 `Host` 머리글과 같다(서버 배포: 브라우저가 연 주소 그대로 온 요청).
-        2. 호스트가 localhost·127.0.0.1·::1 이다(개발 서버가 :5173 에서 :8000 으로 프록시하면 `Origin` 은 5173, `Host` 는 8000).
+    - `Origin` 이 있으면 `_origin_allowed` 를 통과해야 한다(`null` 포함 거절).
     - `Origin` 이 없으면 통과(curl·시험은 보내지 않는다). 브라우저의 쓰기 요청에는 늘 붙는다."""
     if request.method not in UNSAFE_METHODS:
         return
     if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
         raise HTTPException(status_code=403, detail=FOREIGN_SITE)
     origin = request.headers.get("origin")
-    if origin is not None:
-        try:
-            host = urlparse(origin).hostname
-        except ValueError:
-            host = None
-        # 팀: 서버 배포(Cloudflare Tunnel 뒤)에서는 Origin 이 localhost 가 아니라 공개 주소라서 Host 와 같으면 받는다.
-        if host not in LOCAL_HOSTS and not _same_as_host(origin, request.headers.get("host")):
-            raise HTTPException(status_code=403, detail=FOREIGN_SITE)
+    # 팀: 서버 배포(Cloudflare Tunnel 뒤)에서는 Origin 이 공개 주소다 — Host 와 같고 NH_PUBLIC_HOSTS 에 있을 때만 받는다.
+    if origin is not None and not _origin_allowed(request, origin):
+        raise HTTPException(status_code=403, detail=FOREIGN_SITE)
 
 
 def require_json(request: Request) -> None:

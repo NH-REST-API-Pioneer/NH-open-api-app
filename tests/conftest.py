@@ -32,6 +32,12 @@
 """
 from __future__ import annotations
 
+import os
+
+# 팀: 앱이 불러지기 전에 허용 Host 를 정한다(`backend/team_hosts.py`). 시험 클라이언트의 Host 는 `testserver` 이고,
+# 서버 배포 시험은 `nh.example.com` 을 쓴다. 이 값들은 시험에서만 — 실제 실행에는 들어가지 않는다.
+os.environ["NH_PUBLIC_HOSTS"] = "testserver,nh.example.com"
+
 import pytest
 
 from backend.nh_api.fixtures import PRIVATE_DIR_FLAG

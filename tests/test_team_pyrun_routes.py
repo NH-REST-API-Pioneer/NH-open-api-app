@@ -330,50 +330,100 @@ def test_Sec_Fetch_Site_cross_site_는_403(client, untouched, method, path, body
 
 def test_로컬_Origin_과_Origin_없음은_받는다(client, reg):
     run_id = client.post(f"{BASE}/runs", json={"file": "fake.py", "mode": "paper", "sym": None}).json()["id"]   # Origin 없음
-    for origin in ("http://localhost:5173", "http://127.0.0.1:8000", "http://localhost", "http://[::1]:5173"):
-        r = client.post(f"{BASE}/runs/{run_id}/flatten", headers={"Origin": origin})
-        assert r.status_code == 204, origin
-    r = client.post(f"{BASE}/runs/{run_id}/stop", headers={"Origin": "http://localhost:5173", "Sec-Fetch-Site": "same-site"})
+    # (Origin, Host) — Host 도 로컬이어야 한다. 마지막은 개발 서버(vite, changeOrigin)가 :5173 에서 :8000 으로 넘기는 모양.
+    for origin, host in (("http://localhost:5173", "localhost:8000"), ("http://127.0.0.1:8000", "127.0.0.1:8000"),
+                         ("http://localhost", "localhost"), ("http://[::1]:5173", "localhost:8000"),
+                         ("http://localhost:5173", "127.0.0.1:8000")):
+        r = client.post(f"{BASE}/runs/{run_id}/flatten", headers={"Origin": origin, "Host": host})
+        assert r.status_code == 204, (origin, host)
+    r = client.post(f"{BASE}/runs/{run_id}/stop", headers={"Origin": "http://localhost:5173", "Host": "127.0.0.1:8000",
+                                                           "Sec-Fetch-Site": "same-site"})
     assert r.status_code == 204
     assert client.post(f"{BASE}/runs/{run_id}/stop", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 204
 
 
 # 서버 배포(도커 + Cloudflare Tunnel): 브라우저가 https://nh.example.com 으로 열면 Origin 이 그 주소이고 Host 도 그 주소다.
+# 시험 환경의 NH_PUBLIC_HOSTS 는 conftest 가 "testserver,nh.example.com" 으로 정한다.
 SITE = "nh.example.com"
+REBIND = "rebind.attacker.tld:8000"
+
+
+@pytest.fixture
+def public_client(reg):
+    """터널 뒤에서 보는 모양: 요청이 https://nh.example.com 으로 들어온다(Host nh.example.com, scheme https)."""
+    return TestClient(app, base_url=f"https://{SITE}")
 
 
 @pytest.mark.parametrize("method,path,body", UNSAFE)
-def test_자기_주소에서_온_Origin_은_받는다_Host_와_같을_때(client, reg, method, path, body):
+def test_공개_주소_Origin_은_Host_와_같고_NH_PUBLIC_HOSTS_에_있으면_받는다(public_client, reg, method, path, body):
     # 거절되지 않았다는 것만 본다(403 이 아니면 된다 — 실행 id·파일 때문에 다른 4xx 는 날 수 있다)
-    r = client.request(method.upper(), f"{BASE}{path}", json=body,
-                       headers={"Origin": f"https://{SITE}", "Host": SITE})
+    r = public_client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Origin": f"https://{SITE}"})
     assert r.status_code != 403, r.text
-    # 포트가 붙은 주소(직접 접속·사설망)도 같으면 받는다
-    r = client.request(method.upper(), f"{BASE}{path}", json=body,
-                       headers={"Origin": "http://10.0.0.5:8000", "Host": "10.0.0.5:8000"})
+    r = public_client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Origin": f"https://{SITE}:443"})
     assert r.status_code != 403, r.text
 
 
 @pytest.mark.parametrize("method,path,body", UNSAFE)
-def test_Host_와_다른_Origin_은_403(client, untouched, method, path, body):
+def test_DNS_리바인딩_Host_는_앱_전체가_400(client, untouched, method, path, body):
+    """리바인딩된 `rebind.attacker.tld:8000` 은 Origin 도 Host 도 같지만 허용 Host 가 아니라 라우트에 닿기 전에 막힌다."""
+    r = client.request(method.upper(), f"{BASE}{path}", json=body,
+                       headers={"Origin": f"http://{REBIND}", "Host": REBIND})
+    assert (r.status_code, r.text) == (400, "Invalid host header")
+
+
+def test_모르는_Host_는_조회도_운영자_라우트도_400(client):
+    for path in ("/api/health", f"{BASE}/strategies", "/"):
+        r = client.get(path, headers={"Host": REBIND})
+        assert (r.status_code, r.text) == (400, "Invalid host header"), path
+    assert client.get("/api/health", headers={"Host": "localhost:8000"}).status_code == 200      # just serve
+    assert client.get("/api/health", headers={"Host": "127.0.0.1:8000"}).status_code == 200      # vite changeOrigin
+    assert client.get("/api/health", headers={"Host": SITE}).status_code == 200                  # NH_PUBLIC_HOSTS
+
+
+@pytest.mark.parametrize("method,path,body", UNSAFE)
+def test_localhost_Origin_이라도_Host_가_로컬이_아니면_403(client, untouched, method, path, body):
+    for origin in ("http://localhost:3000", "http://127.0.0.1:8000", "http://[::1]:5173"):
+        r = client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Origin": origin, "Host": SITE})
+        assert (r.status_code, r.json()) == (403, DENIED), origin
+
+
+@pytest.mark.parametrize("method,path,body", UNSAFE)
+def test_공개_주소_Origin_이_Host_와_다르면_403(public_client, untouched, method, path, body):
     cases = [
-        ("https://evil.com", SITE),
-        (f"https://{SITE}.evil.com", SITE),
-        (f"https://evil.{SITE}", SITE),
-        (f"https://{SITE}:8443", SITE),        # 같은 호스트라도 포트가 다르면 다른 출처
-        (f"http://{SITE}:8000", SITE),         # 기본 포트(443)가 아니다
-        (f"https://{SITE}", f"{SITE}:8000"),   # Host 쪽이 포트를 말하면 Origin 도 그 포트여야 한다
-        ("null", SITE),
-        ("https://", SITE),
+        "http://" + SITE,                  # 공개 주소는 https(443) 인데 http(80) Origin
+        "https://evil.com",
+        f"https://{SITE}.evil.com",
+        f"https://evil.{SITE}",
+        f"https://{SITE}:8443",            # 같은 호스트라도 포트가 다르면 다른 출처
+        f"http://{SITE}:8000",
+        "null",
+        "https://",
     ]
-    for origin, host in cases:
-        r = client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Origin": origin, "Host": host})
-        assert (r.status_code, r.json()) == (403, DENIED), (origin, host)
+    for origin in cases:
+        r = public_client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Origin": origin})
+        assert (r.status_code, r.json()) == (403, DENIED), origin
 
 
-def test_자기_주소_Origin_이어도_cross_site_는_403(client, untouched):
-    r = client.post(f"{BASE}/runs/{FINISHED}/stop",
-                    headers={"Origin": f"https://{SITE}", "Host": SITE, "Sec-Fetch-Site": "cross-site"})
+def test_NH_PUBLIC_HOSTS_에_없는_공개_주소는_Host_와_같아도_403(public_client, untouched, monkeypatch):
+    monkeypatch.setenv("NH_PUBLIC_HOSTS", "testserver")      # 미들웨어 목록은 앱을 만들 때 읽어 그대로 두고, 라우트는 부를 때마다 읽는다
+    r = public_client.post(f"{BASE}/runs/{FINISHED}/stop", headers={"Origin": f"https://{SITE}"})
+    assert (r.status_code, r.json()) == (403, DENIED)
+    monkeypatch.delenv("NH_PUBLIC_HOSTS")
+    r = public_client.post(f"{BASE}/runs/{FINISHED}/stop", headers={"Origin": f"https://{SITE}"})
+    assert (r.status_code, r.json()) == (403, DENIED)
+
+
+def test_직접_포트로_연_공개_주소는_포트까지_같아야_받는다(reg, monkeypatch):
+    monkeypatch.setenv("NH_PUBLIC_HOSTS", "testserver")
+    c = TestClient(app, base_url="http://testserver:8000")
+    assert c.post(f"{BASE}/strategies/reload", headers={"Origin": "http://testserver:8000"}).status_code != 403
+    assert c.post(f"{BASE}/strategies/reload", headers={"Origin": "http://testserver:9000"}).status_code == 403
+    assert c.post(f"{BASE}/strategies/reload", headers={"Origin": "http://testserver"}).status_code == 403
+
+
+def test_공개_주소_Origin_이어도_cross_site_는_403(public_client, untouched):
+    r = public_client.post(f"{BASE}/runs/{FINISHED}/stop",
+                           headers={"Origin": f"https://{SITE}", "Sec-Fetch-Site": "cross-site"})
     assert (r.status_code, r.json()) == (403, DENIED)
 
 
@@ -385,10 +435,32 @@ def test_프록시_머리글이_있어도_Host_로_견준다(reg):
     base = {"X-Forwarded-Proto": "https", "X-Forwarded-For": "203.0.113.9", "Host": SITE}
     ok = proxied.post(f"{BASE}/strategies/reload", headers={**base, "Origin": f"https://{SITE}"})
     assert ok.status_code != 403, ok.text
+    # http Origin 은 공개 주소(https)와 다르다
+    assert proxied.post(f"{BASE}/strategies/reload", headers={**base, "Origin": f"http://{SITE}"}).status_code == 403
     # 전달된 호스트 머리글(X-Forwarded-Host)로는 속일 수 없다 — 쓰지 않는다
     bad = proxied.post(f"{BASE}/strategies/reload",
                        headers={**base, "Origin": "https://evil.com", "X-Forwarded-Host": "evil.com"})
     assert (bad.status_code, bad.json()) == (403, DENIED)
+    # 리바인딩 Host 는 프록시 머리글이 있어도 400
+    rebind = proxied.post(f"{BASE}/strategies/reload", headers={**base, "Host": REBIND, "Origin": f"http://{REBIND}"})
+    assert rebind.status_code == 400
+
+
+def test_NH_PUBLIC_HOSTS_읽기():
+    from backend.team_hosts import allowed_host_patterns, public_hosts
+    import os
+    old = os.environ.get("NH_PUBLIC_HOSTS")
+    try:
+        os.environ["NH_PUBLIC_HOSTS"] = " NH.example.com , https://b.example.com:8443/x,,"
+        assert public_hosts() == {"nh.example.com", "b.example.com"}
+        assert allowed_host_patterns() == ["127.0.0.1", "b.example.com", "localhost", "nh.example.com"]
+        os.environ["NH_PUBLIC_HOSTS"] = ""
+        assert allowed_host_patterns() == ["127.0.0.1", "localhost"]
+    finally:
+        if old is None:
+            os.environ.pop("NH_PUBLIC_HOSTS", None)
+        else:
+            os.environ["NH_PUBLIC_HOSTS"] = old
 
 
 def test_조회는_Origin_을_가리지_않는다(client):

@@ -12,11 +12,21 @@ services:
       - nhdata:/data          # 키·토큰·전략·실행 기록. `docker compose down -v` 를 하면 지워진다.
     expose:
       - "8000"                # 같은 compose 망의 cloudflared 만 닿는다
+    environment:
+      # 앱이 받는 공개 주소(Host). 이게 아닌 Host 로 오는 요청은 400 으로 거절한다(DNS 리바인딩 막기). 예: nh.example.com
+      - "NH_PUBLIC_HOSTS=${NH_PUBLIC_HOSTS:?.env 에 NH_PUBLIC_HOSTS 를 넣어 주세요}"
     init: true
     stop_grace_period: 30s    # 끌 때 돌던 전략 실행에 중지를 요청하고 마무리하는 시간
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true           # 이미지 파일은 고칠 수 없다. 쓰는 곳은 볼륨(/data)과 /tmp 뿐
+    tmpfs:
+      - /tmp
 
   cloudflared:
-    image: cloudflare/cloudflared:2025.11.1
+    image: cloudflare/cloudflared:2026.10.7
     command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${TUNNEL_TOKEN:?.env 에 TUNNEL_TOKEN 을 넣어 주세요}

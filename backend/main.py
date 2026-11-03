@@ -23,6 +23,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 
 from backend.auth.auth_functions import AuthError, revoke_token
@@ -48,6 +49,7 @@ from backend.realtime.realtime_routes import router as stream_router
 from backend.sessions import service as session_service
 from backend.sessions.hours import KST, now_kst
 from backend.sessions.sessions_routes import router as session_router
+from backend.team_hosts import allowed_host_patterns  # 팀: 허용하는 Host 목록(DNS 리바인딩 막기)
 from backend.strategy import pump as strategy_pump
 from backend.strategy import service as strategy_service
 from backend.strategy import store as strategy_store
@@ -190,6 +192,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# 팀: 알지 못하는 Host 는 앱 전체(조회·운영자 라우트·웹소켓 포함)에서 400 으로 거절한다 — DNS 리바인딩 막기(`backend/team_hosts.py`).
+#     localhost·127.0.0.1(개발 서버 프록시도 127.0.0.1:8000 으로 보낸다)과 환경변수 `NH_PUBLIC_HOSTS` 의 공개 주소만 통과한다.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_host_patterns(), www_redirect=False)
 
 # 라우터는 아래쪽 `app.mount("/")` 보다 **먼저** 등록해야 합니다. 뒤에 등록하면
 # 프론트엔드 정적 파일이 `/` 를 차지한 뒤라 배포 모드에서 이 라우트가 가려집니다.

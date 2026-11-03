@@ -25,7 +25,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 # pyproject 의 [tool.uv] package = false — 프로젝트 자체는 설치하지 않고 의존성만 깐다.
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-dev
 
 # ---------------------------------------------------------------------------
 # 3) 실행 이미지
@@ -44,9 +44,10 @@ ENV TZ=Asia/Seoul \
     PYTHONDONTWRITEBYTECODE=1
 
 # 루트가 아닌 사용자. /data 를 이 사용자 소유로 만든 뒤 VOLUME 을 선언해야 새 볼륨이 같은 소유로 시작한다.
-RUN useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin app \
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /data --shell /usr/sbin/nologin app \
     && mkdir -p /data \
-    && chown app:app /data
+    && chown 10001:10001 /data
 VOLUME /data
 
 WORKDIR /app
@@ -60,6 +61,7 @@ USER app
 EXPOSE 8000
 
 # 밖(인터넷)에서 오는 요청은 cloudflared 컨테이너만 compose 내부망으로 보낸다 → 전달 머리글(--proxy-headers)을 믿는다.
+# 허용하는 Host 는 localhost·127.0.0.1 과 환경변수 NH_PUBLIC_HOSTS(공개 주소) 뿐이다(backend/team_hosts.py) — compose 가 넣는다.
 # 작업자 하나, reload 없음 — 전략 실행이 이 프로세스 안에서 돈다.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"]

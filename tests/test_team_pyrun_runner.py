@@ -251,3 +251,241 @@ def test_차트_줄에서_분봉을_만든다():
     assert m == Minute("20261030", "090000", 1331.6, 1331.7, 1331.0, 1331.2, 4594.0)
     assert minute_of({"ref_dt": "20261030", "exch_tm": "090000", "open_pric": "1", "high_pric": "1",
                       "low_pric": "1", "close_pric": "1", "cum_trd_qty": ""}).volume == 0.0
+
+
+# ---------------------------------------------------------------- 전략이 청산을 판단하는 약속 (exit_reason)
+class _Ask:
+    """`exit_reason` 이 받은 인자를 적고, `answer` 를 돌려준다."""
+
+    def __init__(self, answer=None):
+        self.answer, self.calls = answer, []
+
+    def __call__(self, clock, price, low, high, pos):
+        self.calls.append((clock, price, low, high, pos))
+        return self.answer(clock, price, low, high, pos) if callable(self.answer) else self.answer
+
+
+def _judge(tmp_path, broker, answer=None, side="buy"):
+    """보유 중인 실행기 + 청산 판단 함수를 가진 전략. 공통 규칙이 쓰였다면 걸릴 값(손절·익절·시간)을 깔아 둔다."""
+    r = _runner(tmp_path, broker, side=side)
+    exits = []
+    r.strat.target = 1336.0                         # 공통 규칙이면 익절에 걸림
+    r.strat.exit_reason = _Ask(answer)
+    r.strat.on_exit = lambda pnl, stopped: exits.append((pnl, stopped))
+    r.exits = exits
+    return r
+
+
+def test_청산_판단_함수가_있으면_공통_규칙을_쓰지_않는다(tmp_path):
+    b = FakeBroker(fill_px=1333.0)
+    r = _judge(tmp_path, b, answer=None)
+    r.on_price("100100", 1333.0, ref_low=1333.0, ref_high=1337.0)  # 공통이면 손절(1334.0)·익절 둘 다 걸림
+    r.on_price("120100", 1335.0)                                    # 공통이면 시간 청산(hold_min 120)
+    assert b.fills == [] and r.pos is not None and r.trades == []
+    assert len(r.strat.exit_reason.calls) == 2
+    assert r.snapshot()["time_exit_at"] is None                    # 시간 청산도 전략이 판단 — 앱은 시각을 짐작하지 않음
+
+
+def test_청산_판단이_손절이면_청산하고_on_exit_에_stopped(tmp_path):
+    b = FakeBroker(fill_px=1333.0)
+    r = _judge(tmp_path, b, answer="손절")
+    r.on_price("100100", 1333.5)
+    assert b.fills == [("sell", 1333.5, "100100", "청산 · 손절")]     # 기준가 = 지금 가격
+    assert r.pos is None and r.trades[0]["reason"] == "손절"
+    assert r.exits == [(-20000, True)]
+    r.strat.day = None                              # 하루 상태가 없으면 실행기가 센 손절 수
+    assert r.snapshot()["stops"] == 1
+
+
+def test_청산_판단은_기준가를_함께_돌려줄_수_있다(tmp_path):
+    b = FakeBroker(fill_px=1334.0)
+    r = _judge(tmp_path, b, answer=("손절", 1334.0))
+    r.on_price("100100", 1333.0, ref_low=1332.0, ref_high=1335.5)
+    assert b.fills == [("sell", 1334.0, "100100", "청산 · 손절")]
+    assert r.trades[0]["reason"] == "손절" and r.exits[0][1] is True
+
+
+def test_청산_판단에_넘기는_인자(tmp_path):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Sig:
+        side: str = "buy"
+        window: str = "서울"
+        range_low: float = 1334.2
+
+    b = FakeBroker(fill_px=1335.0)
+    r = _judge(tmp_path, b)
+    r.pos = None
+    sig = Sig()
+    r.pending = {"side": "buy", "stop_ticks": 5, "signal": "100000", "obj": sig}
+    r.on_price("100100", 1335.0)                                    # 진입 → 그 가격으로 바로 한 번 물어봄
+    r.on_price("100100", 1335.2, ref_low=1334.8, ref_high=1335.6)
+    (c1, p1, lo1, hi1, pos1), (c2, p2, lo2, hi2, pos2) = r.strat.exit_reason.calls
+    assert (c1, p1, lo1, hi1) == ("100100", 1335.0, None, None)    # 가격 하나면 low·high 는 None
+    assert (c2, p2, lo2, hi2) == ("100100", 1335.2, 1334.8, 1335.6)
+    assert pos2["signal"] is sig and pos2["window"] == "서울"
+    assert (pos2["side"], pos2["entry"], pos2["entry_time"], pos2["entry_date"]) == ("buy", 1335.0, "100100", "20261030")
+    assert pos2["stop"] == 1334.5 and pos2["signal_time"] == "100000"
+    pos2["side"] = "sell"                                           # 넘긴 것은 사본 — 실행기 보유는 그대로
+    assert r.pos["side"] == "buy" and "signal" not in r.pos
+
+
+@pytest.mark.parametrize("clock", ["153000", "153100"])
+def test_장_마감은_전략이_None_이어도_청산한다(tmp_path, clock):
+    b = FakeBroker(fill_px=1335.0)
+    r = _judge(tmp_path, b, answer=None)
+    r.on_price(clock, 1335.0)
+    assert r.trades[0]["reason"] == "장 마감 정리"
+    assert r.strat.exit_reason.calls == []                          # 마감은 앱이 먼저 — 전략에 묻지 않음
+
+
+def test_멈춘_실행은_청산_판단을_묻지도_않는다(tmp_path):
+    b = FakeBroker(fill_px=1333.0)
+    r = _judge(tmp_path, b, answer="손절")
+    r.halt("시험")
+    r.on_price("100100", 1333.0)
+    assert b.fills == [] and r.strat.exit_reason.calls == []
+
+
+def test_실행_끝_정리는_청산_판단과_상관없다(tmp_path):
+    b = FakeBroker(fill_px=1335.0)
+    r = _judge(tmp_path, b, answer=None)
+    r.on_price("100100", 1335.0)
+    r.force_flat("153000")
+    assert r.trades[0]["reason"] == "실행 종료 정리"
+
+
+def test_청산이_확인_안_되면_전략에_다시_묻지_않고_같은_사유로_다시_시도한다(tmp_path):
+    b = FakeBroker(fill_px=None, held=1)            # 청산 주문이 안 들어감(잔고 그대로)
+    answers = iter(["손절"])
+    r = _judge(tmp_path, b, answer=lambda *a: next(answers, None))
+    r.on_price("100100", 1333.0)
+    assert r.retry_after == "100110" and len(b.fills) == 1
+    r.on_price("100105", 1335.0)                    # 기다리는 동안은 묻지도 주문하지도 않음
+    assert len(b.fills) == 1 and len(r.strat.exit_reason.calls) == 1
+    b.fill_px = 1335.0
+    r.on_price("100110", 1335.0)                    # 전략은 이제 None 이지만 앞선 청산 결정을 다시 시도
+    assert b.fills[-1] == ("sell", 1335.0, "100110", "청산 · 손절")
+    assert len(r.strat.exit_reason.calls) == 1 and r.trades[0]["reason"] == "손절"
+
+
+@pytest.mark.parametrize("bad", ["", 3, ("손절",), ("손절", float("nan")), ("손절", "1334")])
+def test_청산_판단이_엉뚱한_값을_돌려주면_오류(tmp_path, bad):
+    r = _judge(tmp_path, FakeBroker(fill_px=1333.0), answer=bad)
+    with pytest.raises(TypeError, match="exit_reason"):
+        r.on_price("100100", 1333.0)
+    assert r.pos is not None and r.trades == []
+
+
+# ---------------------------------------------------------------- on_entry 인자 · minute 꼴 신호
+def test_on_entry_인자는_같은_이름의_신호_칸_값(tmp_path):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Sig:
+        window: str = "런던"
+        target_ticks: int = 7
+
+    got = []
+    r = _runner(tmp_path, FakeBroker(fill_px=1335.1))
+    r.pos = None
+    r.strat.on_entry = lambda window, target_ticks, extra="기본": got.append((window, target_ticks, extra))
+    r.pending = {"side": "buy", "stop_ticks": 5, "signal": "100000", "obj": Sig()}
+    r.on_price("100100", 1335.0)
+    assert got == [("런던", 7, "기본")]
+    assert r.pos["window"] == "런던"
+
+
+def test_on_entry_인자가_신호에_없으면_오류(tmp_path):
+    r = _runner(tmp_path, FakeBroker(fill_px=1335.1))
+    r.pos = None
+    r.strat.on_entry = lambda window: None
+    r.pending = {"side": "buy", "stop_ticks": 5, "signal": "100000", "obj": SimpleNamespace(side="buy")}
+    with pytest.raises(TypeError, match="on_entry 의 인자 window 와 같은 이름의 칸이 진입 신호에 없습니다"):
+        r.on_price("100100", 1335.0)
+
+
+def test_minute_꼴_신호를_기록하고_trade_에_window(tmp_path):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Sig:
+        minute: Minute
+        window: str
+        side: object
+        reason: str
+        range_high: float | None = None
+        range_low: float | None = None
+        stop_ticks: int | None = None
+        target_ticks: int | None = None
+        exit_by: str | None = None
+        flag: bool = True                          # 참거짓은 기록하지 않음
+        bad: float = float("nan")
+
+    m = Minute("20261030", "100400", 0.75, 0.7512, 0.7498, 0.7511, 30)
+    s = Sig(m, "서울", "buy", "서울 개장 범위 위로 돌파", 0.7505, 0.7489, 22, 16, "170000")
+    j = Journal(tmp_path / "journal.jsonl")
+    p = SimpleNamespace(entry_start="082500", entry_end="235000", flatten_at="235000", hold_min=120)
+    strat = SimpleNamespace(p=p, on_minute=lambda m: [s], exit_reason=lambda *a: "손절")
+    r = Runner(strat, j, PaperBroker(j, 0.0001, fee=2.0), 0.0001, 2.5)
+    r.live_date = "20261030"
+    r.on_minute_closed(m)
+    row = j.read()[-1]
+    assert row["kind"] == "signal"
+    assert (row["date"], row["bar"], row["clock"], row["close"]) == ("20261030", "100400", "100500", 0.7511)
+    assert (row["open"], row["high"], row["low"]) == (0.75, 0.7512, 0.7498)
+    assert (row["window"], row["range_high"], row["range_low"]) == ("서울", 0.7505, 0.7489)
+    assert (row["target_ticks"], row["exit_by"], row["stop_ticks"], row["side"]) == (16, "170000", 22, "buy")
+    assert "flag" not in row and "bad" not in row and "minute" not in row
+    assert r.pending["obj"] is s and r.pending["signal"] == "100500"
+    r.on_price("100500", 0.7511)
+    r.on_price("100600", 0.7490)
+    trade = [x for x in j.read() if x["kind"] == "trade"][0]
+    assert trade["window"] == "서울" and trade["reason"] == "손절"
+    assert r.trades[0]["window"] == "서울"
+
+
+def test_week02_꼴_trade_줄에는_window_가_없다(tmp_path):
+    _trades("strategy.py", tmp_path)
+    rows = [x for x in Journal(tmp_path / "journal.jsonl").read() if x["kind"] == "trade"]
+    assert rows and all("window" not in x for x in rows)
+
+
+def _orb_exit(clock, price, low, high, pos):
+    """week03 backtest.py ORB 청산 규칙을 옮긴 꼴(보고서의 스케치와 같음) — 기한은 그 분 시가에서, 손절은 범위 반대편 끝."""
+    sig, buy = pos["signal"], pos["side"] == "buy"
+    stop = sig.range_low if buy else sig.range_high
+    if low is None and clock >= sig.exit_by:
+        return "다음 개장 전 청산"
+    lo, hi = (price, price) if low is None else (low, high)
+    if (lo <= stop) if buy else (hi >= stop):
+        # 가격 하나(시가)면 그 가격, 범위면 손절가 = backtest 의 min(open, stop)/max(open, stop)
+        return ("손절", price if low is None else stop)
+    return None
+
+
+@pytest.mark.parametrize("bar, want", [
+    ((1334.5, 1334.6, 1333.8, 1334.0), ("100100", 1334.0)),     # 그 분 안에서 손절가를 지남 → 손절가
+    ((1333.5, 1333.6, 1333.0, 1333.2), ("100100", 1333.5)),     # 시가가 이미 손절가 밖 → 시가
+])
+def test_ORB_꼴_청산을_리플레이_순서로_재현한다(tmp_path, bar, want):
+    o, h, lo, c = bar
+    b = FakeBroker(fill_px=1333.0)
+    r = _runner(tmp_path, b)
+    r.strat.exit_reason = _orb_exit
+    r.entry_signal = SimpleNamespace(range_low=1334.0, range_high=1336.0, exit_by="170000")
+    r.on_price("100100", o)                         # replay: 그 분 시가
+    r.on_price("100100", c, ref_low=lo, ref_high=h)  # replay: 종가와 저가·고가
+    assert [(f[2], f[1]) for f in b.fills] == [want] and r.trades[0]["reason"] == "손절"
+
+
+def test_ORB_꼴_기한은_그_분_시가에서(tmp_path):
+    b = FakeBroker(fill_px=1335.0)
+    r = _runner(tmp_path, b)
+    r.strat.exit_reason = _orb_exit
+    r.entry_signal = SimpleNamespace(range_low=1330.0, range_high=1340.0, exit_by="113000")   # 시험 실행기의 마감은 15:30
+    r.on_price("112900", 1335.0, ref_low=1334.0, ref_high=1336.0)
+    assert b.fills == []
+    r.on_price("113000", 1335.2)
+    assert b.fills == [("sell", 1335.2, "113000", "청산 · 다음 개장 전 청산")]

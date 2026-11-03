@@ -1315,3 +1315,53 @@ def test_종이_실행에서_on_exit_가_예외면_거래는_하나뿐이고_두
     assert [t["reason"] for t in run.runner.trades] == ["손절"]
     assert [r["reason"] for r in journal(out) if r["kind"] == "trade"] == ["손절"]
     assert run.runner.pos is None
+
+
+def test_국내_실행은_Params_시간_칸이_없으면_시작_거부(tmp_path):
+    src = (STRATEGY_SRC.replace('    session_start: str = "090000"\n', "")
+           .replace('    entry_end: str = "150000"\n', ""))
+    src = src.replace("self.p.session_start <= m.time < self.p.session_end", "True")
+    folder = tmp_path / "strategies"
+    folder.mkdir()
+    (folder / "short.py").write_text(src, encoding="utf-8")
+    loaded = load(folder, "short.py")
+    assert loaded.params_missing == ("session_start", "entry_end")
+    fake = FakeApi()
+    out = tmp_path / "run"
+    run = LiveRun("20261103_fake_orders", out, loaded, RunSpec(file="short.py", mode="orders", sym=None),
+                  api_module=fake, now=lambda: at("085000"), sleep=lambda s: None)
+    with pytest.raises(StartRefused, match=r"Params 에 장 시간 칸이 없습니다 \(session_start, entry_end\)"):
+        run.prepare()
+    assert fake.calls == [] and fake.orders == []          # 조회도 주문도 하지 않고 거부
+    j = run_json(out)
+    assert j["state"] == "끝" and j["ended_reason"].startswith("시작 거부: Params 에 장 시간 칸이 없습니다")
+    run.step(at("090104"))
+    assert fake.orders == []
+
+
+def test_실시간_전략은_1분봉_실행으로_시작하지_않는다(tmp_path):
+    folder = tmp_path / "strategies"
+    folder.mkdir()
+    (folder / "engine.py").write_text('''
+from dataclasses import dataclass
+
+@dataclass
+class LiveParams:
+    flatten_at: str = "154000"
+
+class Engine:
+    def __init__(self, p: LiveParams):
+        self.p = p
+    def on_krx(self, price, now, hhmmss): return None
+    def on_quote(self, bid, ask, now, hhmmss): return None
+    def on_timer(self, now, hhmmss): return None
+    def filled_entry(self, side, price, now, hhmmss, ord_no=""): pass
+    def filled_exit(self, price, now, reason): return {}
+''', encoding="utf-8")
+    loaded = load(folder, "engine.py")
+    fake = FakeApi()
+    run = LiveRun("20261103_engine_orders", tmp_path / "run", loaded, RunSpec(file="engine.py", mode="paper", sym=None),
+                  api_module=fake, now=lambda: at("085000"), sleep=lambda s: None)
+    with pytest.raises(StartRefused, match="실시간 전략"):
+        run.prepare()
+    assert fake.calls == []

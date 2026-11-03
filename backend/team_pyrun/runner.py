@@ -8,7 +8,7 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
 
 - 익절 목표는 전략의 `target`, 없으면 `current_vwap`(week02 `runner.make_strategy` 가 VWAP 전략에 붙이던 것),
   둘 다 없으면 익절 없음(`target_of`). 틱·틱가치는 전략 파일의 `TICK`·`TICK_VALUE`(`Loaded`) 를 인자로 받습니다.
-- 전략의 `end_of_day`·`on_entry`·`on_exit` 는 없으면 건너뜁니다(`_hook`). 하루 손절 수(`day.stops`)가 없으면
+- 전략의 `end_of_day`·`on_entry`·`on_exit`·`exit_reason` 은 없으면 건너뜁니다(`_hook`). 하루 손절 수(`day.stops`)가 없으면
   화면의 손절 수는 이 실행기가 센 값 + 오늘 앞선 실행의 손절(`stops_before`)입니다.
 - `signal` 줄은 판정 봉마다 전부 남기고, 지표 칸은 그 봉의 숫자 칸을 모두 담습니다.
 - `trade` 줄에 `reason`·`exit_date` 가 있습니다(그날 손절 수 세기용).
@@ -20,11 +20,53 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
   두 이름이 없는 브로커(시험용 가짜)는 week02 처럼 잔고를 따릅니다.
 
 체결을 맡는 쪽은 `Broker` 입니다. 여기엔 종이 체결(`PaperBroker`) 만 있고, 모의계좌 체결은 따로 만듭니다.
+
+**전략이 청산을 판단하는 약속** (고를 수 있음 — 판단은 전략 파일이, 주문·안전·기록은 앱이)
+
+전략에 `exit_reason` 메서드가 있으면 보유 중에 가격이 들어올 때마다 앱이 묻고, 공통 청산 규칙(손절·익절·시간 청산)은
+쓰지 않습니다. 없으면 지금(week02) 그대로입니다.
+
+    exit_reason(clock, price, low, high, pos) -> None | "사유" | ("사유", 기준가)
+
+- `clock` HHMMSS · `price` 이번 가격. 리플레이는 한 분에 두 번 부릅니다: 그 분 시가(`low`·`high` 는 None),
+  다음에 종가와 그 분 저가·고가.
+- `low`·`high` 는 **가격 하나일 때 None** 입니다(장중 현재가, 리플레이의 시가). 그 분의 범위를 줄 때만 숫자입니다.
+  week02 의 손절이 「가격 하나면 그 가격, 범위면 손절가」로 체결가를 고르던 구분과 같습니다 — ORB 의
+  「손절가를 지나면 `min(시가, 손절가)`」 를 그대로 옮길 수 있게 둡니다.
+- `pos` 는 보유의 **사본**(바꿔도 실행기 보유는 그대로): `side` `entry` `entry_time` `entry_date` `signal_time`
+  `stop`(진입가 ∓ `stop_ticks` 틱) `stop_ticks` `signal`(진입 신호 객체, 모르면 None) `window`(진입 신호에 있으면).
+- 돌려주는 값: None 이면 들고 있음. 사유 문자열이면 지금 가격을 기준가로 청산. `(사유, 기준가)` 면 그 가격을
+  기준가로 청산 — 기준가는 종이 체결가(∓ 슬리피지)와 체결가를 못 받았을 때 기록할 가격이고, 모의 계좌의 실제 주문은
+  언제나 시장가입니다. 사유가 `"손절"` 이면 `on_exit(..., stopped=True)`. 그 밖의 값은 `TypeError`(장중이면 「오류」).
+
+앞서는 순서 (위가 먼저, 앞에 걸리면 전략에 묻지 않음)
+
+    | 순서 | 규칙 | 누가 |
+    | 1 | `halted`(멈춤) — 진입도 청산도 하지 않음 | 앱 |
+    | 2 | 청산 체결이 확인 안 돼 기다리는 중(`retry_after` 전) — 아무것도 안 함 | 앱 |
+    | 3 | `flatten_at` 이후 — 「장 마감 정리」 | 앱 |
+    | 4 | 앞서 정한 청산이 확인 안 됨 — 10초 뒤 **같은 사유로 다시** (전략에 다시 묻지 않음) | 앱 |
+    | 5 | `exit_reason` 이 돌려준 사유 | 전략 |
+    | 끝 | 실행 끝·중지·오류 정리(`force_flat`, 「실행 종료 정리」) — `on_price` 밖에서 언제나 | 앱 |
+
+  결과 모름·잔고 불일치(「확인 필요」)·주문 재전송 금지는 청산 주문을 내는 `_exit`·브로커가 그대로 맡습니다.
+
+**신호 꼴** — 신호에 `bar` 가 있으면 그것이 판정 봉(week02), 없고 `minute`(1분봉: `date` `time` `open` …)이
+있으면 그 1분봉이 판정 봉입니다. 1분봉이면 기록의 `bar` = 그 분 시작 시각, `clock` = 그 분이 끝난 시각(+1분).
+`signal` 줄에는 판정 봉의 숫자 지표 칸(소수 3자리)과 시가·고가·저가에 더해, **신호 자신의 숫자·문자 칸**(dataclass 칸,
+예: `window` `range_high` `range_low` `target_ticks` `exit_by`, 수는 소수 6자리)을 남깁니다. 예약 칸(`kind` `clock`
+`side` `reason` 등)·봉 칸 이름·참거짓·비유한수는 뺍니다.
+
+**`on_entry` 인자** — 매개변수가 없으면 `on_entry()`. 있으면 **이름이 같은 진입 신호 칸의 값**을 넘깁니다
+(ORB `on_entry(window)` ← 신호의 `window`). 신호에 없는 이름은 기본값이 있으면 기본값, 없으면 `TypeError`.
+`*args`·`**kwargs` 에는 아무것도 넘기지 않습니다. 진입 신호에 `window` 가 있으면 보유와 `trade` 줄에도 남깁니다
+(같은 날 다시 세운 실행이 개장마다 한 번 규칙을 이어받게).
 """
 from __future__ import annotations
 
+import inspect
 import math
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass
 from decimal import Decimal
 from typing import Protocol
 
@@ -39,6 +81,10 @@ _BAR_FIELDS = frozenset({"date", "start", "end", "open", "high", "low", "close",
 #: 익절 목표를 읽는 전략 이름, 이 순서로. 처음 있는 것을 쓴다.
 TARGET_NAMES = ("target", "current_vwap")
 _MISSING = object()
+#: 전략이 청산을 판단하는 메서드 이름(고를 수 있음). 있으면 공통 손절·익절·시간 청산 대신 쓴다 — 모듈 문서.
+EXIT_HOOK = "exit_reason"
+#: 신호 자신의 칸에서 뺄 이름 — 판정 봉 객체 칸.
+_BAR_HOLDERS = frozenset({"bar", "minute"})
 
 #: 신호 줄이 이미 쓰는 칸 이름 — 지표 칸이 같은 이름이면 `write` 가 오류를 내거나 값을 덮으므로 지표에서 뺀다.
 _SIGNAL_KEYS = frozenset({"kind", "at", "clock", "date", "bar", "close", "side", "reason", "stop_ticks"})
@@ -110,6 +156,83 @@ def _minutes_of(hhmmss: str) -> int:
     return int(hhmmss[:2]) * 60 + int(hhmmss[2:4])
 
 
+def _plus_minute(hhmmss: str) -> str:
+    """1분 뒤 HHMM00 (1분봉 시작 시각 → 그 분이 끝난 시각). 23:59 → 240000."""
+    t = _minutes_of(hhmmss) + 1
+    return f"{t // 60:02d}{t % 60:02d}00"
+
+
+def _decision_bar(signal: object) -> tuple[object, str, str]:
+    """신호의 판정 봉과 (시작, 끝) 시각. `bar` 가 있으면 그것(week02), 없으면 `minute`(1분봉 — 끝은 +1분)."""
+    b = getattr(signal, "bar", None)
+    if b is not None:
+        return b, b.start, b.end
+    m = getattr(signal, "minute", None)
+    if m is None:
+        raise TypeError("신호에 판정 봉(bar 또는 minute)이 없습니다")
+    return m, m.time, _plus_minute(m.time)
+
+
+def _signal_fields(signal: object) -> dict:
+    """신호 자신의 숫자·문자 칸(dataclass 면 그 칸, 아니면 속성). 예약 칸·봉 칸·참거짓·비유한수는 뺀다."""
+    if is_dataclass(signal) and not isinstance(signal, type):
+        items = [(f.name, getattr(signal, f.name, None)) for f in fields(signal)]
+    else:
+        items = list(getattr(signal, "__dict__", {}).items())
+    out: dict = {}
+    for k, v in items:
+        if not isinstance(k, str) or k in _SIGNAL_KEYS or k in _BAR_FIELDS or k in _BAR_HOLDERS:
+            continue
+        if isinstance(v, str):
+            out[k] = v
+        elif isinstance(v, int) and not isinstance(v, bool):
+            out[k] = v
+        elif isinstance(v, float) and math.isfinite(v):
+            out[k] = round(v, 6)
+    return out
+
+
+def _exit_answer(got: object, price: float) -> tuple[str, float] | None:
+    """`exit_reason` 의 답을 (사유, 기준가) 로. None 이면 들고 있음. 약속에 없는 값은 `TypeError`."""
+    if got is None:
+        return None
+    if isinstance(got, str) and got:
+        return got, price
+    if (isinstance(got, tuple) and len(got) == 2 and isinstance(got[0], str) and got[0]
+            and isinstance(got[1], (int, float)) and not isinstance(got[1], bool)
+            and math.isfinite(got[1]) and got[1] > 0):
+        return got[0], float(got[1])
+    raise TypeError(f"{EXIT_HOOK} 은 None·사유 문자열·(사유, 기준가) 중 하나를 돌려줘야 합니다: {got!r}")
+
+
+def _entry_args(fn, signal: object) -> tuple[list, dict]:
+    """`on_entry` 에 넘길 값 — 매개변수 이름과 같은 진입 신호 칸의 값(모듈 문서). 위치 전용 인자는 앞에서부터."""
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):     # 서명을 못 읽는 것(내장 함수 등)은 인자 없이
+        return [], {}
+    args: list = []
+    kwargs: dict = {}
+    positional_open = True
+    for p in params:
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            continue
+        if signal is None or not hasattr(signal, p.name):
+            if p.default is p.empty:
+                raise TypeError(f"on_entry 의 인자 {p.name} 와 같은 이름의 칸이 진입 신호에 없습니다")
+            if p.kind is p.POSITIONAL_ONLY:
+                positional_open = False     # 뒤의 위치 전용 인자도 기본값으로 둔다
+            continue
+        value = getattr(signal, p.name)
+        if p.kind is p.POSITIONAL_ONLY:
+            if not positional_open:
+                raise TypeError(f"on_entry 의 위치 전용 인자 {p.name} 앞의 인자가 진입 신호에 없습니다")
+            args.append(value)
+        else:
+            kwargs[p.name] = value
+    return args, kwargs
+
+
 def _won(x: float) -> float | int:
     """원 단위가 딱 떨어지면 정수로(JSON 에 19000.0 대신 19000)."""
     return int(x) if float(x).is_integer() else x
@@ -176,6 +299,8 @@ class Runner:
         self.halted: str | None = None        # 멈춘 까닭. 있으면 진입·청산 모두 안 함
         self.last_signal: dict | None = None  # 마지막 판정 봉의 신호 줄
         self.stops_before = 0                 # 오늘 앞선 실행의 손절 수 — 전략에 `day` 가 없을 때 화면의 손절 수에 더한다
+        self.entry_signal: object | None = None  # 보유의 진입 신호 객체 — `exit_reason` 의 pos["signal"]
+        self.retry_reason: str | None = None  # 확인 안 된 청산의 사유 — 전략이 판단하는 청산은 이 사유로 다시 시도
 
     # ---- 시세 넣기
     def feed(self, m: Minute) -> list:
@@ -195,18 +320,20 @@ class Runner:
 
     def on_minute_closed(self, m: Minute) -> None:
         for s in self.feed(m):
-            b = s.bar
-            fields = asdict(b) if is_dataclass(b) else dict(vars(b))
-            ind = {k: round(v, 3) for k, v in fields.items()
+            b, start, end = _decision_bar(s)        # week02 는 `bar`, 1분봉 신호(ORB)는 `minute`
+            bar_fields = asdict(b) if is_dataclass(b) else dict(vars(b))
+            ind = {k: round(v, 3) for k, v in bar_fields.items()
                    if k not in _BAR_FIELDS and k not in _SIGNAL_KEYS and isinstance(k, str)
                    and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)}
             # 차트가 봉을 그리도록 시가·고가·저가도 남긴다(종가는 원래 있음). 지표 칸에서는 빠지는 이름이라 겹치지 않는다
-            ohlc = {k: round(v, 4) for k in ("open", "high", "low") if isinstance(v := fields.get(k), (int, float))
+            ohlc = {k: round(v, 4) for k in ("open", "high", "low") if isinstance(v := bar_fields.get(k), (int, float))
                     and not isinstance(v, bool) and math.isfinite(v)}
-            self.last_signal = self.j.write("signal", clock=b.end, date=b.date, bar=b.start, close=b.close,
-                                            side=s.side, reason=s.reason, stop_ticks=s.stop_ticks, **ohlc, **ind)
+            # 신호 자신의 칸(ORB 의 window·range_high 등). 봉 지표와 이름이 같으면 신호 칸이 이긴다
+            extra = {**ind, **_signal_fields(s)}
+            self.last_signal = self.j.write("signal", clock=end, date=b.date, bar=start, close=b.close,
+                                            side=s.side, reason=s.reason, stop_ticks=s.stop_ticks, **ohlc, **extra)
             if s.side and self.pos is None and self.pending is None and b.date == self.live_date:
-                self.pending = {"side": s.side, "stop_ticks": s.stop_ticks, "signal": b.end}
+                self.pending = {"side": s.side, "stop_ticks": s.stop_ticks, "signal": end, "obj": s}
 
     def on_price(self, clock: str, price: float, ref_low: float | None = None, ref_high: float | None = None) -> None:
         """가격 한 번. ref_low/high 는 다시 돌리기에서 그 사이 가격 범위를 줄 때 씁니다."""
@@ -222,6 +349,10 @@ class Runner:
             self.pending = None
         if self.halted or self.pos is None or clock < self.retry_after:
             return
+        judge = getattr(self.strat, EXIT_HOOK, None)
+        if judge is not None:       # 전략이 청산을 판단한다 — 공통 손절·익절·시간 청산은 쓰지 않음
+            self._judged_exit(judge, clock, price, ref_low, ref_high)
+            return
         side, pos = self.pos["side"], self.pos
         target = target_of(self.strat)
         if clock >= self.p.flatten_at:
@@ -236,6 +367,26 @@ class Runner:
             self._exit(clock, min(price, tp) if ref_low is None else tp, "익절")
         elif _minutes_of(clock) - _minutes_of(pos["entry_time"]) >= self.p.hold_min:
             self._exit(clock, price, "시간 청산")
+
+    def _judged_exit(self, judge, clock: str, price: float, ref_low: float | None, ref_high: float | None) -> None:
+        """전략의 `exit_reason` 으로 청산할지 정한다. 앱의 안전 규칙이 먼저다(모듈 문서의 순서 3·4)."""
+        if clock >= self.p.flatten_at:
+            self._exit(clock, price, "장 마감 정리")
+            return
+        if self.retry_reason is not None:   # 앞서 정한 청산이 확인 안 됨 — 결정을 되묻지 않고 같은 사유로 다시
+            self._exit(clock, price, self.retry_reason)
+            return
+        got = _exit_answer(judge(clock, price, ref_low, ref_high, self._pos_view()), price)
+        if got is not None:
+            reason, ref = got
+            self._exit(clock, ref, reason)
+
+    def _pos_view(self) -> dict:
+        """`exit_reason` 에 넘기는 보유의 사본 — 진입 날짜와 진입 신호 객체를 더한다."""
+        view = dict(self.pos)
+        view.setdefault("entry_date", self.live_date)
+        view["signal"] = self.entry_signal
+        return view
 
     # ---- 진입·청산
     def _enter(self, clock: str, price: float) -> None:
@@ -258,7 +409,15 @@ class Runner:
         self.pos = {"side": e["side"], "entry": px, "entry_time": clock, "signal_time": e["signal"],
                     "stop_ticks": e["stop_ticks"], "stop": stop_price(e["side"], px, e["stop_ticks"], self.tick),
                     "entry_fee": getattr(self.broker, "last_fill_fee", None)}
-        self._hook("on_entry")
+        sig = e.get("obj")
+        window = getattr(sig, "window", None)
+        if isinstance(window, (str, int)) and not isinstance(window, bool):
+            self.pos["window"] = window     # trade 줄에 남겨 같은 날 다시 세운 실행이 이어받게
+        self.entry_signal = sig
+        fn = getattr(self.strat, "on_entry", None)
+        if fn is not None:
+            args, kwargs = _entry_args(fn, sig)
+            fn(*args, **kwargs)
         self.j.write("event", clock=clock, text=f"진입 {e['side']} {px} · 손절 {self.pos['stop']} ({e['stop_ticks']}틱)")
 
     def _exit(self, clock: str, ref: float, reason: str) -> None:
@@ -276,6 +435,7 @@ class Runner:
             elif held is not None and held == self.expected_position():
                 sec = int(clock[:2]) * 3600 + int(clock[2:4]) * 60 + int(clock[4:6]) + RETRY_SECONDS
                 self.retry_after = f"{sec // 3600:02d}{sec % 3600 // 60:02d}{sec % 60:02d}"
+                self.retry_reason = reason
                 self.j.write("event", clock=clock,
                              text=f"청산 안 됨 ({reason}) · 잔고 {held:+d} — {RETRY_SECONDS}초쯤 뒤 다시 시도")
                 return
@@ -294,16 +454,21 @@ class Runner:
              "entry_date": self.live_date, "exit_date": self.live_date}
         self.trades.append(t)
         fee_txt = "" if fee is None else f" · 수수료 {fee:,.0f}원 → {t['pnl_after_fee']:+,.0f}원"
-        self.j.write("trade", clock=clock, text=f"{reason} {ticks:+d}틱 ({pnl:+,}원){fee_txt}",
-                     **{k: t[k] for k in ("side", "entry", "exit", "entry_time", "exit_time", "ticks", "pnl",
-                                          "fee", "pnl_after_fee", "reason", "exit_date")})
+        row = {k: t[k] for k in ("side", "entry", "exit", "entry_time", "exit_time", "ticks", "pnl",
+                                 "fee", "pnl_after_fee", "reason", "exit_date")}
+        if "window" in t:
+            row["window"] = t["window"]
+        self.j.write("trade", clock=clock, text=f"{reason} {ticks:+d}틱 ({pnl:+,}원){fee_txt}", **row)
         # 보유를 먼저 비운다 — 전략의 on_exit 가 예외를 내도 끝내기 정리가 이미 닫은 보유를 또 닫지 않게
         self.pos = None
         self.retry_after = ""
+        self.retry_reason = None
+        self.entry_signal = None
         self._hook("on_exit", pnl, stopped=reason == "손절")
 
     def _hook(self, name: str, *args, **kwargs) -> None:
-        """전략의 고를 수 있는 메서드(`end_of_day` `on_entry` `on_exit`)를 부른다. 없으면 아무것도 하지 않는다."""
+        """전략의 고를 수 있는 메서드(`end_of_day` `on_exit`)를 부른다. 없으면 아무것도 하지 않는다.
+        (`on_entry` 는 신호 칸을 넘기므로 `_enter` 가 따로 부른다.)"""
         fn = getattr(self.strat, name, None)
         if fn is not None:
             fn(*args, **kwargs)
@@ -350,7 +515,7 @@ class Runner:
         own_stops = sum(1 for t in day if t["reason"] == "손절") + self.stops_before
         day_stops = getattr(getattr(self.strat, "day", None), "stops", None)
         time_exit = None
-        if pos is not None:
+        if pos is not None and getattr(self.strat, EXIT_HOOK, None) is None:   # 전략이 청산을 판단하면 앱의 시간 청산은 없다
             m = _minutes_of(pos["entry_time"]) + self.p.hold_min
             time_exit = f"{m // 60:02d}{m % 60:02d}00"
         return {

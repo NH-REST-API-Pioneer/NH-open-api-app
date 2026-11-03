@@ -25,6 +25,23 @@ week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 �
 
 지켜야 할 약속(전략 클래스 하나, dataclass `Params` 와 필수 칸, 전략 인스턴스의 `on_minute`·`p`)은 불러올 때
 한 번에 검사하고, 빠진 이름을 메시지에 모두 적습니다. 작성 규칙은 `docs/team/strategy-file-convention.md`.
+
+**실행기 종류(`Loaded.kind`)** — 전략 클래스에 `on_minute` 이 있으면 `"minute"`(1분봉 실행기), `on_krx`·`on_quote`
+가 있으면 `"realtime"`(실시간 실행기), 둘 다면 `LoadError`. 실시간 전략의 필수 이름은 `on_krx` `on_quote`
+`on_timer` `filled_entry` `filled_exit` `p` 이고, Params 는 `Params` 또는 `LiveParams`(dataclass — 찾는 순서는
+`_params_class` 와 같음)입니다. 실시간 전략엔 필수 Params 칸이 없습니다. 틱 가치는 `TICK_VALUE`, 없으면 `TICK_USD`.
+
+**Params 시간 칸 채우기** — 1분봉 실행기가 읽는 6칸(`REQUIRED_PARAMS`) 중 장 시간 5칸(`SCHEDULE_PARAMS`)은
+없어도 불러옵니다. 빠진 칸은 `Loaded.params_missing` 에 적고, 실행을 시작할 때 시장(`markets.Market`)으로
+`Loaded.new(market)` 가 채웁니다(`fill_params`). 채우는 값:
+
+    session_start = entry_start = 시장 장 시작 (국내 090000, 해외 082500)
+    flatten_at    = Params 의 flatten_at, 없으면 시장 기본 (국내 153000, 해외 235000)
+    entry_end     = 위 flatten_at (청산 시각까지 진입 가능 — 진입 판단은 전략이 함)
+    session_end   = 시장 실행 끝 (국내 153100, 해외 235500)
+
+`hold_min` 은 시장이 채우지 않습니다(없으면 `LoadError`). 채우기 전(시장 없이 `new()`)에는 Params 그대로입니다 —
+칸을 지어내지 않습니다. 국내 1분봉 실행은 빠진 칸이 있으면 시작을 거부합니다(`live.prepare`).
 파일 하나가 잘못돼도 앱이나 다른 실행에는 번지지 않습니다(`LoadError` 로만 알림).
 """
 from __future__ import annotations
@@ -44,16 +61,29 @@ from types import ModuleType
 from typing import Any
 
 from backend import config
-from backend.team_pyrun.runner import TARGET_NAMES
+from backend.team_pyrun.markets import Market
+from backend.team_pyrun.runner import EXIT_HOOK, TARGET_NAMES
 
-#: 전략 파라미터(`Params`) 필수 칸.
+#: 1분봉 전략 파라미터(`Params`) 칸 — 1분봉 실행기가 읽는 것. 이 중 `SCHEDULE_PARAMS` 는 없으면 시장이 채운다.
 REQUIRED_PARAMS = ("session_start", "session_end", "entry_start", "entry_end", "flatten_at", "hold_min")
-#: 전략 인스턴스 필수 이름. `end_of_day`·`on_entry`·`on_exit`·`day`·`target` 은 없어도 된다(실행기가 건너뜀).
+#: 없어도 되는 장 시간 칸 — 실행을 시작할 때 시장 시간표로 채운다(모듈 문서).
+SCHEDULE_PARAMS = ("session_start", "session_end", "entry_start", "entry_end", "flatten_at")
+#: Params 에 `flatten_at` 도 없을 때 시장마다 쓰는 청산 시각(국내는 week02 전략 값, 해외는 ORB 23:50).
+DEFAULT_FLATTEN = {"domestic": "153000", "overseas": "235000"}
+#: 1분봉 전략 인스턴스 필수 이름. `end_of_day`·`on_entry`·`on_exit`·`exit_reason`·`day`·`target` 은 없어도 된다.
 REQUIRED_INSTANCE = ("on_minute", "p")
+#: 실시간 전략 인스턴스 필수 이름(leadlag `Engine` 꼴). `pending`·`pos`·`stops` 는 있으면 화면에 쓴다.
+REQUIRED_REALTIME = ("on_krx", "on_quote", "on_timer", "filled_entry", "filled_exit", "p")
+#: 실시간 전략임을 알아보는 메서드 — 하나라도 있으면 실시간.
+REALTIME_METHODS = ("on_krx", "on_quote")
+#: 실행기 종류마다 찾는 Params 클래스 이름, 이 순서로.
+PARAMS_NAMES = {"minute": ("Params",), "realtime": ("Params", "LiveParams")}
 #: `TICK`·`TICK_VALUE` 가 없을 때 쓰는 값 — 미국달러선물(틱 0.1원 = 1,000원).
 DEFAULT_TICK, DEFAULT_TICK_VALUE = 0.1, 1000
-#: 익절 목표가 없을 때 목록에 남기는 알림(오류가 아님).
+#: 익절 목표가 없을 때 목록에 남기는 알림(오류가 아님). 청산 판단 함수(`exit_reason`)가 있으면 남기지 않는다.
 NO_TARGET_NOTE = "target·current_vwap 이 없어 익절 없이 돕니다"
+#: 장 시간 칸이 빠졌을 때 목록에 남기는 알림(오류가 아님).
+SCHEDULE_NOTE = "Params 에 없는 시간 칸({names})은 해외 실행을 시작할 때 시장 시간표로 채웁니다 (국내 실행은 이 칸이 있어야 합니다)"
 #: 기본 공용 모듈 폴더. 폴더에 같은 이름 파일이 없을 때만 쓰인다(`sys.path` 에서 전략 폴더 다음).
 BUILTIN_DIR = Path(__file__).resolve().parent / "builtin"
 
@@ -92,9 +122,34 @@ class Loaded:
     params_cls: type
     tick: float
     tick_value: float
+    kind: str = "minute"                        # "minute"(1분봉) | "realtime"(실시간)
+    params_missing: tuple[str, ...] = ()        # Params 에 없는 장 시간 칸 — `new(market)` 가 채운다
 
-    def new(self) -> object:
-        return self.strategy_cls(self.params_cls())
+    def new(self, market: Market | None = None) -> object:
+        """새 전략 인스턴스. `market` 을 주면 빠진 장 시간 칸을 그 시장 값으로 채운 Params 로 만든다."""
+        cls = self.params_cls if market is None else fill_params(self.params_cls, self.params_missing, market)
+        return self.strategy_cls(cls())
+
+
+def schedule_values(params: object, missing: tuple[str, ...], market: Market) -> dict[str, str]:
+    """빠진 장 시간 칸에 넣을 값(모듈 문서의 표). `params` 는 그 Params 의 기본 인스턴스."""
+    flatten = DEFAULT_FLATTEN[market.id] if "flatten_at" in missing else str(params.flatten_at)
+    values = {"session_start": market.session_start, "entry_start": market.session_start,
+              "entry_end": flatten, "flatten_at": flatten, "session_end": market.end_time}
+    return {n: values[n] for n in missing}
+
+
+def fill_params(params_cls: type, missing: tuple[str, ...], market: Market) -> type:
+    """빠진 칸을 기본값으로 더한 Params 하위 클래스(같은 이름·같은 frozen). 빠진 칸이 없으면 그대로.
+
+    하위 클래스라서 `isinstance` 와 전략의 다른 칸은 그대로이고, `asdict` 로 남기는 기록에도 채운 값이 보인다."""
+    if not missing:
+        return params_cls
+    values = schedule_values(params_cls(), missing, market)
+    frozen = params_cls.__dataclass_params__.frozen    # 부모와 frozen 이 다르면 dataclass 가 상속을 거부한다
+    return dataclasses.make_dataclass(
+        params_cls.__name__, [(n, str, field(default=v)) for n, v in values.items()],
+        bases=(params_cls,), frozen=frozen, module=params_cls.__module__)
 
 
 def strategies_dir() -> Path:
@@ -154,30 +209,43 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
             sys.modules.update(saved_mods)
 
 
-def _candidates(module: ModuleType) -> list[type]:
-    """그 파일에서 정의한(`__module__` 이 그 모듈인) 클래스 중 `on_minute` 을 부를 수 있는 것, 정의 순서대로.
+def _has_any(cls: type, names: tuple[str, ...]) -> bool:
+    return any(callable(getattr(cls, n, None)) for n in names)
 
-    `from strategy import …` 로 가져온 클래스는 세지 않는다."""
+
+def _candidates(module: ModuleType) -> list[type]:
+    """그 파일에서 정의한(`__module__` 이 그 모듈인) 클래스 중 `on_minute`(1분봉) 또는 `on_krx`·`on_quote`(실시간)를
+    부를 수 있는 것, 정의 순서대로. `from strategy import …` 로 가져온 클래스는 세지 않는다."""
     out: list[type] = []
     for value in vars(module).values():
         if (isinstance(value, type) and value.__module__ == module.__name__
-                and callable(getattr(value, "on_minute", None)) and value not in out):
+                and _has_any(value, ("on_minute", *REALTIME_METHODS)) and value not in out):
             out.append(value)
     return out
 
 
+def _kind(strategy_cls: type) -> str:
+    """실행기 종류. `on_minute` 이면 1분봉, `on_krx`·`on_quote` 면 실시간, 둘 다면 `LoadError`.
+    둘 다 없으면(`STRATEGY` 로 고른 클래스) 1분봉으로 보고 필수 이름 검사가 빠진 것을 알린다."""
+    minute = callable(getattr(strategy_cls, "on_minute", None))
+    realtime = _has_any(strategy_cls, REALTIME_METHODS)
+    if minute and realtime:
+        raise LoadError("on_minute(1분봉)과 on_krx·on_quote(실시간)를 한 전략 클래스에 함께 둘 수 없습니다 — 하나만 고르세요")
+    return "realtime" if realtime else "minute"
+
+
 def _is_strategy(module: ModuleType) -> bool:
-    """전략 파일인가 — `STRATEGY` 가 있거나 `on_minute` 클래스를 정의했다. 아니면 공용 모듈."""
+    """전략 파일인가 — `STRATEGY` 가 있거나 `on_minute`(또는 실시간 `on_krx`·`on_quote`) 클래스를 정의했다. 아니면 공용 모듈."""
     return hasattr(module, "STRATEGY") or bool(_candidates(module))
 
 
 def _strategy_class(module: ModuleType) -> type:
-    """`STRATEGY` 가 있으면 그것, 없으면 그 파일의 `on_minute` 클래스 하나. 없거나 여럿이면 `LoadError`."""
+    """`STRATEGY` 가 있으면 그것, 없으면 그 파일의 전략 클래스(`_candidates`) 하나. 없거나 여럿이면 `LoadError`."""
     if hasattr(module, "STRATEGY"):
         return module.STRATEGY
     found = _candidates(module)
     if not found:
-        raise LoadError("on_minute 이 있는 전략 클래스가 없습니다")
+        raise LoadError("on_minute 이 있는 전략 클래스가 없습니다 (실시간 전략은 on_krx·on_quote)")
     if len(found) > 1:
         names = ", ".join(c.__name__ for c in found)
         raise LoadError(f"전략 클래스가 여러 개입니다 ({names}) — 파일 끝에 「STRATEGY = {found[0].__name__}」 처럼 하나를 고르세요")
@@ -195,25 +263,28 @@ def _first_arg_type(strategy_cls: type) -> object:
     return params[1].annotation
 
 
-def _params_class(module: ModuleType, strategy_cls: type) -> type:
+def _params_class(module: ModuleType, strategy_cls: type, names: tuple[str, ...] = ("Params",)) -> type:
     """Params 클래스를 이 순서로 찾는다(모두 dataclass 여야 한다). 못 찾으면 `LoadError`.
 
-    1. 이 파일에서 정의한 `Params`
+    1. 이 파일에서 정의한 `Params` (실시간 전략은 그다음 `LiveParams` — `names` 순서)
     2. 전략 `__init__` 첫 인자의 주석
     3. 가져온 `Params`(예: `from strategy import Params`) — 파일이 자기 Params 를 주석으로 밝혔는데
        가져온 것이 먼저 잡혀 엉뚱한 값으로 도는 일이 없게 마지막에 본다."""
     def ok(candidate: object) -> bool:
         return isinstance(candidate, type) and dataclasses.is_dataclass(candidate)
 
-    own = getattr(module, "Params", None)
-    if ok(own) and own.__module__ == module.__name__:
-        return own
+    found = [getattr(module, n, None) for n in names]
+    for own in found:
+        if ok(own) and own.__module__ == module.__name__:
+            return own
     annotated = _first_arg_type(strategy_cls)
     if ok(annotated):
         return annotated
-    if ok(own):
-        return own
-    raise LoadError("Params(dataclass) 를 찾지 못했습니다")
+    for own in found:
+        if ok(own):
+            return own
+    what = "·".join(names)
+    raise LoadError(f"{what}(dataclass) 를 찾지 못했습니다")
 
 
 def _first_line(doc: object) -> str | None:
@@ -247,6 +318,8 @@ class _Checked:
     tick: float
     tick_value: float
     notes: list[str]
+    kind: str
+    params_missing: tuple[str, ...]
 
 
 def _check(module: ModuleType, file: str) -> _Checked:
@@ -266,28 +339,39 @@ def _check(module: ModuleType, file: str) -> _Checked:
                  or getattr(strategy_cls, "__name__", name))
     try:
         tick = float(getattr(module, "TICK", DEFAULT_TICK))
-        tick_value = float(getattr(module, "TICK_VALUE", DEFAULT_TICK_VALUE))
+        # 틱 가치: TICK_VALUE, 없으면 TICK_USD(leadlag), 둘 다 없으면 미국달러선물 값
+        tick_value = float(getattr(module, "TICK_VALUE", getattr(module, "TICK_USD", DEFAULT_TICK_VALUE)))
     except (TypeError, ValueError) as e:
         raise LoadError(f"TICK·TICK_VALUE 는 숫자여야 합니다: {e}") from e
-    params_cls = _params_class(module, strategy_cls)
+    kind = _kind(strategy_cls)
+    params_cls = _params_class(module, strategy_cls, PARAMS_NAMES[kind])
+    notes: list[str] = []
     try:
         params = params_cls()
-        params_missing = [n for n in REQUIRED_PARAMS if not hasattr(params, n)]
-        if params_missing:
-            raise LoadError("Params 에 없는 이름: " + ", ".join(params_missing))
+        absent: tuple[str, ...] = ()
+        if kind == "minute":
+            absent = tuple(n for n in REQUIRED_PARAMS if not hasattr(params, n))
+            hard = [n for n in absent if n not in SCHEDULE_PARAMS]     # 시장이 채우지 못하는 칸
+            if hard:
+                raise LoadError("Params 에 없는 이름: " + ", ".join(hard))
         instance = strategy_cls(params)
-        inst_missing = [n for n in REQUIRED_INSTANCE if not hasattr(instance, n)]
+        required = REQUIRED_INSTANCE if kind == "minute" else REQUIRED_REALTIME
+        inst_missing = [n for n in required if not hasattr(instance, n)]
         if inst_missing:
             raise LoadError("전략에 없는 이름: " + ", ".join(inst_missing))
-        if not callable(instance.on_minute):
-            raise LoadError("on_minute 은 부를 수 있는 메서드여야 합니다")
-        has_target = any(hasattr(instance, n) for n in TARGET_NAMES)
+        if kind == "minute":
+            if not callable(instance.on_minute):
+                raise LoadError("on_minute 은 부를 수 있는 메서드여야 합니다")
+            # 청산을 전략이 판단하면 앱의 익절 규칙을 쓰지 않으므로 익절 목표 알림이 필요 없다
+            if not any(hasattr(instance, n) for n in (*TARGET_NAMES, EXIT_HOOK)):
+                notes.append(NO_TARGET_NOTE)
+            if absent:
+                notes.append(SCHEDULE_NOTE.format(names=", ".join(absent)))
     except LoadError:
         raise
     except Exception as e:
         raise LoadError(f"{type(e).__name__}: {e}") from e
-    notes = [] if has_target else [NO_TARGET_NOTE]
-    return _Checked(strategy_cls, params_cls, instance, name, title, tick, tick_value, notes)
+    return _Checked(strategy_cls, params_cls, instance, name, title, tick, tick_value, notes, kind, absent)
 
 
 def load(folder: Path, file: str) -> Loaded:
@@ -303,13 +387,15 @@ def load(folder: Path, file: str) -> Loaded:
         params_cls=c.params_cls,
         tick=c.tick,
         tick_value=c.tick_value,
+        kind=c.kind,
+        params_missing=c.params_missing,
     )
 
 
 def scan_all(folder: Path) -> tuple[list[StrategyFile], list[str]]:
     """폴더의 `*.py` 를 한 번 훑어 (전략 목록, 공용 모듈 이름들)을 돌려준다. 파일마다 한 번만 불러온다.
 
-    전략 목록은 전략 파일(`STRATEGY` 가 있거나 `on_minute` 클래스를 정의한 파일)이거나 불러오기에 실패한 파일
+    전략 목록은 전략 파일(`STRATEGY` 가 있거나 `on_minute`·`on_krx`·`on_quote` 클래스를 정의한 파일)이거나 불러오기에 실패한 파일
     (파일 이름순). 공용 모듈은 오류 없이 불러와지지만 전략 파일이 아닌 것(이름순) — 전략 파일이
     `from strategy import …` 처럼 불러 쓰는 공용 코드다. 기본 공용 모듈(`builtin/`)은 어느 쪽에도 없다.
     """

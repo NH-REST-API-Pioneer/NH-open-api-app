@@ -15,6 +15,8 @@
 week02 와 다른 점
 
 - 시작할 때 이 종목 잔고가 있으면 **정리하지 않고 시작을 거부**합니다(누구의 잔고인지 모르므로).
+- 실시간 전략(`Loaded.kind == "realtime"`)이나, Params 에 장 시간 칸이 빠진 전략(`Loaded.params_missing`)은
+  조회·주문 없이 시작을 거부합니다 — 시장 시간표로 칸을 채우는 것은 해외 실행에서 합니다.
 - 전략 파일의 sha256 과 Params 를 처음 기록에 남깁니다.
 - 계좌 잔고를 대조해 실행이 아는 보유와 다르면 **주문을 멈추고 「확인 필요」**로 둡니다: 보유 중 30초마다,
   보유가 바뀌고 5초 뒤, 체결을 못 받은 주문 바로 뒤. 결과를 모르는 주문이 있었으면 보유가 없어도 30초마다.
@@ -153,6 +155,13 @@ class LiveRun:
         j, api, loaded, r = self.j, self.api, self.loaded, self.runner
         today, clock = now.strftime("%Y%m%d"), now.strftime("%H%M%S")
         self._today = today
+        # 0. 이 실행기로 돌릴 수 있는 전략인가 — 조회·주문 전에 거부
+        if loaded.kind != "minute":
+            raise StartRefused("실시간 전략(on_krx·on_quote)은 1분봉 실행으로 시작할 수 없습니다")
+        if loaded.params_missing:
+            # 빠진 칸을 시장 시간표로 채우는 것은 해외 실행부터 — 국내는 week02 처럼 Params 에 적힌 칸으로만 돈다
+            raise StartRefused(f"Params 에 장 시간 칸이 없습니다 ({', '.join(loaded.params_missing)}) — "
+                               "국내 1분봉 실행은 이 칸을 Params 에 적어야 합니다")
         # 1. 어디로·무엇을
         j.write("event", text=f"서버 paper · 주문 {'모의계좌' if self.orders else '종이'}")
         j.write("event", text=f"전략 {loaded.file} · sha256 {loaded.sha256[:12]} · Params {asdict(r.p)}")

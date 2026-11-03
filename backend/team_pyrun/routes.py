@@ -1,6 +1,8 @@
 """파이썬 전략 실행 라우트 — `/api/team/pyrun/...`.
 
     GET  /strategies · POST /strategies/reload   전략 폴더의 파일 목록(읽을 때마다 폴더를 다시 본다)
+    POST /strategies                             전략 파일 올리기 `{file, content, overwrite}` → 201 목록(같은 이름은 409, 이름·크기는 400)
+    DELETE /strategies/{file}                    전략 파일 지우기 → 200 목록(없으면 404)
     GET  /runs · POST /runs                      실행 목록 / 시작(거부는 409 `{"detail": 거부 문장}`)
     GET  /runs/{id}                              도는 실행은 `status()`, 끝난 실행은 `run.json` + 요약
     GET  /runs/{id}/journal · /api-log           `?after=N` 이어 읽기 → `{"rows": […], "next": 줄 수}`
@@ -28,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from backend.nh_api import client as nh_client
-from backend.team_pyrun import apilog
+from backend.team_pyrun import apilog, strategy_files
 from backend.team_pyrun.journal import Journal
 from backend.team_pyrun.live import RunSpec, StartRefused
 from backend.team_pyrun.loader import scan
@@ -115,6 +117,43 @@ def list_strategies() -> dict[str, Any]:
 @router.post("/strategies/reload")
 def reload_strategies() -> dict[str, Any]:
     """`GET /strategies` 와 같다 — 목록은 부를 때마다 폴더를 다시 읽는다."""
+    return list_strategies()
+
+
+class UploadBody(BaseModel):
+    """전략 파일 올리기. 타입 검사는 `strategy_files` 가 한다 — 이상한 값이 422 가 아니라 문장 있는 400 으로 가게 `Any` 로 받는다."""
+
+    file: Any
+    content: Any
+    overwrite: Any = False
+
+
+@router.post("/strategies", status_code=201, dependencies=[Depends(require_json)])
+def upload_strategy(body: UploadBody) -> dict[str, Any]:
+    """전략 파일 하나를 올린다. 컴파일·실행은 하지 않는다(고장 난 파일은 목록에 오류로 보인다).
+    같은 이름이 있고 `overwrite` 가 `true` 가 아니면 409 — 화면이 덮어쓸지 묻는 데 쓴다."""
+    try:
+        strategy_files.save(registry().strategies, body.file, body.content, body.overwrite is True)
+    except strategy_files.BadFile as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except strategy_files.FileExists as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
+    except strategy_files.StoreFailed as e:
+        raise HTTPException(status_code=500, detail=str(e)) from None
+    return list_strategies()
+
+
+@router.delete("/strategies/{file}")
+def delete_strategy(file: str) -> dict[str, Any]:
+    """전략 파일 하나를 지운다. 돌고 있는 실행은 처음 불러온 코드로 계속 간다."""
+    try:
+        strategy_files.delete(registry().strategies, file)
+    except strategy_files.BadFile as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except strategy_files.NoSuchFile as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except strategy_files.StoreFailed as e:
+        raise HTTPException(status_code=500, detail=str(e)) from None
     return list_strategies()
 
 

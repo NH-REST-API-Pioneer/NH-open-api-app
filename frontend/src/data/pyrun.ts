@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  *
  * **쓰는 요청은 모두 JSON 본문입니다.** 서버는 `application/json` 이 아닌 쓰기 요청을
  * 415 로 거절합니다(다른 사이트가 보낸 요청을 막는 장치). 본문이 없는 요청도 `{}` 를
- * 보냅니다.
+ * 보냅니다. (본문이 아예 없는 `DELETE` 는 예외 — 서버도 본문을 읽지 않습니다.)
  */
 
 const BASE = '/api/team/pyrun'
@@ -200,6 +200,18 @@ export function reloadStrategies(): Promise<PyResult<PyStrategies>> {
   return post<PyStrategies>('/strategies/reload')
 }
 
+/** 전략 파일 올리기. 파일 내용(글)을 JSON 에 담아 보냅니다. 같은 이름이 있고 `overwrite` 가 아니면
+ *  서버가 409(`같은 이름의 파일이 있습니다`)로 답합니다 — 화면은 그때 덮어쓸지 묻고 `overwrite: true` 로 다시 보냅니다.
+ *  성공(201)이면 갱신된 파일 목록이 옵니다. 이름·크기 오류(400)·다른 사이트(403)는 서버 문장이 `why` 에 그대로 옵니다. */
+export function uploadStrategy(file: string, content: string, overwrite: boolean): Promise<PyResult<PyStrategies>> {
+  return post<PyStrategies>('/strategies', { file, content, overwrite })
+}
+
+/** 전략 파일 지우기. 성공이면 갱신된 파일 목록이 옵니다(없는 파일은 404). 돌고 있는 실행은 처음 불러온 코드로 계속 갑니다. */
+export function deleteStrategy(file: string): Promise<PyResult<PyStrategies>> {
+  return call<PyStrategies>(`/strategies/${enc(file)}`, { method: 'DELETE' })
+}
+
 export async function loadRuns(signal?: AbortSignal): Promise<PyResult<PyRunStatus[]>> {
   const got = await call<{ runs: PyRunStatus[] }>('/runs', undefined, signal)
   return got.ok ? { ok: true, data: got.data.runs } : got
@@ -285,7 +297,7 @@ export function usePyRuns() {
   return { runs, why }
 }
 
-/** 전략 파일 목록. 처음 한 번과 「폴더 다시 읽기」 때 받습니다. */
+/** 전략 파일 목록. 처음 한 번과 「폴더 다시 읽기」 때 받고, 올리기·지우기 응답으로도 바뀝니다. */
 export function usePyStrategies() {
   const [list, setList] = useState<PyStrategies | null>(null)
   const [why, setWhy] = useState<string | null>(null)
@@ -308,7 +320,12 @@ export function usePyStrategies() {
       setWhy(null)
     } else setWhy(got.why)
   }, [])
-  return { list, why, busy, reload }
+  /** 올리기·지우기 응답(갱신된 목록)을 그대로 받아 씁니다. */
+  const apply = useCallback((next: PyStrategies) => {
+    setList(next)
+    setWhy(null)
+  }, [])
+  return { list, why, busy, reload, apply }
 }
 
 /** 실행 하나를 보는 데 드는 것 — 상태, 기록(이어 읽기), API 로그(이어 읽기), 차트 봉. */

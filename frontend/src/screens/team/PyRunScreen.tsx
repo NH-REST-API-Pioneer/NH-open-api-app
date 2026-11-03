@@ -51,6 +51,7 @@ export function PyRunScreen() {
               why={strategies.why}
               busy={strategies.busy}
               onReload={() => void strategies.reload()}
+              onList={strategies.apply}
               onAdd={(file) => {
                 setAsking(false)
                 setAdd({ seed: file ?? null })

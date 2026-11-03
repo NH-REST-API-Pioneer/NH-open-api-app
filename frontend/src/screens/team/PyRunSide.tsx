@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useRef, useState, type DragEvent } from 'react'
+import { Modal } from '../../app/Modal'
 import {
   ORDERS_CONFIRM_TEXT,
   PY_FINISHED,
+  deleteStrategy,
   downloadUrl,
   modeLabel,
   startRun,
+  uploadStrategy,
   type PyRunStatus,
   type PyStrategies,
   type PyStrategyFile,
@@ -53,36 +56,151 @@ export function isFinished(run: PyRunStatus): boolean {
 
 /* ── ① 전략 파일 ─────────────────────────────────────── */
 
+/** 카드가 띄우는 확인창. 덮어쓰기는 `resolve` 로 올리기 순서에 답을 돌려줍니다(여러 파일은 하나씩 차례로 묻습니다). */
+type Ask = { kind: 'overwrite'; file: string; resolve: (yes: boolean) => void } | { kind: 'delete'; file: string }
+
+/** 올리기가 끝난 뒤 카드에 남는 한 줄. */
+interface Note {
+  text: string
+  error: boolean
+}
+
+/** 공용 모듈 — 다른 전략 파일이 `from strategy import …` 로 불러 쓰는 파일입니다. */
+const SHARED_MODULE = 'strategy.py'
+
 export function PyStrategyCard({
   list,
   why,
   busy,
   onReload,
+  onList,
   onAdd,
 }: {
   list: PyStrategies | null
   why: string | null
   busy: boolean
   onReload: () => void
+  /** 올리기·지우기 응답(갱신된 목록)을 화면에 반영합니다. */
+  onList: (next: PyStrategies) => void
   /** 「+ 실행 세우기」. 파일 줄을 누르면 그 파일로 채워 엽니다. */
   onAdd: (file?: string) => void
 }) {
   const files = list?.strategies ?? []
+  const input = useRef<HTMLInputElement>(null)
+  const [over, setOver] = useState(false)
+  const [working, setWorking] = useState(false)
+  const [note, setNote] = useState<Note | null>(null)
+  const [ask, setAsk] = useState<Ask | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteWhy, setDeleteWhy] = useState<string | null>(null)
+
+  /** 고른 파일들을 하나씩 올립니다. 같은 이름이 있으면(409) 그 자리에서 덮어쓸지 묻고 답을 기다립니다. */
+  async function upload(picked: File[]) {
+    if (working || picked.length === 0) return
+    const py = picked.filter((one) => one.name.toLowerCase().endsWith('.py'))
+    const skipped = picked.length - py.length
+    if (py.length === 0) {
+      setNote({ text: `.py 파일만 올릴 수 있습니다 (건너뜀 ${skipped})`, error: true })
+      return
+    }
+    setWorking(true)
+    setNote(null)
+    const done: string[] = []
+    const hidden: string[] = []
+    const declined: string[] = []
+    const failed: string[] = []
+    for (const one of py) {
+      let content: string
+      try {
+        content = await one.text()
+      } catch {
+        failed.push(`${one.name}: 파일을 읽지 못했습니다`)
+        continue
+      }
+      let got = await uploadStrategy(one.name, content, false)
+      if (!got.ok && got.status === 409) {
+        const yes = await new Promise<boolean>((resolve) => setAsk({ kind: 'overwrite', file: one.name, resolve }))
+        setAsk(null)
+        if (!yes) {
+          declined.push(one.name)
+          continue
+        }
+        got = await uploadStrategy(one.name, content, true)
+      }
+      if (got.ok) {
+        onList(got.data)
+        done.push(one.name)
+        // 전략이 아닌 공용 코드는 목록에 서지 않습니다 — 올라갔는데 안 보여 헷갈리지 않게 알립니다.
+        if (!got.data.strategies.some((s) => s.file === one.name)) hidden.push(one.name)
+      } else failed.push(`${one.name}: ${got.why}`)
+    }
+    setWorking(false)
+    const parts: string[] = []
+    if (done.length) parts.push(`올렸습니다: ${done.join(', ')}`)
+    if (hidden.length) parts.push(`목록에 안 서는 파일(STRATEGY 없는 공용 코드): ${hidden.join(', ')}`)
+    if (declined.length) parts.push(`덮어쓰지 않음: ${declined.join(', ')}`)
+    if (skipped) parts.push(`.py 가 아니라 건너뜀: ${skipped}`)
+    parts.push(...failed)
+    setNote({ text: parts.join(' · '), error: failed.length > 0 })
+  }
+
+  async function remove(file: string) {
+    if (deleting) return
+    setDeleting(true)
+    setDeleteWhy(null)
+    const got = await deleteStrategy(file)
+    setDeleting(false)
+    if (got.ok) {
+      onList(got.data)
+      setAsk(null)
+      setNote({ text: `지웠습니다: ${file}`, error: false })
+    } else setDeleteWhy(got.why)
+  }
+
+  const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
+  const drop = {
+    onDragEnter: (event: DragEvent) => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      setOver(true)
+    },
+    onDragOver: (event: DragEvent) => {
+      if (!hasFiles(event)) return
+      event.preventDefault() // 이게 있어야 놓을 수 있습니다
+      event.dataTransfer.dropEffect = 'copy'
+    },
+    onDragLeave: (event: DragEvent) => {
+      // 카드 안의 자식 사이를 오갈 때는 켜 둡니다.
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false)
+    },
+    onDrop: (event: DragEvent) => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      setOver(false)
+      void upload(Array.from(event.dataTransfer.files))
+    },
+  }
+
   return (
-    <div className="card run-runs">
+    <div className={`card run-runs${over ? ' pyrun-drop-over' : ''}`} {...drop}>
       <div className="run-runs-head">
         <h2 className="run-card-title">전략 파일</h2>
       </div>
       <p className="pyrun-folder">
         {list ? (
           <>
-            <code>{list.folder}</code> 에 .py 를 넣으면 여기 나타납니다
+            .py 를 이 카드에 끌어다 놓거나 「파일 올리기」를 누르세요. <span className="pyrun-folder-or">또는 이 폴더에 직접 넣어도 됩니다: <code>{list.folder}</code></span>
           </>
         ) : (
           '전략 폴더를 읽는 중입니다'
         )}
       </p>
       {why && <p className="run-store-why">{why}</p>}
+      {note && (
+        <p className={`pyrun-upload-note${note.error ? ' is-error' : ''}`} role="status">
+          {note.text}
+        </p>
+      )}
       <div className="run-list">
         {files.map((one: PyStrategyFile) => (
           <div className={`run-row pyrun-file${one.error ? ' is-broken' : ''}`} key={one.file}>
@@ -99,6 +217,20 @@ export function PyStrategyCard({
               <span className="run-sub">{one.file}</span>
               {one.error && <span className="pyrun-file-why">{one.error}</span>}
             </button>
+            {/* 지우기는 줄 몸(실행 세우기) 옆에 따로 섭니다 — 단추 안에 단추를 두지 않습니다. */}
+            <button
+              type="button"
+              className="btn btn-quiet pyrun-row-dl"
+              aria-disabled={working || undefined}
+              title={`${one.file} 지우기`}
+              onClick={() => {
+                if (working) return
+                setDeleteWhy(null)
+                setAsk({ kind: 'delete', file: one.file })
+              }}
+            >
+              지우기
+            </button>
           </div>
         ))}
         {list && files.length === 0 && <p className="run-why">전략 파일이 없습니다</p>}
@@ -107,10 +239,76 @@ export function PyStrategyCard({
         <button type="button" className="btn btn-quiet" aria-disabled={busy || undefined} onClick={() => !busy && onReload()}>
           폴더 다시 읽기
         </button>
+        <button
+          type="button"
+          className="btn btn-quiet"
+          aria-disabled={working || undefined}
+          onClick={() => !working && input.current?.click()}
+        >
+          {working ? '올리는 중' : '파일 올리기'}
+        </button>
         <button type="button" className="btn btn-primary" onClick={() => onAdd()}>
           + 실행 세우기
         </button>
       </div>
+      <input
+        ref={input}
+        type="file"
+        accept=".py"
+        multiple
+        hidden
+        onChange={(event) => {
+          const picked = Array.from(event.target.files ?? [])
+          event.target.value = '' // 같은 파일을 다시 골라도 change 가 오게
+          void upload(picked)
+        }}
+      />
+
+      {ask?.kind === 'overwrite' && (
+        <Modal
+          label="덮어쓰기"
+          closable={false}
+          dismissable={false}
+          onClose={() => ask.resolve(false)}
+          head={<span className="modal-title">덮어쓰기</span>}
+        >
+          <p className="pyrun-confirm-text">
+            {ask.file} 이(가) 이미 있습니다. 덮어쓸까요? 돌고 있는 실행은 처음 불러온 코드로 계속 갑니다.
+          </p>
+          <div className="run-add-acts">
+            <button type="button" className="btn btn-quiet" onClick={() => ask.resolve(false)}>
+              건너뛰기
+            </button>
+            <button type="button" className="btn btn-heavy" onClick={() => ask.resolve(true)}>
+              덮어쓰기
+            </button>
+          </div>
+        </Modal>
+      )}
+      {ask?.kind === 'delete' && (
+        <Modal
+          label="파일 지우기"
+          closable={false}
+          dismissable={false}
+          onClose={() => !deleting && setAsk(null)}
+          head={<span className="modal-title">파일 지우기</span>}
+        >
+          <p className="pyrun-confirm-text">{ask.file} 을(를) 지울까요?</p>
+          {ask.file === SHARED_MODULE && (
+            <p className="run-hint">다른 전략이 이 파일을 불러 쓰면 그 전략들도 목록에서 오류로 바뀝니다.</p>
+          )}
+          <p className="run-hint">돌고 있는 실행은 처음 불러온 코드로 계속 갑니다.</p>
+          <div className="run-add-acts">
+            <button type="button" className="btn btn-quiet" aria-disabled={deleting || undefined} onClick={() => !deleting && setAsk(null)}>
+              그만두기
+            </button>
+            <button type="button" className="btn btn-heavy" aria-disabled={deleting || undefined} onClick={() => void remove(ask.file)}>
+              {deleting ? '지우는 중' : '지우기'}
+            </button>
+          </div>
+          <p className={`run-hint run-start-why${deleteWhy ? ' is-error' : ''}`}>{deleteWhy ?? ''}</p>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -203,9 +401,11 @@ export function PyAddForm({
   onStarted: (run: PyRunStatus) => void
 }) {
   const usable = files.filter((one) => !one.error)
-  const [file, setFile] = useState<string>(
+  const [chosen, setFile] = useState<string>(
     seed && usable.some((one) => one.file === seed) ? seed : (usable[0]?.file ?? ''),
   )
+  /* 고른 파일이 그 사이 지워졌거나(전략 파일 카드의 「지우기」) 못 쓰게 됐으면 선택을 비웁니다 — 없는 파일로 시작을 청하지 않게. */
+  const file = usable.some((one) => one.file === chosen) ? chosen : ''
   const [mode, setMode] = useState<StartMode>('paper')
   const [sym, setSym] = useState('')
   const [sending, setSending] = useState(false)
@@ -270,6 +470,7 @@ export function PyAddForm({
         <span className="run-add-label">전략 파일</span>
         <select className="control" value={file} onChange={(e) => setFile(e.target.value)}>
           {files.length === 0 && <option value="">전략 파일이 없습니다</option>}
+          {files.length > 0 && file === '' && <option value="">파일을 고르세요</option>}
           {files.map((one) => (
             /* 오류가 있는 파일은 고를 수 없습니다 — 까닭은 왼쪽 목록에 섭니다. */
             <option key={one.file} value={one.file} disabled={!!one.error}>

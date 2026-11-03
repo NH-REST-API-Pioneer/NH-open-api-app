@@ -295,7 +295,9 @@ def test_라우터와_수명_연결이_main_에_있다():
 DENIED = {"detail": "다른 사이트에서 온 요청은 받지 않습니다"}
 UNSAFE = [("post", "/runs/20261030_bb_replay/stop", None), ("post", "/runs/20261030_bb_replay/flatten", None),
           ("post", "/runs", {"file": "fake.py", "mode": "paper", "sym": None}),
-          ("post", "/strategies/reload", None)]
+          ("post", "/strategies/reload", None),
+          ("post", "/strategies", {"file": "up.py", "content": "x = 1\n", "overwrite": True}),
+          ("delete", "/strategies/fake.py", None)]
 
 
 @pytest.fixture
@@ -311,17 +313,17 @@ def untouched(reg, monkeypatch):
 @pytest.mark.parametrize("method,path,body", UNSAFE)
 def test_다른_사이트_Origin_은_403_이고_레지스트리에_닿지_않는다(client, untouched, method, path, body):
     for origin in ("https://evil.example", "http://localhost.evil.com", "null", "http://192.168.0.5:5173"):
-        r = getattr(client, method)(f"{BASE}{path}", json=body, headers={"Origin": origin})
+        r = client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Origin": origin})
         assert (r.status_code, r.json()) == (403, DENIED), origin
 
 
 @pytest.mark.parametrize("method,path,body", UNSAFE)
 def test_Sec_Fetch_Site_cross_site_는_403(client, untouched, method, path, body):
-    r = getattr(client, method)(f"{BASE}{path}", json=body, headers={"Sec-Fetch-Site": "cross-site"})
+    r = client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Sec-Fetch-Site": "cross-site"})
     assert (r.status_code, r.json()) == (403, DENIED)
     # Origin 이 로컬이어도 브라우저가 cross-site 라고 하면 거절
-    r = getattr(client, method)(f"{BASE}{path}", json=body,
-                                headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://localhost:5173"})
+    r = client.request(method.upper(), f"{BASE}{path}", json=body,
+                       headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://localhost:5173"})
     assert r.status_code == 403
 
 
@@ -386,3 +388,187 @@ def test_앱_수명을_돌려도_파이썬_전략_레지스트리는_사용자_�
     assert _outside_home(r.root) and _outside_home(r.strategies), (r.root, r.strategies)
     with pytest.raises(AssertionError, match="NH"):
         r._api.open_interest()                  # 시험 레지스트리의 api 는 부르면 실패한다
+
+
+# ---------------------------------------------------------------- 전략 파일 올리기·지우기
+GOOD_SRC = "# 올린 파일\nX = 1\n"
+
+
+def _upload(client, file="up.py", content=GOOD_SRC, **extra):
+    return client.post(f"{BASE}/strategies", json={"file": file, "content": content, **extra})
+
+
+def test_올리면_201_과_목록_모양으로_돌려준다(client, reg):
+    r = _upload(client)
+    assert r.status_code == 201
+    body = r.json()
+    assert body["folder"] == str(reg.strategies)
+    files = [s["file"] for s in body["strategies"]]
+    assert files == sorted(files) and "up.py" not in files        # STRATEGY 없는 공용 코드는 목록에 안 나온다
+    assert (reg.strategies / "up.py").read_text(encoding="utf-8") == GOOD_SRC
+    # 전략 파일이면 목록에 나온다
+    from tests.test_team_pyrun_live import STRATEGY_SRC
+    r = _upload(client, "mine.py", STRATEGY_SRC.replace('NAME = "fake"', 'NAME = "mine"'))
+    assert r.status_code == 201 and "mine.py" in [s["file"] for s in r.json()["strategies"]]
+
+
+def test_올릴_때_컴파일도_실행도_하지_않는다(client, reg):
+    """고장 난 코드도 그대로 저장되고(목록에 오류로 보인다), 올리는 중에는 아무것도 실행되지 않는다."""
+    marker = reg.strategies.parent / "ran.txt"
+    src = f"open({str(marker)!r}, 'w').write('x')\nSTRATEGY = (\n"
+    r = _upload(client, "broken.py", src)
+    assert r.status_code == 201
+    assert (reg.strategies / "broken.py").read_text(encoding="utf-8") == src
+    broken = next(s for s in r.json()["strategies"] if s["file"] == "broken.py")
+    assert broken["error"] and not marker.exists()          # 목록 읽기에서도 컴파일 오류로 끝난다
+
+
+@pytest.mark.parametrize("name", ["../x.py", "a/b.py", "sub\\x.py", "a b.py", "전략.py", "x.txt", "x.py.txt", ".py", "x.PY2",
+                                  "", "x.py\n", "..", "/etc/passwd.py"])
+def test_이상한_파일_이름은_400(client, reg, name):
+    before = sorted(p.name for p in reg.strategies.iterdir())
+    r = _upload(client, name)
+    assert r.status_code == 400 and isinstance(r.json()["detail"], str) and r.json()["detail"]
+    assert sorted(p.name for p in reg.strategies.iterdir()) == before
+    assert not (reg.strategies.parent / "x.py").exists()
+
+
+def test_이름이_문자열이_아니면_400(client, reg):
+    r = client.post(f"{BASE}/strategies", json={"file": 3, "content": GOOD_SRC})
+    assert r.status_code == 400 and "이름" in r.json()["detail"]
+
+
+def test_내용은_문자열이어야_하고_크기_한도가_있다(client, reg):
+    from backend.team_pyrun.strategy_files import MAX_STRATEGY_BYTES
+    assert MAX_STRATEGY_BYTES == 256 * 1024
+    for bad in (None, 5, ["x"], {"a": 1}):
+        r = client.post(f"{BASE}/strategies", json={"file": "up.py", "content": bad})
+        assert r.status_code == 400, bad
+    assert not (reg.strategies / "up.py").exists()
+    ok = "a" * MAX_STRATEGY_BYTES
+    assert _upload(client, "edge.py", ok).status_code == 201
+    r = _upload(client, "big.py", ok + "a")
+    assert r.status_code == 400 and "256" in r.json()["detail"] and not (reg.strategies / "big.py").exists()
+    # 글자 수가 아니라 UTF-8 로 인코딩한 바이트 수로 잰다
+    r = _upload(client, "han.py", "가" * (MAX_STRATEGY_BYTES // 3 + 1))
+    assert r.status_code == 400 and not (reg.strategies / "han.py").exists()
+    assert _upload(client, "han.py", "가" * (MAX_STRATEGY_BYTES // 3)).status_code == 201
+
+
+def test_UTF8_로_인코딩할_수_없는_내용은_400(client, reg):
+    r = client.post(f"{BASE}/strategies", content='{"file": "lone.py", "content": "\\ud800"}',
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and not (reg.strategies / "lone.py").exists()
+
+
+def test_같은_이름이_있으면_409_이고_덮어쓰기를_밝혀야_바뀐다(client, reg):
+    assert _upload(client, "same.py", "A = 1\n").status_code == 201
+    r = _upload(client, "same.py", "A = 2\n")
+    assert (r.status_code, r.json()) == (409, {"detail": "같은 이름의 파일이 있습니다: same.py"})
+    assert (reg.strategies / "same.py").read_text(encoding="utf-8") == "A = 1\n"
+    # true 가 아닌 값(문자열 "true" 등)은 덮어쓰기가 아니다
+    for flag in (False, None, "true", 1):
+        assert _upload(client, "same.py", "A = 3\n", overwrite=flag).status_code == 409, flag
+    r = _upload(client, "same.py", "A = 2\n", overwrite=True)
+    assert r.status_code == 201
+    assert (reg.strategies / "same.py").read_text(encoding="utf-8") == "A = 2\n"
+    # 있던 시험 전략도 같은 길(덮어쓰기 확인)을 지난다
+    assert _upload(client, "fake.py").status_code == 409
+
+
+def test_줄바꿈은_받은_그대로_바이트로_쓴다(client, reg):
+    src = "A = 1\r\nB = '가'\r\n"
+    assert _upload(client, "crlf.py", src).status_code == 201
+    assert (reg.strategies / "crlf.py").read_bytes() == src.encode("utf-8")
+
+
+def test_쓰다_실패해도_옛_파일은_그대로이고_임시_파일이_남지_않는다(client, reg, monkeypatch):
+    import os
+    assert _upload(client, "keep.py", "A = 1\n").status_code == 201
+    before = sorted(p.name for p in reg.strategies.iterdir())
+
+    def boom(src, dst):
+        raise OSError("디스크가 가득 찼습니다")
+    monkeypatch.setattr(os, "replace", boom)
+    r = _upload(client, "keep.py", "A = 2\n", overwrite=True)
+    assert r.status_code == 500 and "keep.py" in r.json()["detail"]
+    assert (reg.strategies / "keep.py").read_text(encoding="utf-8") == "A = 1\n"
+    assert sorted(p.name for p in reg.strategies.iterdir()) == before
+
+
+def test_올린_파일은_본문이_JSON_일_때만_받는다(client, reg):
+    body = '{"file": "up.py", "content": "X = 1\\n"}'
+    for ctype in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"):
+        r = client.post(f"{BASE}/strategies", content=body, headers={"Content-Type": ctype})
+        assert r.status_code == 415, ctype
+    assert not (reg.strategies / "up.py").exists()
+
+
+def test_올릴_때_본문이_모자라면_422(client):
+    assert client.post(f"{BASE}/strategies", json={"file": "up.py"}).status_code == 422
+
+
+def test_지우면_200_과_목록_모양으로_돌려준다(client, reg):
+    assert _upload(client, "gone.py").status_code == 201
+    r = client.delete(f"{BASE}/strategies/gone.py")
+    assert r.status_code == 200
+    assert r.json()["folder"] == str(reg.strategies)
+    assert "gone.py" not in [s["file"] for s in r.json()["strategies"]]
+    assert not (reg.strategies / "gone.py").exists()
+    assert "fake.py" in [s["file"] for s in r.json()["strategies"]]        # 다른 파일은 그대로
+
+
+def test_없는_파일_지우기는_404_이상한_이름은_400(client, reg):
+    r = client.delete(f"{BASE}/strategies/nope.py")
+    assert r.status_code == 404 and "nope.py" in r.json()["detail"]
+    (reg.strategies / "dir.py").mkdir()                       # 폴더는 파일이 아니다
+    assert client.delete(f"{BASE}/strategies/dir.py").status_code == 404 and (reg.strategies / "dir.py").is_dir()
+    outside = reg.strategies.parent / "outside.py"
+    outside.write_text("X = 1\n", encoding="utf-8")
+    for name in ("x.txt", "a b.py", "전략.py", "..%2Foutside.py", "%2e%2e%2foutside.py", "x.py%0A"):
+        r = client.delete(f"{BASE}/strategies/{name}")
+        assert r.status_code in (400, 404, 405), name   # %2F·.. 는 경로로 풀려 라우트에 안 닿으면 404·405
+        assert r.status_code == 400 or "%2" in name
+    assert outside.exists()
+    assert client.delete(f"{BASE}/strategies/..").status_code in (400, 404, 405)
+    assert outside.exists()
+
+
+def test_심볼릭_링크는_링크만_지우고_가리키는_파일은_남긴다(client, reg):
+    target = reg.strategies.parent / "target.py"
+    target.write_text("X = 1\n", encoding="utf-8")
+    (reg.strategies / "link.py").symlink_to(target)
+    assert client.delete(f"{BASE}/strategies/link.py").status_code == 200
+    assert not (reg.strategies / "link.py").is_symlink() and target.exists()
+
+
+def test_올리고_지워도_도는_실행은_처음_불러온_코드_그대로다(client, reg):
+    """로더가 파일마다 따로 불러오므로, 실행 중에 파일을 덮어쓰거나 지워도 돌던 실행의 sha256 은 그대로다."""
+    import hashlib
+    from tests.test_team_pyrun_live import STRATEGY_SRC
+    original = (reg.strategies / "fake.py").read_bytes()
+    first = hashlib.sha256(original).hexdigest()
+    run = reg.start(RunSpec("fake.py", "paper", None))
+    live = reg.get(run["id"])
+    assert live.loaded.sha256 == first and live.status()["state"] in ("대기", "진행 중")
+    edited = STRATEGY_SRC.replace('TITLE = "시험 전략"', 'TITLE = "고친 전략"')
+    assert edited != STRATEGY_SRC
+    assert _upload(client, "fake.py", edited, overwrite=True).status_code == 201
+    assert hashlib.sha256((reg.strategies / "fake.py").read_bytes()).hexdigest() != first
+    assert live.loaded.sha256 == first and live.loaded.title == "시험 전략"
+    on_disk = json.loads((reg.root / run["id"] / "run.json").read_text(encoding="utf-8"))
+    assert on_disk["sha256"] == first
+    assert client.get(f"{BASE}/runs/{run['id']}").json()["state"] in ("대기", "진행 중")
+    assert client.delete(f"{BASE}/strategies/fake.py").status_code == 200
+    assert live.loaded.sha256 == first and live.status()["state"] in ("대기", "진행 중")
+    # 새로 세우려는 실행은 지운 파일을 못 찾는다
+    assert client.post(f"{BASE}/runs", json={"file": "fake.py", "mode": "paper", "sym": None}).status_code == 409
+
+
+def test_다른_사이트가_보낸_올리기·지우기는_파일을_건드리지_못한다(client, reg):
+    for origin in ("https://evil.example", "null"):
+        r = client.post(f"{BASE}/strategies", json={"file": "evil.py", "content": "X = 1\n"}, headers={"Origin": origin})
+        assert (r.status_code, r.json()) == (403, DENIED)
+        r = client.delete(f"{BASE}/strategies/fake.py", headers={"Origin": origin})
+        assert (r.status_code, r.json()) == (403, DENIED)
+    assert not (reg.strategies / "evil.py").exists() and (reg.strategies / "fake.py").exists()

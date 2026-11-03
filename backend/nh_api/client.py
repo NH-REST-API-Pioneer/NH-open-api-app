@@ -16,9 +16,9 @@
 """
 from __future__ import annotations
 
-import logging
-import time
-from collections.abc import Callable, Mapping
+import logging  # 팀: 관찰자 실패 로그
+import time  # 팀: 관찰자에 넘기는 호출 시간(ms)
+from collections.abc import Callable, Mapping  # 팀: Callable — 관찰자 자리(`call_observer`)의 타입
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -214,7 +214,7 @@ class TradeClient:
         # 설정에 그 시장의 인증 정보가 없으면 여기서 걸립니다.
         self._session.config.market(spec.market, environment)
 
-        waited = self._limiter.wait(environment, spec.market, spec.limit)
+        waited = self._limiter.wait(environment, spec.market, spec.limit)  # 팀: 기다린 시간을 관찰자에 넘기려 받아 둠
 
         body_to_send = dict(payload or {})
         trace["waited_ms"] = round((waited or 0) * 1000)  # 팀:

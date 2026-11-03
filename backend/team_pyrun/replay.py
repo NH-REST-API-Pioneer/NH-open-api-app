@@ -1,6 +1,6 @@
 """받아 둔 1분봉으로 하루를 다시 돌린다 — 서버 접속도 주문도 없고, 체결은 종이 체결.
 
-코드 점검과 week02 결과 비교용입니다. 순서는 week02 `replay()` 와 같습니다: 그 분의 시가로
+코드 점검과 week02·week03 결과 비교용입니다(해외 MKU 는 `market=OVERSEAS` — `tests/test_team_pyrun_orb.py` 골든). 순서는 week02 `replay()` 와 같습니다: 그 분의 시가로
 `on_price`(진입·정리) → 종가와 고저로 `on_price`(손절·익절) → `on_minute_closed`(그 봉으로 신호).
 
     python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv>
@@ -21,8 +21,9 @@ from pathlib import Path
 from backend import storage
 from backend.sessions.hours import now_kst
 from backend.team_pyrun.journal import Journal, summarize, write_summary
-from backend.team_pyrun.loader import Loaded, load, strategies_dir
-from backend.team_pyrun.runner import Minute, PaperBroker, Runner
+from backend.team_pyrun.loader import DEFAULT_FLATTEN, Loaded, load, strategies_dir
+from backend.team_pyrun.markets import DOMESTIC, Market
+from backend.team_pyrun.runner import PAPER_FEE, PAPER_SLIP_TICKS, Minute, PaperBroker, Runner
 
 MIN_BARS_PER_DAY = 250      # 이보다 봉이 적은 날(거래가 드문 원월물 시절)은 뺍니다 (week02 와 같음)
 DEFAULT_SYM = "A756B000"
@@ -44,25 +45,40 @@ def _stamp() -> str:
     return now_kst().isoformat(timespec="seconds").removesuffix("+09:00")
 
 
-def replay(loaded: Loaded, date: str, minutes: list[Minute], folder: Path, sym: str = DEFAULT_SYM) -> dict:
+def replay(loaded: Loaded, date: str | None, minutes: list[Minute], folder: Path, sym: str = DEFAULT_SYM, *,
+           market: Market = DOMESTIC, fee: float = PAPER_FEE, slip_ticks: int = PAPER_SLIP_TICKS) -> dict:
     """`date` 하루를 다시 돌려 `folder` 에 기록하고 `{"trades", "summary"}` 를 돌려준다.
 
-    그 전 날들은 준비 봉으로 전략에만 넣습니다. `sym` 은 `run.json` 에 적을 종목."""
+    그 전 날들은 준비 봉으로 전략에만 넣습니다. `date` 가 None 이면 `minutes` 의 **모든 날을 날마다 이어** 돕니다
+    (week03 `backtest.run` 처럼 — 전략은 한 번 만들어 날을 넘겨 이어지고, 날이 바뀌면 대기 신호는 버리고, 날마다
+    끝에 남은 보유를 정리). `sym` 은 `run.json` 에 적을 종목.
+
+    `market` 은 빠진 Params 장 시간 칸을 채우고(`loaded.new(market)`), 하루 끝 정리 시각(국내 153000 · 해외 235000,
+    `loader.DEFAULT_FLATTEN`)을 정합니다. `fee`(체결마다, 그 시장 통화)·`slip_ticks`(불리한 쪽 틱)는 종이 체결 값.
+    기본값은 모두 국내(week02) 그대로입니다."""
     folder = Path(folder)
     started = _stamp()
     j = Journal(folder / "journal.jsonl")
-    r = Runner(loaded.new(), j, PaperBroker(j, loaded.tick), loaded.tick, loaded.tick_value)
-    r.warmup([m for m in minutes if m.date < date])
-    r.live_date = date
-    for m in (m for m in minutes if m.date == date):
-        if not (r.p.session_start <= m.time < r.p.session_end):
-            r.feed(m)
-            continue
-        # 그 분의 가격 범위를 한 번에 줌: 시가에서 진입·정리, 고저로 손절·익절 (백테스트와 같은 순서)
-        r.on_price(m.time, m.open)
-        r.on_price(m.time, m.close, ref_low=m.low, ref_high=m.high)
-        r.on_minute_closed(m)
-    r.force_flat("153000")
+    r = Runner(loaded.new(market), j, PaperBroker(j, loaded.tick, fee=fee, slip_ticks=slip_ticks),
+               loaded.tick, loaded.tick_value)
+    days = sorted({m.date for m in minutes}) if date is None else [date]
+    flat_at = DEFAULT_FLATTEN[market.id]
+    if days:
+        r.warmup([m for m in minutes if m.date < days[0]])
+    for day in days:
+        if r.pending is not None:      # 전날 마지막 신호 — 다음 날로 넘기지 않는다 (백테스트도 날이 바뀌면 버림)
+            j.write("event", text="날이 바뀌어 대기 신호를 버림")
+            r.pending = None
+        r.live_date = day
+        for m in (m for m in minutes if m.date == day):
+            if not (r.p.session_start <= m.time < r.p.session_end):
+                r.feed(m)
+                continue
+            # 그 분의 가격 범위를 한 번에 줌: 시가에서 진입·정리, 고저로 손절·익절 (백테스트와 같은 순서)
+            r.on_price(m.time, m.open)
+            r.on_price(m.time, m.close, ref_low=m.low, ref_high=m.high)
+            r.on_minute_closed(m)
+        r.force_flat(flat_at)
     result = {"trades": r.trades, "summary": summarize(r.trades)}
     # 실시간 실행의 summary.json 과 같은 꼴로 전략 정보도 남긴다 — 지난 실행 화면이 그때의 Params 를 보인다
     write_summary(folder, {**result, "strategy": {

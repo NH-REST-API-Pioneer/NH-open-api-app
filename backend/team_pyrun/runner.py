@@ -54,6 +54,10 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
 
   결과 모름·잔고 불일치(「확인 필요」)·주문 재전송 금지는 청산 주문을 내는 `_exit`·브로커가 그대로 맡습니다.
 
+**화면의 손절·익절** (고를 수 있음, 표시 전용) — 전략에 `exit_levels(pos) -> {"stop": 가격|None, "target": 가격|None}`
+이 있으면 보유 중 `snapshot()` 의 `stop`·`target` 을 그 값으로 보입니다(ORB 는 범위 끝 손절과 진입가 + 목표 틱).
+**판단에는 쓰지 않습니다** — 청산은 위 규칙·`exit_reason` 그대로. 예외·수가 아닌 칸이면 원래 값(실행기 손절가·`target`).
+
 **신호 꼴** — 신호에 `bar` 가 있으면 그것이 판정 봉(week02), 없고 `minute`(1분봉: `date` `time` `open` …)이
 있으면 그 1분봉이 판정 봉입니다. 1분봉이면 기록의 `bar` = 그 분 시작 시각, `clock` = 그 분이 끝난 시각(+1분).
 `signal` 줄에는 판정 봉의 숫자 지표 칸(소수 3자리, 틱이 더 잘면 틱 자릿수 + 2 — MKU 6자리)과
@@ -88,6 +92,8 @@ TARGET_NAMES = ("target", "current_vwap")
 _MISSING = object()
 #: 전략이 청산을 판단하는 메서드 이름(고를 수 있음). 있으면 공통 손절·익절·시간 청산 대신 쓴다 — 모듈 문서.
 EXIT_HOOK = "exit_reason"
+#: 화면에 보일 손절·익절을 전략이 알려 주는 메서드 이름(고를 수 있음, 표시 전용) — `Runner.snapshot`.
+LEVELS_HOOK = "exit_levels"
 #: 앱이 스스로 내는 청산의 사유 — 전략의 `exit_reason` 은 이 이름을 돌려줄 수 없다(기록에서 앱 정리와 섞이지 않게).
 FLATTEN_REASON, END_REASON = "장 마감 정리", "실행 종료 정리"
 RESERVED_REASONS = frozenset({FLATTEN_REASON, END_REASON})
@@ -274,17 +280,18 @@ class PaperBroker:
     mode = "paper"
     sent = True         # 종이 체결은 언제나 「보낸」 것으로 본다(관문이 없고 None 을 돌려주지 않음)
 
-    def __init__(self, journal: Journal, tick: float, fee: float = PAPER_FEE):
+    def __init__(self, journal: Journal, tick: float, fee: float = PAPER_FEE, slip_ticks: int = PAPER_SLIP_TICKS):
         self.j = journal
         self.tick = tick
         self.fee = fee
+        self.slip_ticks = slip_ticks      # 불리한 쪽 슬리피지(틱) — 해외 리플레이·종이 실행은 시장 값(`markets.Market`)
         self.last_fill_fee: float | None = fee
 
     def account(self, clock: str = "", why: str = "") -> dict | None:
         return None
 
     def fill(self, side: str, ref_price: float, clock: str, why: str) -> float | None:
-        slip = PAPER_SLIP_TICKS * self.tick
+        slip = self.slip_ticks * self.tick
         px = round(ref_price + slip if side == "buy" else ref_price - slip, _digits(self.tick))
         self.j.write("fill", clock=clock, side=side, price=px, source="paper", fee=self.fee,
                      text=f"종이 체결 · {why}")
@@ -531,6 +538,27 @@ class Runner:
         self.halted = reason
         self.j.write("event", text=f"멈춤 · {reason}")
 
+    def _exit_levels(self) -> dict | None:
+        """전략의 `exit_levels(pos)` 가 보이는 손절·익절({"stop", "target"} 중 있는 칸). 없거나 실패하면 None.
+
+        **화면 표시용**입니다 — 청산 판단에는 쓰지 않습니다. 화면을 그리다 전략 예외로 실행이 멈추지 않게 예외는
+        삼키고 원래 값(실행기의 손절가·`target`)을 보입니다. 칸이 None 이면 None(없음), 수가 아닌 값·비유한수인 칸은
+        원래 값을 보입니다."""
+        fn = getattr(self.strat, LEVELS_HOOK, None)
+        if fn is None:
+            return None
+        try:
+            got = fn(self._pos_view())
+        except Exception:       # 화면용 계산이 실행을 멈추게 하지 않는다
+            return None
+        if not isinstance(got, dict):
+            return None
+
+        def ok(v: object) -> bool:
+            return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
+
+        return {k: None if got[k] is None else float(got[k]) for k in ("stop", "target") if k in got and ok(got[k])}
+
     def snapshot(self) -> dict:
         """화면에 보일 지금 상태."""
         pos = self.pos
@@ -540,15 +568,21 @@ class Runner:
         own_stops = sum(1 for t in day if t["reason"] == "손절") + self.stops_before
         day_stops = getattr(getattr(self.strat, "day", None), "stops", None)
         time_exit = None
+        stop = None if pos is None else pos["stop"]
+        target = target_of(self.strat)
+        levels = self._exit_levels() if pos is not None else None
+        if levels is not None:      # 전략이 보이는 손절·익절 — 화면에만 쓴다(판단은 위의 규칙·`exit_reason`)
+            stop = levels.get("stop", stop)
+            target = levels.get("target", target)
         if pos is not None and getattr(self.strat, EXIT_HOOK, None) is None:   # 전략이 청산을 판단하면 앱의 시간 청산은 없다
             m = _minutes_of(pos["entry_time"]) + self.p.hold_min
             time_exit = f"{m // 60:02d}{m % 60:02d}00"
         return {
             "position": self.expected_position(),
             "entry": None if pos is None else pos["entry"],
-            "stop": None if pos is None else pos["stop"],
+            "stop": stop,
             "stop_ticks": None if pos is None else pos["stop_ticks"],
-            "target": target_of(self.strat),
+            "target": target,
             "time_exit_at": time_exit,
             "today_pnl": sum(t["pnl"] for t in day),
             "stops": own_stops if day_stops is None else day_stops,

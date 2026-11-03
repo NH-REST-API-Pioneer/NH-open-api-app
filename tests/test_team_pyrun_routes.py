@@ -413,12 +413,17 @@ def test_NH_PUBLIC_HOSTS_에_없는_공개_주소는_Host_와_같아도_403(publ
     assert (r.status_code, r.json()) == (403, DENIED)
 
 
-def test_직접_포트로_연_공개_주소는_포트까지_같아야_받는다(reg, monkeypatch):
-    monkeypatch.setenv("NH_PUBLIC_HOSTS", "testserver")
-    c = TestClient(app, base_url="http://testserver:8000")
-    assert c.post(f"{BASE}/strategies/reload", headers={"Origin": "http://testserver:8000"}).status_code != 403
-    assert c.post(f"{BASE}/strategies/reload", headers={"Origin": "http://testserver:9000"}).status_code == 403
-    assert c.post(f"{BASE}/strategies/reload", headers={"Origin": "http://testserver"}).status_code == 403
+def test_공개_주소는_요청이_http_로_들어와도_https_Origin_만_받는다(reg):
+    """터널이 전달 머리글(X-Forwarded-Proto)을 붙이는지 확인할 수 없으므로 요청 scheme 과 상관없이 판정한다."""
+    c = TestClient(app, base_url=f"http://{SITE}")         # scheme http, 전달 머리글 없음
+    ok = c.post(f"{BASE}/strategies/reload", headers={"Origin": f"https://{SITE}"})
+    assert ok.status_code != 403, ok.text
+    assert c.post(f"{BASE}/strategies/reload", headers={"Origin": f"https://{SITE}:443"}).status_code != 403
+    for origin in (f"http://{SITE}", f"http://{SITE}:443", f"https://{SITE}:8443", f"https://{SITE}:80"):
+        assert c.post(f"{BASE}/strategies/reload", headers={"Origin": origin}).status_code == 403, origin
+    # Host 가 다른 포트를 말하면 공개 주소로 보지 않는다
+    r = c.post(f"{BASE}/strategies/reload", headers={"Origin": f"https://{SITE}:8000", "Host": f"{SITE}:8000"})
+    assert r.status_code == 403
 
 
 def test_공개_주소_Origin_이어도_cross_site_는_403(public_client, untouched):

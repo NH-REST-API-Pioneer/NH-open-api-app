@@ -62,11 +62,10 @@ def _origin_endpoint(origin: str) -> tuple[str, int] | None:
     return host, port if port is not None else DEFAULT_PORTS[parts.scheme]
 
 
-def _host_header(request: Request) -> tuple[str, int] | None:
-    """`Host` 머리글을 (호스트, 포트)로. 포트가 없으면 요청이 들어온 방식(`request.url.scheme`)의 기본 포트.
+def _host_header(request: Request) -> tuple[str, int | None] | None:
+    """`Host` 머리글을 (호스트, 포트)로. 포트가 없으면 `None`. 뜻을 못 알아보면 `None` 전체.
 
-    uvicorn `--proxy-headers` 는 `X-Forwarded-Proto: https` 로 scheme 만 https 로 바꾼다(Host 는 그대로) — 터널 뒤에서 포트 없는
-    `nh.예시.com` 은 443 이다. `X-Forwarded-Host` 는 보지 않는다(밖에서 마음대로 적어 보낼 수 있다)."""
+    `X-Forwarded-Host`·`X-Forwarded-Proto` 는 보지 않는다(밖에서 마음대로 적어 보낼 수 있고, 터널이 붙여 주는지도 확인할 수 없다)."""
     raw = request.headers.get("host")
     if not raw:
         return None
@@ -77,7 +76,7 @@ def _host_header(request: Request) -> tuple[str, int] | None:
         return None
     if not host:
         return None
-    return host, port if port is not None else DEFAULT_PORTS.get(request.url.scheme, 80)
+    return host, port
 
 
 def _origin_allowed(request: Request, origin: str) -> bool:
@@ -85,15 +84,19 @@ def _origin_allowed(request: Request, origin: str) -> bool:
 
     - 로컬 Origin(localhost·127.0.0.1·::1, 포트 불문)은 **Host 도 로컬일 때만**. 리바인딩된 `rebind.attacker.tld` 나 공개 주소의
       Host 에 localhost Origin 이 붙은 요청은 거절한다.
-    - 그 밖의 Origin 은 Host 와 호스트·포트가 같고(스킴을 따진 기본 포트: http 80, https 443), 그 호스트가 `NH_PUBLIC_HOSTS` 에 있어야 한다.
-    - `null`·뜻을 알 수 없는 값은 거절."""
+    - Host 의 호스트가 `NH_PUBLIC_HOSTS` 에 있으면 받는 Origin 은 정확히 `https://<그 호스트>`(또는 `:443`) 뿐이다.
+      공개 주소는 Cloudflare 가 늘 https 로만 내보내므로 요청이 서버에 http 로 들어와도(전달 머리글이 와도 안 와도) 같게 판정한다.
+      `http://…`·다른 포트는 거절한다.
+    - 그 밖(`null`·뜻을 알 수 없는 값·모르는 호스트)은 거절."""
     endpoint = _origin_endpoint(origin)
     host = _host_header(request)
     if endpoint is None or host is None:
         return False
     if endpoint[0] in LOCAL_HOSTS:
         return host[0] in LOCAL_HOSTS
-    return endpoint == host and host[0] in public_hosts()
+    if host[0] not in public_hosts() or host[1] not in (None, 443):
+        return False
+    return urlparse(origin).scheme == "https" and endpoint == (host[0], 443)
 
 
 def refuse_cross_site(request: Request) -> None:

@@ -64,6 +64,13 @@ export function autoSymLabel(autoCode: string | null): string {
   return autoCode ? `${SYM_AUTO} · ${autoCode}` : SYM_AUTO
 }
 
+/** 기본 선택을 확인 얼굴에 적을 때의 글. 서버가 시작할 때 라이브 조회로 정하므로 코드는 어림입니다. */
+export function autoSymGuess(autoCode: string | null): string {
+  return autoCode
+    ? `${SYM_AUTO} · 지금 기준 ${autoCode} — 시작할 때 서버가 정합니다`
+    : `${SYM_AUTO} — 시작할 때 서버가 정합니다`
+}
+
 /** 지금 고른 종목의 글. `sym` 이 비면 기본 선택, 아니면 「이름 · 코드」(이름을 모르면 코드만). */
 export function symLabel(sym: string, name: string | null, autoCode: string | null): string {
   const code = sym.trim()

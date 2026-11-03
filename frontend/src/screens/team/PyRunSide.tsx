@@ -15,7 +15,7 @@ import {
 } from '../../data/pyrun'
 import { moneyIn } from '../../lib/number'
 import { useMasterStatus } from '../../lib/useMaster'
-import { PySymbolPicker, symText } from './PySymbolPicker'
+import { PySymbolPicker, symConfirmText } from './PySymbolPicker'
 
 /* 팀: 「파이썬 전략」 왼쪽 열 — ① 전략 파일 ② 실행 목록, 그리고 「+ 실행 세우기」 폼.
  * 얼굴은 「전략 진행」의 실행 카드(`.run-runs` · `.run-row`)를 그대로 씁니다. */
@@ -527,7 +527,7 @@ export function PyAddForm({
           </div>
           <div className="run-confirm-row">
             <dt>종목</dt>
-            <dd>{symText(sym)}</dd>
+            <dd>{symConfirmText(sym)}</dd>
           </div>
         </dl>
         <p className="run-approve">{ORDERS_CONFIRM_TEXT}</p>

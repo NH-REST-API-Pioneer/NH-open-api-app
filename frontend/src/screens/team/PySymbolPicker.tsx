@@ -5,6 +5,7 @@ import {
   SYM_AUTO,
   SYM_REFUSED,
   USD_PRODUCT,
+  autoSymGuess,
   autoSymLabel,
   isUsdFutures,
   symLabel,
@@ -55,6 +56,12 @@ function autoCodeOf(refs: ContractRef[]): string | null {
 export function symText(sym: string): string {
   const code = sym.trim()
   return symLabel(code, code ? (resolve(code)?.name ?? null) : null, autoCodeOf(usdMonths()))
+}
+
+/** 확인 얼굴의 종목 글. 「최근월물」은 서버가 시작할 때 라이브 조회로 정하므로 코드는 어림으로만 적습니다
+ *  (입력칸의 글과 다릅니다 — 거기는 고르는 자리고, 여기는 실제 주문이 나가기 직전입니다). */
+export function symConfirmText(sym: string): string {
+  return sym.trim() === '' ? autoSymGuess(autoCodeOf(usdMonths())) : symText(sym)
 }
 
 export function PySymbolPicker({ sym, onChange }: { sym: string; onChange: (sym: string) => void }) {
@@ -111,6 +118,7 @@ export function PySymbolPicker({ sym, onChange }: { sym: string; onChange: (sym:
       >
         {!month && <span className="search-caret" aria-hidden="true" />}
         <span className="search-row-name">{name ?? ref.label}</span>
+        {picked && <span className="pyrun-sym-check" aria-hidden="true">✓</span>}
         {name !== null && <span className="search-row-expiry">{ref.label}</span>}
         {badge && <span className="badge badge-brand">{badge}</span>}
         <span className="search-row-code">{verdict.ok ? ref.code : verdict.reason}</span>
@@ -200,10 +208,8 @@ export function PySymbolPicker({ sym, onChange }: { sym: string; onChange: (sym:
           ref={inputRef}
           className="control pyrun-sym-input"
           type="text"
-          role="combobox"
           aria-labelledby={`${listId}-label`}
           aria-expanded={open}
-          aria-controls={listId}
           autoComplete="off"
           spellCheck={false}
           /* 닫혀 있을 때는 지금 고른 것을 보이고, 열면 비워서 바로 칠 수 있게 합니다. */
@@ -231,7 +237,7 @@ export function PySymbolPicker({ sym, onChange }: { sym: string; onChange: (sym:
 
       {open && (
         /* 줄을 눌러도 초점이 입력칸을 떠나지 않게 합니다(떠나면 위의 blur 가 목록을 먼저 닫습니다). */
-        <div className="search-list pyrun-sym-list" id={listId} onMouseDown={(event) => event.preventDefault()}>
+        <div className="search-list pyrun-sym-list" id={listId} role="group" aria-label="종목 고르기" onMouseDown={(event) => event.preventDefault()}>
           <button
             type="button"
             className={`search-row pyrun-sym-row${sym.trim() === '' ? ' is-picked' : ''}`}
@@ -240,6 +246,7 @@ export function PySymbolPicker({ sym, onChange }: { sym: string; onChange: (sym:
           >
             <span className="search-caret" aria-hidden="true" />
             <span className="search-row-name">{SYM_AUTO}</span>
+            {sym.trim() === '' && <span className="pyrun-sym-check" aria-hidden="true">✓</span>}
             {autoCode && <span className="search-row-code">{autoCode}</span>}
           </button>
 

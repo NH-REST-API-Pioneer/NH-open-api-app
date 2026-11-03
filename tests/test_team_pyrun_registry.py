@@ -265,6 +265,16 @@ def test_파일_이름과_종목_코드에_경로_문자가_있으면_거부(tmp
     assert sorted(p.name for p in tmp_path.iterdir()) == ["strategies"]        # 폴더 밖에도 아무것도 안 생겼다
 
 
+def test_미국달러선물이_아닌_종목은_거부(tmp_path):
+    """틱·틱가치는 미국달러선물 줄로만 확인하므로 다른 종목(`A75…` 가 아닌 것)은 받지 않는다."""
+    reg, fake, _ = make_registry(tmp_path)
+    for sym in ("A016B000", "B756B000", "MKUX26", "a756B000"):
+        with pytest.raises(StartRefused, match=r"미국달러선물\(A75…\) 종목만 실행할 수 있습니다"):
+            reg.start(RunSpec("fake.py", "paper", sym))
+    assert not (tmp_path / "pyruns").exists() and fake.calls == []
+    assert reg.start(RunSpec("fake.py", "paper", OTHER_SYM))["sym"] == OTHER_SYM      # A75… 는 그대로 받는다
+
+
 def test_동시에_시작해도_같은_종목_주문_실행은_하나만(tmp_path):
     reg, fake, _ = make_registry(tmp_path)
     results: list = []

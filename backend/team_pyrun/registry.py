@@ -8,7 +8,7 @@
     recover          앱을 켤 때 — 끝나지 않은 채 남은 폴더를 「끝·재시작」으로 닫는다 (주문은 보내지 않는다)
 
 시작 거부(`StartRefused`) — 폴더를 만들기 **전에** 걸리는 것(주말·장 끝·모의 환경 아님·같은 종목 주문 실행·
-이상한 파일/종목 이름)은 폴더를 남기지 않고 메시지만 돌려줍니다. 폴더를 만든 **뒤** `LiveRun.prepare()` 에서 걸리는 것
+이상한 파일/종목 이름·미국달러선물(`A75…`)이 아닌 종목)은 폴더를 남기지 않고 메시지만 돌려줍니다. 폴더를 만든 **뒤** `LiveRun.prepare()` 에서 걸리는 것
 (시작 잔고·틱 불일치 등)은 `run.json`(상태 「끝」, 까닭 「시작 거부: …」)이 남습니다.
 
 기록 폴더 이름: `<YYYYMMDD>_<NAME>_<orders|paper>[_<종목>][_<n>]`.
@@ -56,6 +56,8 @@ from backend.team_pyrun.loader import LoadError, load, strategies_dir
 ID_PATTERN = re.compile(r"[0-9A-Za-z_]+")
 logger = logging.getLogger(__name__)
 
+#: 받는 종목 코드의 앞부분 — 미국달러선물(`A75` + 연도 + 월 + `000`)만 돌린다.
+USD_PREFIX = "A75"
 #: `RunSpec.mode` 로 쓸 수 있는 값 — 폴더 이름에 들어가므로 이 둘만 받는다.
 MODES = ("orders", "paper")
 #: 같은 종목의 주문 실행이 이미 있다고 보는 상태.
@@ -104,6 +106,9 @@ class Registry:
             raise StartRefused(f"전략 파일 이름이 올바르지 않습니다: {spec.file!r}")
         if spec.sym is not None and not ID_PATTERN.fullmatch(spec.sym):
             raise StartRefused(f"종목 코드가 올바르지 않습니다: {spec.sym!r}")
+        if spec.sym is not None and not spec.sym.startswith(USD_PREFIX):
+            # 틱·틱가치는 미국달러선물 줄(`api.usd_spec`)로만 확인한다 — 다른 종목은 그 확인이 맞지 않는다
+            raise StartRefused("미국달러선물(A75…) 종목만 실행할 수 있습니다")
         try:
             loaded = load(self.strategies, spec.file)
         except LoadError as e:

@@ -32,22 +32,38 @@
 
 Engine 은 한 스레드에서만 부릅니다. **실행 스레드 하나**가 원문을 꺼내 넣고, 행동이 나오면 그 자리에서 주문·체결 확인
 (최대 15초)을 **기다립니다**. 그동안 허브는 이벤트 루프에서 계속 받아 RawFeed 큐에 쌓고(한도 5,000건 — MKU 호가 + KRX
-체결은 초당 수십 건이라 15초에 수백 건), 확인이 끝나면 실행이 쌓인 것을 순서대로 마저 넣습니다. 주문이 나가 있는 동안엔
-Engine 의 `pending` 이 새 판단을 막으므로 쌓인 원문이 늦게 들어가도 주문이 겹치지 않습니다.
-별도 스레드로 주문을 돌리지 않는 까닭: Engine 을 두 스레드가 만지게 되고, 체결 전후 순서(진입 체결 → 그 뒤 호가로 청산
-판단)가 흐트러집니다. 한도를 넘으면 RawFeed 가 `overflow` 를 세우고 — 아래 「멈춤」.
+체결은 초당 수십 건이라 15초에 수백 건), 확인이 끝나면 실행이 쌓인 것을 순서대로 마저 넣습니다.
+별도 스레드로 주문을 돌리지 않는 까닭: Engine 을 두 스레드가 만지게 되고, 체결 전후 순서가 흐트러집니다.
+한도를 넘으면 RawFeed 가 `overflow` 를 세우고 — 아래 「멈춤」. 꺼낼 때 남아 있던 수의 최댓값은 summary `messages.backlog_max`.
+
+### 체결 확인 동안 쌓인 원문 (ws_trader 와 같은 판단 — 컨트롤러 결정 R14b)
+
+ws_trader 는 KRX 연결·MKU 연결·1초 타이머가 `asyncio.gather` 로 **따로 도는 작업**입니다. 한 작업이 `await act()`(주문·확인)를
+기다리는 동안 다른 두 작업은 그대로 Engine 을 부릅니다 — 그때 Engine 은 행동을 낸 순간부터 `pending`(보유도 그대로)이라
+판단이 나지 않습니다. 기다리던 작업 자신의 다음 원문은 웹소켓에 남아 있다가 `act` 가 `filled_*` 를 부른 **뒤** 처리되는데,
+그때는 진입이면 보유가 있어 진입 판단이 없고, 청산이면 보유가 없어 청산 판단이 없습니다 — 쌓인 원문으로는 어느 쪽이든 판단이 나지 않습니다.
+
+그래서 여기서는 모의 계좌 주문의 결과(`filled_entry`·`filled_exit`, 진입 실패의 `pending = False`)를 Engine 에 **바로 알리지 않고**,
+확인이 끝난 순간(`confirm_mono` — ws_trader 가 `pending` 을 푼 순간. 보낸 순간 `sent_mono` 가 아님)보다 앞에 받은 원문과 타이머를
+`pending` 인 Engine 에 다 넣은 뒤에 알립니다(그 뒤의 첫 원문·타이머 직전, 원문이 없으면 `timers()`). 그래서
+① 쌓인 원문이 ws_trader 에 없던 판단(예: 막 체결된 보유를 쌓인 호가로 손절)을 내지 않고 ② Engine 이 보는 시각이 뒤로 가지 않습니다.
+앱 쪽 보유(`self.pos`)·잔고 관문·대조는 확인 즉시 바뀝니다. 알림을 기다리는 동안 Engine 이 그래도 행동을 내면(약속을 어긴 전략) 주문하지 않습니다.
+`step` 은 쌓인 원문이 있으면 타이머를 지금까지 앞당기지 않고, 알림을 기다리는 동안엔 청산 재시도·정리 요청을 다음 step 으로 미룹니다.
+끝낼 때는 남은 알림을 먼저 합니다. 종이는 기다림이 없어 바로 알립니다(리플레이와 같음).
 
 ## 주문 (재전송 없음 · 남의 포지션 안 건드림)
 
 - 진입 행동은 이 실행의 보유가 없을 때만, 청산 행동은 보유가 있고 방향이 보유의 반대일 때만 받습니다. 아니면 전략 오류(「오류」).
 - 「모의 계좌」: `MockAccountBroker.fill` 한 번(시장가 1계약 — 주문 전 잔고 관문·`blind`·`unresolved` 규칙 그대로).
-  체결가를 받으면 그 값으로 `filled_entry`/`filled_exit`. 체결 시각(`now`)은 확인을 받은 순간의 단조 시계.
+  체결가를 받으면 그 값으로 `filled_entry`/`filled_exit`. 체결 시각(`now`)은 확인을 받은 순간의 단조 시계, 알리는 때는
+  아래 「체결 확인 동안 쌓인 원문」.
 - **체결가를 못 받았을 때(None)** — ws_trader 처럼 「호가로 기록하고 계속」 하지 않습니다.
   - 결과를 모르는 주문이 남았으면(`broker.open_unknowns()` — 응답 없음·번호 없음·15초 안에 확인 안 됨) → **멈춤(확인 필요)**.
     Engine 은 `pending` 그대로(새 판단 없음), 이 실행은 더 주문하지 않고, 끝에도 정리하지 않습니다.
   - 결과를 아는 실패(업무 거부·거부/취소 8·9·관문에 걸려 안 보냄)면 잔고를 한 번 봅니다 — 못 읽거나 실행이 아는 보유와
-    다르면 멈춤. 같으면 진입은 그 신호를 버리고(`pending = False`, ws_trader 와 같음), 청산은 **10초 뒤 같은 사유로 한 번
-    더**(1분봉 실행과 같은 규칙, 새 주문이지 응답 없는 주문의 재전송이 아님). 그동안 Engine 은 `pending` 그대로.
+    다르면 멈춤. 같으면 진입은 그 신호를 버리고(`pending = False`, ws_trader 와 같음), 청산은 **10초 뒤 같은 사유로 다시**
+    (1분봉 실행과 같은 규칙, 새 주문이지 응답 없는 주문의 재전송이 아님). 그동안 Engine 은 `pending` 그대로.
+    청산이 이렇게 **3번**(처음 + 다시 2번) 안 되면 더 내지 않고 멈춤(확인 필요, 「청산 주문이 3번 거절됨」 기록).
   - fill 자체가 예외를 내면(기록 실패 등) 결과를 모르는 것으로 보고 멈춤.
 - 「종이」: 주문 없이 **반대 호가**(매수 → 매도 호가, 매도 → 매수 호가 — 앱이 받은 마지막 1단 호가)로 체결, 수수료 체결마다
   US$2(`market.paper_fee`), 슬리피지 없음(ws_trader 종이 방식). 체결 시각은 그 행동을 낸 원문·타이머의 시각.
@@ -62,10 +78,11 @@ Engine 의 `pending` 이 새 판단을 막으므로 쌓인 원문이 늦게 들�
 | `RawGap` refill (다시 붙음) | 기록만 — 끊긴 동안의 공백은 Engine 의 `stale_s` 규칙이 다룸 |
 | `RawGap` environment (모의/실전 바뀜) | 보유 중이면 멈춤(확인 필요), 보유가 없으면 끝 |
 | `RawGap` rejected (원한 구독이 밀림·거절) | 위와 같음 — 시세 없이 청산 판단을 할 수 없음. 밀린 것이 기록용 MKU 체결(FA)뿐이면 기록만 |
-| `overflow` (쌓임 한도) | 언제나 멈춤(확인 필요) — 빠진 원문이 있어 같은 판단을 보장할 수 없음 |
+| `overflow` (쌓임 한도) | 보유·결과 모름 주문이 있으면 멈춤(확인 필요), 없으면 끝(「끝 — 쌓임 한도」) — 빠진 원문이 있어 같은 판단을 보장할 수 없음 |
 
 멈춘 실행은 Engine 에 더 넣지 않고(원문은 꺼내 버림) 주문도 하지 않으며, 중지나 끝 시각에 정리 없이 끝납니다
-(끝 까닭에 「정리 안 함 — 확인 필요」, 1분봉 R14 와 같음).
+(끝 까닭에 「정리 안 함 — 확인 필요」, 1분봉 R14 와 같음). 끝 기록은 보유가 있을 때만 「보유를 남겨 두었다」고 쓰고,
+없으면 「이 실행이 아는 보유는 없음(결과 모름 주문이 계좌에 남겼을 수는 있음)」이라고 씁니다.
 
 ## 끝
 
@@ -116,6 +133,7 @@ END_GRACE_MINUTES = 5       # 전략 flatten_at 뒤 이만큼 더 돌고 끝냄 
 RECONCILE_SECONDS = 30      # 보유 중 잔고 대조 간격
 RECHECK_SECONDS = 5         # 보유가 바뀐 뒤 잔고를 한 번 더 보기까지
 RETRY_SECONDS = 10          # 결과를 아는 실패 뒤 청산을 다시 시도하기까지
+MAX_EXIT_REJECTS = 3        # 결과를 아는 실패로 청산이 이만큼 안 되면(처음 + 다시 2번) 멈춤
 MAX_TIMER_CATCHUP = 600     # 밀린 타이머를 이보다 많이 돌려야 하면 건너뛰고 기록 (잠자기에서 깬 경우 등)
 #: Engine.filled_exit 가 돌려주는 칸 — trade 줄에 그대로 남긴다
 ENGINE_TRADE_KEYS = ("gross_ticks", "net_ticks", "net_usd", "held_s")
@@ -203,7 +221,8 @@ class RealtimeRun:
         self.last_signal: dict | None = None
         self.last_dk: float | None = None
         self.last_rho: float | None = None
-        self.counts = {"KA": 0, "FB": 0, "FA": 0, "bad": 0, "dropped": 0}
+        #: 받은 원문 수와 쌓임 최댓값(`backlog_max` — 꺼낼 때 큐에 남아 있던 수의 최댓값, 첫 장중에 여유를 재려고)
+        self.counts = {"KA": 0, "FB": 0, "FA": 0, "bad": 0, "dropped": 0, "backlog_max": 0}
         self._lock = threading.RLock()
         self._prepared = False
         self._finished = False
@@ -216,6 +235,9 @@ class RealtimeRun:
         self._minute_key = ""
         self._exit_retry: dict | None = None    # 결과를 아는 실패 뒤 다시 낼 청산 행동
         self._retry_at = 0.0
+        self._exit_rejects = 0                  # 이 보유의 청산이 결과를 아는 실패로 안 된 횟수
+        #: 체결 확인이 끝났지만 Engine 에 아직 알리지 않은 것 — {"until": 확인 끝 monotonic, "fn": 알리기}
+        self._settle: dict | None = None
         self._break_exit: dict | None = None    # 휴장 중 나온 청산 행동 — 휴장이 끝난 첫 step 에
         self._last_check: float | None = None
         self._last_exp = 0
@@ -336,16 +358,35 @@ class RealtimeRun:
                 return
             with bind(self.apilog):
                 try:
+                    self._note_backlog()
                     self._check_overflow()
-                    self._catch_up(item.recv_monotonic)
+                    if not self._finished:
+                        self._catch_up(item.recv_monotonic)
                     if not self._finished:
                         self._handle(item)
                 except Exception as e:
                     self._finish(f"오류: {error_text(e)}", to_kst(self.now()))
 
+    def _backlog(self) -> int:
+        try:
+            return int(getattr(self.feed, "pending", 0) or 0)
+        except Exception:
+            return 0
+
+    def _note_backlog(self) -> None:
+        self.counts["backlog_max"] = max(self.counts["backlog_max"], self._backlog())
+
     def _check_overflow(self) -> None:
-        if self.feed is not None and getattr(self.feed, "overflow", False) and not self.halted:
-            self.halt("원문이 쌓임 한도를 넘어 일부가 빠짐 — 같은 판단을 보장할 수 없어 주문을 멈춤")
+        """쌓임 한도를 넘었으면 — 보유·결과 모름이 있으면 멈춤(확인 필요), 없으면 끝(컨트롤러 결정 R14b)."""
+        if self.feed is None or not getattr(self.feed, "overflow", False) or self.halted or self._finished:
+            return
+        what = "원문이 쌓임 한도를 넘어 일부가 빠짐 — 같은 판단을 보장할 수 없음"
+        unknown = self.broker is not None and self.broker.open_unknowns() is not None
+        if self.pos is not None or unknown or self._settle is not None:
+            self.halt(f"{what} · 주문을 멈춤")
+        else:
+            self.j.write("event", text=what)
+            self._finish(f"끝 — 쌓임 한도: {what}", to_kst(self.now()))
 
     def _handle(self, item: RawMessage | RawGap) -> None:
         if isinstance(item, RawGap):
@@ -437,9 +478,24 @@ class RealtimeRun:
             self._next_timer += skip * TIMER_SECONDS
         while self._next_timer <= upto and not self._finished:
             t = self._next_timer
+            self._settle_due(t)     # 확인 끝 시각이 이 타이머보다 앞이면 먼저 알린다
             self._next_timer += TIMER_SECONDS
-            if not self.halted:
+            if not self.halted and not self._finished:
                 self.fire_timer(t)
+        self._settle_due(upto)
+
+    def _settle_due(self, upto: float) -> None:
+        """미룬 체결 알림 — `upto` 가 확인 끝 시각에 닿았으면 Engine 에 알린다(모듈 문서 「체결 확인 동안 쌓인 원문」)."""
+        st = self._settle
+        if st is not None and upto >= st["until"]:
+            self._settle = None
+            st["fn"]()
+
+    def _settle_now(self) -> None:
+        """미룬 체결 알림을 지금 — 끝낼 때, 새 주문을 내기 전에."""
+        if self._settle is not None:
+            st, self._settle = self._settle, None
+            st["fn"]()
 
     def timers(self) -> None:
         """지금(`monotonic()`)까지 밀린 1초 타이머를 돌린다 — 원문이 없을 때 실행 스레드가 부른다."""
@@ -448,8 +504,10 @@ class RealtimeRun:
                 return
             with bind(self.apilog):
                 try:
+                    self._note_backlog()
                     self._check_overflow()
-                    self._catch_up(self.monotonic())
+                    if not self._finished:
+                        self._catch_up(self.monotonic())
                 except Exception as e:
                     self._finish(f"오류: {error_text(e)}", to_kst(self.now()))
 
@@ -466,6 +524,11 @@ class RealtimeRun:
     def _act(self, act: Any, mono: float, hh: str) -> None:
         """Engine 이 돌려준 행동을 검사하고 실행한다. 약속에 없는 행동은 `TypeError`(→ 「오류」, 주문 없음)."""
         if act is None:
+            return
+        if self._settle is not None:
+            # 주문을 확인하는 동안 받은 원문 — ws_trader 에선 Engine 이 pending 이라 판단이 나지 않던 때
+            self.engine.pending = True
+            self.j.write("event", clock=hh, text="주문 확인 중에 받은 원문에서 나온 행동 — 주문하지 않음(Engine 은 pending 이어야 함)")
             return
         if not isinstance(act, dict) or act.get("act") not in ("enter", "exit"):
             raise TypeError(f"전략 행동은 None 또는 act 가 enter·exit 인 dict 여야 합니다: {act!r}")
@@ -517,9 +580,11 @@ class RealtimeRun:
 
     def _execute(self, act: dict, mono: float, reason: str) -> None:
         """행동 하나를 체결한다(모의 계좌 주문은 **한 번**). 체결을 못 받으면 `_no_fill` 규칙."""
+        self._settle_now()          # 앞선 체결 알림이 남았으면 먼저(새 주문 전에 Engine 이 보유를 알게)
         side = "buy" if act["side"] > 0 else "sell"
         entry = act["act"] == "enter"
         clock = _hhmmss(self.now())
+        until = None                # 모의 계좌: 확인 끝 시각 — Engine 알림을 그때까지 받은 원문 뒤로 미룬다
         if not self.orders:
             px = self.ask if side == "buy" else self.bid      # 반대 호가 — 앱이 받은 마지막 1단 호가
             if px is None:
@@ -532,22 +597,33 @@ class RealtimeRun:
             fill_mono = mono
         else:
             why = f"진입 ({side})" if entry else f"청산 · {reason}"
+            sent_mono = self.monotonic()        # 주문을 보낸 순간
             try:
                 got = self.broker.fill(side, float(act["ref"]), clock, why)
             except Exception as e:      # 브로커 안의 기록 실패 등 — 주문이 나갔는지 모른다
                 self.halt(f"주문 처리 중 오류 — 결과 모름 ({error_text(e)})")
                 return
+            until = fill_mono = self.monotonic()   # 확인이 끝난 순간 = ws_trader 가 pending 을 푼 순간
+            self.j.write("event", clock=clock, text=f"주문·확인 {until - sent_mono:.1f}초 — 그동안 받은 원문은 Engine 이 "
+                                                    "pending 인 채로 넣고, 그 뒤에 결과를 알림",
+                         sent_mono=round(sent_mono, 3), confirm_mono=round(until, 3))
             if got is None:
-                self._no_fill(act, entry, clock)
+                self._no_fill(act, entry, clock, until)
                 return
             px, fee = got, self.broker.last_fill_fee
-            fill_mono = self.monotonic()
         if entry:
-            self._entered(act, side, px, fee, fill_mono, clock)
+            self._entered(act, side, px, fee, fill_mono, clock, until)
         else:
-            self._exited(px, fee, fill_mono, clock, reason)
+            self._exited(px, fee, fill_mono, clock, reason, until)
 
-    def _no_fill(self, act: dict, entry: bool, clock: str) -> None:
+    def _later(self, until: float | None, fn) -> None:
+        """Engine 에 알리기 — 모의 계좌면 확인 끝 시각까지 받은 원문을 다 넣은 뒤(그때 `_settle_due`), 종이면 바로."""
+        if until is None or self._finishing:     # 끝내는 중이면 더 넣을 원문이 없다 — 바로
+            fn()
+        else:
+            self._settle = {"until": until, "fn": fn}
+
+    def _no_fill(self, act: dict, entry: bool, clock: str, until: float | None = None) -> None:
         """모의 계좌 fill 이 None — 호가로 기록하고 계속하지 않는다(모듈 문서 「주문」)."""
         b = self.broker
         what = "진입" if entry else "청산"
@@ -563,24 +639,34 @@ class RealtimeRun:
             self.halt(f"잔고 불일치 · 기대 {exp:+d} · 계좌 {held:+d}")
             return
         if entry:
-            self.engine.pending = False
             self.j.write("event", clock=clock, text=f"진입 주문 안 됨 · 잔고 {held:+d} 그대로 — 이 신호는 건너뜀")
+            self._later(until, lambda: setattr(self.engine, "pending", False))
         else:
+            self._exit_rejects += 1
+            if self._exit_rejects >= MAX_EXIT_REJECTS:
+                self.j.write("event", clock=clock, text=f"청산 주문이 {self._exit_rejects}번 거절됨 ({act.get('reason')}) — "
+                                                        "더 내지 않음, 계좌를 직접 확인하세요")
+                self.halt(f"청산이 {self._exit_rejects}번 거절됨 — 보유 {self.expected_position():+d} 남음")
+                return
             self._exit_retry = dict(act)
             self._retry_at = self.monotonic() + RETRY_SECONDS
             self.j.write("event", clock=clock, text=f"청산 안 됨 ({act.get('reason')}) · 잔고 {held:+d} — "
                                                     f"{RETRY_SECONDS}초쯤 뒤 같은 사유로 다시 시도")
 
-    def _entered(self, act: dict, side: str, px: float, fee: float | None, mono: float, clock: str) -> None:
-        # 앱 쪽 보유를 먼저 적는다 — 전략의 filled_entry 가 예외를 내도 끝내기 정리가 이 보유를 안다
+    def _entered(self, act: dict, side: str, px: float, fee: float | None, mono: float, clock: str,
+                 until: float | None = None) -> None:
+        # 앱 쪽 보유를 먼저(바로) 적는다 — 잔고 관문·대조·끝내기 정리가 이 보유를 안다. Engine 알림은 미룰 수 있다
         self.pos = {"side": side, "entry": px, "entry_time": clock, "entry_fee": fee, "entry_mono": mono}
+        self._exit_rejects = 0
         self._position_changed()
         self.j.write("event", clock=clock, text=f"진입 {side} {px}")
-        self.engine.filled_entry(act["side"], px, mono, act.get("time") or clock, "")
+        self._later(until, lambda: self.engine.filled_entry(act["side"], px, mono, act.get("time") or clock, ""))
 
-    def _exited(self, px: float, fee: float | None, mono: float, clock: str, reason: str) -> None:
+    def _exited(self, px: float, fee: float | None, mono: float, clock: str, reason: str,
+                until: float | None = None) -> None:
         pos, self.pos = self.pos, None
         self._exit_retry = self._break_exit = None
+        self._exit_rejects = 0
         self._position_changed()
         ticks = pnl_ticks(pos["side"], pos["entry"], px, self.tick)
         pnl = round(ticks * self.tick_value, 2)
@@ -592,6 +678,11 @@ class RealtimeRun:
             "pnl_after_fee": None if total is None else round(pnl - total, 2), "reason": reason,
             "entry_date": self._today, "exit_date": self._today,
         }
+        self._later(until, lambda: self._exit_notify(t, px, mono, clock, reason))
+
+    def _exit_notify(self, t: dict, px: float, mono: float, clock: str, reason: str) -> None:
+        """Engine 에 청산 체결을 알리고 trade 줄을 쓴다(Engine 칸 포함). 전략 오류여도 거래 기록은 남긴다."""
+        ticks, pnl, total = t["ticks"], t["pnl"], t["fee"]
         err = None
         try:
             got = self.engine.filled_exit(px, mono, reason)
@@ -621,6 +712,7 @@ class RealtimeRun:
         """앱이 스스로 내는 청산(정리 요청·끝) — 반대 호가를 기준가로, Engine 에는 `filled_exit(…, reason)`."""
         if self.pos is None or self.halted:
             return
+        self._settle_now()              # 진입 체결 알림이 남았으면 먼저(그 뒤 pending 을 다시 세운다)
         side = -self._side_int()
         ref = (self.bid if side < 0 else self.ask) or self.pos["entry"]
         self.engine.pending = True      # 앱 청산이 끝날 때까지 Engine 이 따로 청산을 내지 않게
@@ -635,8 +727,12 @@ class RealtimeRun:
                 return
             with bind(self.apilog):
                 try:
+                    self._note_backlog()
                     self._check_overflow()
-                    self._catch_up(self.monotonic())
+                    # 쌓인 원문이 있으면 타이머를 지금까지 앞당기지 않는다 — 그 원문보다 늦은 타이머가 먼저 들어가면
+                    # Engine 시각이 뒤로 간다(쌓인 원문을 넣을 때 `handle` 이 그 받은 시각까지 돌린다)
+                    if not self._finished and not self._backlog():
+                        self._catch_up(self.monotonic())
                 except Exception as e:
                     self._finish(f"오류: {error_text(e)}", to_kst(now))
                     return
@@ -661,14 +757,15 @@ class RealtimeRun:
         try:
             mono = self.monotonic()
             self._reconcile(mono, clock)
-            if not self.halted and not in_brk:
+            busy = self._settle is not None     # 쌓인 원문을 아직 넣는 중 — 주문 일은 다음 step 에
+            if not self.halted and not in_brk and not busy:
                 if self._break_exit is not None:
                     act, self._break_exit = self._break_exit, None
                     self._execute(self._fresh(act), mono, act.get("reason") or "")
                 elif self._exit_retry is not None and mono >= self._retry_at:
                     act, self._exit_retry = self._exit_retry, None
                     self._execute(self._fresh(act), mono, act.get("reason") or "")
-            if self._flatten_requested:
+            if self._flatten_requested and not busy:
                 if self.pos is not None and in_brk:
                     self._note("flatten-break", clock, "휴장 중 정리 요청 — 휴장이 끝나면 정리")
                 else:
@@ -772,6 +869,10 @@ class RealtimeRun:
     def _wrap_up(self, reason: str, clock: str) -> str:
         """보유 정리·끝 잔고·summary.json. 바뀐 끝 까닭을 돌려준다."""
         b, j = self.broker, self.j
+        try:
+            self._settle_now()      # 미룬 체결 알림(거래 기록 포함)을 먼저
+        except Exception as e:
+            j.write("event", clock=clock, text="끝낼 때 전략에 체결을 알리다 오류", error=error_text(e))
         paper_left = None
         if not self.halted and self.pos is not None and self._in_break(clock):
             if self.orders:
@@ -805,8 +906,11 @@ class RealtimeRun:
             reason = f"{reason} · {paper_left}"
         if self.halted:
             reason = f"{reason} · 정리 안 함 — 확인 필요: {self.halted}"
-            j.write("event", clock=clock, text=f"정리하지 않고 끝냄 — 보유는 그대로 남겨 두었습니다. "
-                                               f"계좌에서 직접 확인하세요 ({self.halted})")
+            if self.pos is not None:
+                left = f"보유는 그대로 남겨 두었습니다({self.expected_position():+d})"
+            else:   # 보유가 있다고 쓰지 않는다 — 결과를 모르는 주문이 계좌에 남겼을 수는 있다
+                left = "이 실행이 아는 보유는 없습니다(결과를 모르는 주문이 있었다면 계좌에 남았을 수 있음)"
+            j.write("event", clock=clock, text=f"정리하지 않고 끝냄 — {left}. 계좌에서 직접 확인하세요 ({self.halted})")
         open_order = b.open_unknowns() if b is not None else None
         if open_order is not None:
             j.write("event", clock=clock, text=f"끝낼 때 결과를 모르는 주문이 남아 있음 — 계좌·주문내역을 확인하세요 ({open_order})")

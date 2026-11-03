@@ -167,12 +167,15 @@ def started(tmp_path, **kw):
     return run, fake, feed, clock, out
 
 
-def enter_sell(run, clock):
-    """KRX 가 0.6원 올라 MKU 매도 진입 신호가 나게 넣는다."""
+def enter_sell(run, clock, *, settle=True):
+    """KRX 가 0.6원 올라 MKU 매도 진입 신호가 나게 넣는다. `settle` 이면 바로 뒤 타이머로 Engine 에 체결을 알리게 한다
+    (모의 계좌는 확인이 끝난 시각까지 받은 원문을 다 넣은 뒤에 알린다 — 그 뒤 원문·타이머가 와야 알림)."""
     clock.advance(1)
     run.handle(ka(clock, 1400.0))
     clock.advance(1)
     run.handle(ka(clock, 1400.6))
+    if settle:
+        run.timers()
 
 
 # ---------------------------------------------------------------- 시작 검사
@@ -347,6 +350,7 @@ def test_알려진_거절이면_신호를_건너뛰고_다음_신호는_새로_�
     fake.fill, fake.order_error = True, None
     clock.advance(1)
     run.handle(ka(clock, 1401.2))
+    run.timers()
     assert len(orders_of(fake)) == 2
     assert run.engine.pos is not None
 
@@ -357,6 +361,7 @@ def test_청산_행동이면_청산_주문_한_번과_trade_줄(tmp_path):
     fake.last = "0.7505"
     clock.advance(3)
     run.handle(fb(clock, 0.7504, 0.7506))      # 매도 보유 — 청산 쪽 호가 0.7506 → -7틱 → 손절
+    run.timers()
     assert [c[2] for c in orders_of(fake)] == ["sell", "buy"]
     assert run.engine.pos is None and run.pos is None
     t = rows(out, "trade")[-1]
@@ -388,8 +393,26 @@ def test_청산이_알려진_거절이면_10초_뒤_같은_사유로_한_번_더
     fake.fill, fake.order_error = True, None
     clock.advance(6)
     run.step(clock.now())
+    run.timers()
     assert len(orders_of(fake)) == 3
     assert rows(out, "trade")[-1]["reason"] == "손절"
+
+
+def test_청산이_3번_거절되면_더_내지_않고_확인_필요(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path)
+    enter_sell(run, clock)
+    fake.fill = False
+    fake.order_error = BusinessError("overseas_order", "E0001", "증거금 부족", {})
+    clock.advance(1)
+    run.handle(fb(clock, 0.7504, 0.7506))      # 1번째
+    for _ in range(4):
+        clock.advance(11)
+        run.step(clock.now())                  # 2·3번째, 그 뒤로는 없음
+    assert len(orders_of(fake)) == 1 + 3
+    assert run.halted and "3번" in run.halted
+    assert any("3번 거절" in t for t in texts(out))
+    run.finish("중지")
+    assert len(orders_of(fake)) == 4
 
 
 def test_청산_결과를_모르면_확인_필요·끝에_정리_안_함(tmp_path):
@@ -453,6 +476,7 @@ def test_중지하면_보유를_정리하고_filled_exit_실행_종료_정리(tm
     assert run.state == "끝" and run.ended_reason == "중지"
     s = read_json(out / "summary.json")
     assert s["kind"] == "realtime" and s["currency"] == "USD" and s["summary"]["trades"] == 1
+    assert "backlog_max" in s["messages"]
     assert feed.closed
 
 
@@ -475,6 +499,7 @@ def test_정리_요청은_청산만_하고_계속(tmp_path):
     enter_sell(run, clock)
     run.request_flatten()
     run.step(clock.now())
+    run.timers()
     assert rows(out, "trade")[-1]["reason"] == "실행 종료 정리"
     assert run.state == "진행 중" and run.pos is None
 
@@ -512,6 +537,7 @@ def test_KRX_가_끊겨도_MKU_호가와_타이머로_청산은_계속(tmp_path)
     assert run.halted is None and run.state == "진행 중"
     clock.advance(300)
     run.step(clock.now())           # 타이머로 시간 청산
+    run.timers()
     assert rows(out, "trade")[-1]["reason"] == "시간"
 
 
@@ -527,6 +553,27 @@ def test_쌓임_한도를_넘으면_확인_필요·보유는_정리_안_함(tmp_
     run.finish("중지")
     assert len(orders_of(fake)) == 1
     assert "확인 필요" in run.ended_reason
+
+
+def test_보유가_없을_때_쌓임_한도를_넘으면_끝(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path)
+    feed.overflow = True
+    clock.advance(1)
+    run.handle(fb(clock, 0.7499, 0.7501))
+    assert run.state == "끝" and run.halted is None
+    assert "쌓임 한도" in run.ended_reason and "확인 필요" not in run.ended_reason
+    assert not any("보유는 그대로" in t for t in texts(out))
+    assert feed.closed
+
+
+def test_멈췄는데_보유가_없으면_보유를_남겼다고_쓰지_않는다(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path)
+    fake.order_error = TransportError("overseas_order", "응답 없음")
+    enter_sell(run, clock)
+    run.finish("중지")
+    assert "확인 필요" in run.ended_reason
+    assert not any("보유는 그대로" in t for t in texts(out))
+    assert any("이 실행이 아는 보유는 없" in t for t in texts(out))
 
 
 def test_보유_중_환경이_바뀌면_확인_필요(tmp_path):
@@ -653,8 +700,9 @@ def test_체결_확인_15초_동안_온_원문은_쌓였다가_순서대로_들�
 
     run.sleep = sleep_and_arrive
     run.broker.sleep = sleep_and_arrive
-    enter_sell(run, clock)
-    assert run.engine.pos is not None and run.halted is None
+    enter_sell(run, clock, settle=False)
+    assert run.pos is not None and run.halted is None       # 앱 보유는 바로
+    assert run.engine.pos is None and run.engine.pending    # Engine 에는 쌓인 것을 넣은 뒤에 알림
     assert feed.pending == len(arrived) == 290 and not feed.overflow
     run.engine.seen.clear()
     while feed.items:
@@ -664,6 +712,68 @@ def test_체결_확인_15초_동안_온_원문은_쌓였다가_순서대로_들�
     times = [s[1] for s in run.engine.seen]
     assert times == sorted(times)   # 타이머도 받은 시각 순서 사이에
     assert len(orders_of(fake)) == 1
+
+
+def test_체결_확인_동안_쌓인_원문은_ws_trader_처럼_pending_으로_들어가고_그_뒤에_체결을_알린다(tmp_path):
+    """ws_trader 는 KRX·MKU·타이머가 따로 도는 작업이라, 한쪽이 주문을 기다리는 동안 다른 쪽 원문은 Engine 이
+    `pending`(보유 없음)인 채로 받는다. 그 원문으로는 판단이 나지 않고, `filled_entry` 는 확인이 끝난 시각에 불린다."""
+    run, fake, feed, clock, out = started(tmp_path)
+    fake.status = "1"
+    calls = []
+    eng = run.engine
+    real_entry = eng.filled_entry
+    eng.filled_entry = lambda side, px, now, hh, no="": (calls.append(("filled_entry", now)), real_entry(side, px, now, hh, no))
+    polls = {"n": 0}
+
+    def sleep_and_arrive(seconds):
+        clock.advance(seconds)
+        polls["n"] += 1
+        feed.put(fb(clock, 0.7505, 0.7507))     # 매도 보유라면 손절(-8틱)일 호가
+        if polls["n"] == 10:
+            for r in fake.history:
+                r["ord_sts"] = "6"
+            fake.held = -1
+            fake.fee += 2.0
+            clock.advance(0.1)                  # 확인이 끝난 시각은 마지막 원문보다 뒤
+
+    run.broker.sleep = sleep_and_arrive
+    enter_sell(run, clock, settle=False)
+    done = clock.mono
+    eng.seen.clear()
+    while feed.items:
+        run.handle(feed.get(0))
+    assert len(orders_of(fake)) == 1            # 쌓인 손절 호가로는 청산하지 않는다(ws_trader 와 같음)
+    assert eng.pos is None and eng.pending       # 아직 확인 끝 시각 뒤의 원문이 없다
+    clock.advance(0.5)
+    run.handle(fb(clock, 0.7505, 0.7507))        # 확인 뒤 처음 온 호가 — 이제 체결을 알리고 판단
+    assert calls == [("filled_entry", done)]
+    assert [c[2] for c in orders_of(fake)] == ["sell", "buy"]
+    # Engine 이 본 시각은 뒤로 가지 않는다(쌓인 원문 < 체결 알림 ≤ 그 뒤 원문)
+    times = [s[1] for s in eng.seen]
+    assert times == sorted(times) and max(t for t in times[:-1]) < done <= times[-1]
+
+
+def test_쌓인_원문이_있으면_step_이_타이머를_앞당기지_않는다(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path, mode="paper")
+    for _ in range(5):
+        clock.advance(1)
+        feed.put(fb(clock, 0.7499, 0.7501))
+    run.engine.seen.clear()
+    run.step(clock.now())           # 실행 스레드가 쌓인 것을 꺼내기 전에 살림 시각이 옴
+    while feed.items:
+        run.handle(feed.get(0))
+    run.timers()
+    times = [x[1] for x in run.engine.seen]
+    assert times == sorted(times) and len([x for x in run.engine.seen if x[0] == "quote"]) == 5
+
+
+def test_타이머로만_시간이_가도_체결을_알린다(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path)
+    enter_sell(run, clock, settle=False)          # 확인 0.5초
+    assert run.engine.pos is None
+    clock.advance(1)
+    run.timers()
+    assert run.engine.pos is not None
 
 
 def test_진짜_RawFeed_로_체결_확인_동안_루프가_받은_원문도_넘치지_않고_순서대로(tmp_path, loop, hub):
@@ -711,7 +821,7 @@ def test_진짜_RawFeed_로_체결_확인_동안_루프가_받은_원문도_넘�
         for _ in range(2):
             run.handle(run.feed.get(timeout=2))
         run.handle(run.feed.get(timeout=2))     # 진입 → 체결 확인 30번(그동안 300건이 쌓인다)
-        assert run.engine.pos is not None and run.halted is None
+        assert run.pos is not None and run.halted is None
         assert run.feed.pending == 300 and not run.feed.overflow
         run.engine.seen.clear()
         while run.feed.pending:
@@ -742,6 +852,16 @@ def test_run_forever_는_원문을_비우고_끝_시각에_끝내며_구독을_�
     assert feed.gets < 3 * 310
     timers = [s[1] for s in run.engine.seen if s[0] == "timer"]
     assert len(timers) >= 300 and all(b - a == pytest.approx(1.0) for a, b in zip(timers, timers[1:]))
+
+
+def test_쌓인_수의_최댓값을_summary_에(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path, mode="paper")
+    for _ in range(7):
+        feed.put(fb(clock, 0.7499, 0.7501))
+    while feed.items:
+        run.handle(feed.get(0))
+    run.finish("중지")
+    assert read_json(out / "summary.json")["messages"]["backlog_max"] == 6   # 하나 꺼낸 뒤 남은 수
 
 
 def test_구독이_밖에서_닫히면_끝낸다(tmp_path):

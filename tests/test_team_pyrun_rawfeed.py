@@ -15,8 +15,10 @@ import pytest
 
 from backend.realtime.feeds import Feed
 from backend.realtime.hub import Hub, MarketGroup
+from backend.realtime.ledger import MIN_PRIORITY
+from backend.realtime.link import LIVE, RECONNECTING
 from backend.team_pyrun import rawfeed
-from backend.team_pyrun.rawfeed import RawFeed, RawMessage
+from backend.team_pyrun.rawfeed import RawFeed, RawGap, RawMessage
 
 KRX = "A756B000"
 MKU = "MKUX26"
@@ -328,6 +330,7 @@ def test_앱이_뜰_때_루프를_잡고_꺼질_때_놓는다(monkeypatch):
         return None
 
     monkeypatch.setattr(routes_mod, "_recover", no_recover)
+    monkeypatch.setattr(routes_mod, "registry", lambda: _빈레지스트리())
     monkeypatch.setattr(rawfeed, "_loop", None)
 
     async def life():
@@ -340,3 +343,190 @@ def test_앱이_뜰_때_루프를_잡고_꺼질_때_놓는다(monkeypatch):
     seen, running = asyncio.run(life())
     assert seen is running
     assert rawfeed._loop is None
+
+
+class _빈레지스트리:
+    def stop_all(self):
+        return []
+
+
+# ── I1 구독 등급 ────────────────────────────────────────
+
+
+def 화면_관심목록(loop, hub, name: str, priority: int, n: int = 20):
+    """화면 하나가 국내 체결 n 개를 그 등급으로 선언한다(스무 자리를 채움)."""
+    루프에서(loop, hub.attach, name)
+    wishes = {Feed("domestic-day", "quote", f"A7569{i:03d}"): priority for i in range(n)}
+    asyncio.run_coroutine_threadsafe(hub.declare(name, wishes), loop).result(5)
+
+
+def test_가장_센_등급으로_선언한다(loop, hub):
+    assert MIN_PRIORITY == 1
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    try:
+        assert hub._ledger._wishes[feed.client_name] == {f: MIN_PRIORITY for f in 원하는것()}
+    finally:
+        feed.close()
+
+
+def test_관심목록_3등급이_스무_자리를_채워도_실행_구독은_밀리지_않는다(loop, hub):
+    화면_관심목록(loop, hub, "관심 먼저", 3)
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    try:
+        # 실행 뒤에 또 다른 화면이 같은 등급으로 다시 채워도 그대로.
+        화면_관심목록(loop, hub, "관심 나중", 3)
+        mine = {KA, FB}
+        assert mine <= set(hub._granted)
+        assert len(hub._subscribed) == 20
+        assert feed.subscriptions["rejected"] == [] and feed.subscriptions["failed"] == []
+        도착(loop, hub, [(KA, ka("1", 1)), (FB, fb("1", "2", 2))])
+        got = 받기(feed, 2)
+        assert all(isinstance(m, RawMessage) for m in got)
+    finally:
+        feed.close()
+
+
+# ── R12(b) 공백 표지 ────────────────────────────────────
+
+
+def test_구독이_밀리면_rejected_표지가_한_번_들어온다(loop, hub):
+    # 같은 1등급이 먼저 스무 자리를 차지하면 실행 구독이 밀린다.
+    화면_관심목록(loop, hub, "급한 화면", MIN_PRIORITY)
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    try:
+        gap = feed.get(timeout=1)
+        assert isinstance(gap, RawGap) and gap.kind == rawfeed.GAP_REJECTED
+        assert {(f["context"], f["kind"], f["sym"]) for f in gap.detail["feeds"]} == {
+            ("domestic-day", "quote", KRX),
+            ("overseas", "book", MKU),
+        }
+        # 같은 밀림이 다시 답해져도 표지는 다시 안 넣는다.
+        화면_관심목록(loop, hub, "급한 화면", MIN_PRIORITY)
+        assert feed.get(timeout=0.05) is None
+        # 자리가 나면 원문이 이어지고, 풀린 것은 표지가 아니다.
+        asyncio.run_coroutine_threadsafe(hub.detach("급한 화면"), loop).result(5)
+        도착(loop, hub, [(KA, ka("1", 1))])
+        assert isinstance(feed.get(timeout=1), RawMessage)
+        assert feed.get(timeout=0.05) is None
+    finally:
+        feed.close()
+
+
+def test_다시_붙으면_refill_표지가_원문_사이_제자리에_든다(loop, hub):
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    try:
+        def go():
+            hub._on_state("domestic", LIVE, "받는 중")          # 첫 연결 — 공백 아님
+            hub._on_data(KA, ka("1", 1))
+            hub._on_state("domestic", RECONNECTING, "끊김")
+            hub._on_state("domestic", LIVE, "다시 받는 중")     # refill
+            hub._on_data(FB, fb("1", "2", 2))
+
+        루프에서(loop, go)
+        got = 받기(feed, 3)
+        assert isinstance(got[0], RawMessage) and got[0].body["seq"] == 1
+        assert isinstance(got[1], RawGap) and got[1].kind == rawfeed.GAP_REFILL and got[1].market == "domestic"
+        assert isinstance(got[2], RawMessage) and got[2].body["seq"] == 2
+        assert got[0].recv_monotonic <= got[1].recv_monotonic <= got[2].recv_monotonic
+        assert feed.get(timeout=0.05) is None
+        assert feed.status["domestic"]["state"] == LIVE
+    finally:
+        feed.close()
+
+
+def test_환경이_바뀌면_environment_표지가_원문_사이_제자리에_든다(loop, hub):
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    try:
+        async def go():
+            hub._on_data(KA, ka("1", 1))
+            await hub.reconnect()
+            hub._on_data(FB, fb("1", "2", 2))
+
+        asyncio.run_coroutine_threadsafe(go(), loop).result(5)
+        got = 받기(feed, 3)
+        assert [type(m).__name__ for m in got] == ["RawMessage", "RawGap", "RawMessage"]
+        assert got[1].kind == rawfeed.GAP_ENVIRONMENT and got[1].detail == {"active": "paper"}
+        assert feed.get(timeout=0.05) is None
+    finally:
+        feed.close()
+
+
+def test_저장본_종목_알림은_연결_상태와_따로_적고_표지가_아니다(loop, hub):
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    try:
+        def go():
+            hub._on_state("overseas", LIVE, "받는 중")
+            hub._on_state("overseas", "replay-finished", "끝났습니다", MKU)
+
+        루프에서(loop, go)
+        assert feed.status["overseas"]["state"] == LIVE
+        assert feed.replay_notes[("overseas", MKU)]["state"] == "replay-finished"
+        assert feed.get(timeout=0.05) is None
+    finally:
+        feed.close()
+
+
+def test_status_는_통째로_갈아_끼운다(loop, hub):
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    try:
+        루프에서(loop, hub._on_state, "domestic", LIVE, "받는 중")
+        before = feed.status
+        snapshot = dict(before)
+        루프에서(loop, hub._on_state, "overseas", LIVE, "받는 중")
+        assert feed.status is not before
+        assert before == snapshot  # 옛 dict 는 안 바뀐다
+        assert set(feed.status) == {"domestic", "overseas"}
+    finally:
+        feed.close()
+
+
+# ── R12(a) 막힌 get 깨우기 ──────────────────────────────
+
+
+def test_기다리는_get_은_close_에_깨어나_None(loop, hub):
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    out = []
+    waiter = threading.Thread(target=lambda: out.append(feed.get(timeout=None)), daemon=True)
+    waiter.start()
+    time.sleep(0.1)
+    feed.close()
+    waiter.join(timeout=2)
+    assert not waiter.is_alive()
+    assert out == [None]
+    assert feed.get(timeout=None) is None  # 닫힌 뒤에는 바로 None
+
+
+# ── I2 남은 구독 정리 ───────────────────────────────────
+
+
+def test_close_all_은_남은_구독을_모두_놓는다(loop, hub):
+    one = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    two = RawFeed("run2", [Feed("overseas", "quote", MKU)], hub=hub, loop=loop)
+    assert {one.client_name, two.client_name} <= set(hub._clients)
+    assert sorted(rawfeed.close_all()) == ["run1", "run2"]
+    assert one.closed and two.closed
+    assert one.client_name not in hub._clients and two.client_name not in hub._clients
+    assert hub.raw_listeners == []
+    assert hub._subscribed == frozenset()
+    assert rawfeed._open_feeds == {}
+    assert rawfeed.close_all() == []
+
+
+def test_close_한_것은_목록에서_빠진다(loop, hub):
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    assert id(feed) in rawfeed._open_feeds
+    feed.close()
+    assert id(feed) not in rawfeed._open_feeds
+
+
+def test_앱이_꺼질_때_남은_원문_구독을_닫는다(loop, hub, monkeypatch):
+    from backend.team_pyrun import routes as routes_mod
+
+    feed = RawFeed("run1", 원하는것(), hub=hub, loop=loop)
+    monkeypatch.setattr(routes_mod, "registry", lambda: _빈레지스트리())
+
+    # 앱 루프 위에서 꺼짐을 돌린다(close_all 은 스레드로 넘어가 루프 일을 기다린다).
+    asyncio.run_coroutine_threadsafe(routes_mod.pyrun_shutdown(None), loop).result(10)
+    assert feed.closed
+    assert feed.client_name not in hub._clients
+    assert hub.raw_listeners == []

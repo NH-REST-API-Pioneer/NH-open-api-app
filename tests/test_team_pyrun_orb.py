@@ -10,7 +10,7 @@ week03 파일은 내려받은 것이라 실행하지 않고, 같은 바이트를
 import hashlib
 import json
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -200,21 +200,48 @@ def test_휴장_중엔_손절_익절_없이_기한만(orb):
     assert orb.exit_reason("205000", 0.7470, None, None, early) == ("손절", 0.7470)
 
 
-def test_실행기에서_시가_갭_손절은_시가_슬리피지로_체결(orb, tmp_path):
+def _buy_runner(strat, tmp_path, hh="09"):
+    """`hh`:00 개장 범위(0.7480~0.7500, 20틱)를 쌓고 `hh`:15 봉 종가 0.7502 로 위 돌파 → `hh`:16 시가 0.7503 에 매수.
+
+    진입가 = 시가 0.7503 + 슬리피지 1틱 = 0.7504 · 손절 = 범위 아래 끝 0.7480 · 익절 = 0.7504 + 20틱 = 0.7524."""
     j = Journal(tmp_path / "journal.jsonl")
-    r = Runner(orb, j, PaperBroker(j, 0.0001, fee=0.0, slip_ticks=1), 0.0001, 2.5)
+    r = Runner(strat, j, PaperBroker(j, 0.0001, fee=0.0, slip_ticks=1), 0.0001, 2.5)
     r.live_date = "20261030"
-    # 09:15 까지 범위(0.7480~0.7500, 20틱), 09:15 봉 종가 0.7502 가 위로 돌파 → 09:16 시가에 매수
     for i in range(15):
-        r.on_minute_closed(Minute("20261030", f"09{i:02d}00", 0.7490, 0.7500, 0.7480, 0.7490, 1))
-    r.on_minute_closed(Minute("20261030", "091500", 0.7500, 0.7502, 0.7499, 0.7502, 1))
+        r.on_minute_closed(Minute("20261030", f"{hh}{i:02d}00", 0.7490, 0.7500, 0.7480, 0.7490, 1))
+    r.on_minute_closed(Minute("20261030", f"{hh}1500", 0.7500, 0.7502, 0.7499, 0.7502, 1))
     assert r.pending is not None
-    r.on_price("091600", 0.7503)
-    r.on_price("091600", 0.7503, ref_low=0.7501, ref_high=0.7504)
-    assert r.pos is not None and r.pos["entry"] == 0.7504
+    r.on_price(f"{hh}1600", 0.7503)          # 그 분 시가 하나로 진입 (대기 신호 → 다음 분 시가)
+    assert r.pos is not None and (r.pos["entry"], r.pos["entry_time"]) == (0.7504, f"{hh}1600")
+    return r
+
+
+def test_실행기에서_시가_갭_손절은_시가_슬리피지로_체결(orb, tmp_path):
+    r = _buy_runner(orb, tmp_path)
     r.on_price("091700", 0.7470)             # 시가가 범위 아래 끝 0.7480 을 이미 지남 → 시가 − 1틱
     assert [(t["reason"], t["exit"], t["exit_time"]) for t in r.trades] == [("손절", 0.7469, "091700")]
     assert orb.day.stops == 1
+
+
+def test_실행기에서_다음_개장_전_청산은_그_분_시가_슬리피지로(orb, tmp_path):
+    # hold_min 600 → 기한 19:16, 서울 신호의 exit_by(런던 개장 17:00)가 더 이름
+    strat = type(orb)(replace(orb.p, hold_min=600))
+    r = _buy_runner(strat, tmp_path)
+    r.on_price("165900", 0.7505)
+    assert r.trades == []
+    r.on_price("170000", 0.7510)             # 그 분 시가 → 시가 − 1틱
+    assert [(t["reason"], t["exit"], t["exit_time"]) for t in r.trades] == [("다음 개장 전 청산", 0.7509, "170000")]
+
+
+def test_실행기에서_휴장_중_기한은_손절가를_지나도_시간_청산(orb, tmp_path):
+    # 런던 17:16 진입 · hold_min 204 → 기한 20:40 (휴장 20:35~20:50), exit_by 22:30 은 더 늦음
+    strat = type(orb)(replace(orb.p, hold_min=204))
+    r = _buy_runner(strat, tmp_path, hh="17")
+    r.on_price("203600", 0.7470)             # 휴장 중 손절가 아래 — 손절 없음
+    assert r.trades == []
+    r.on_price("204000", 0.7470)             # 기한은 휴장이어도 그 분 시가에서 → 시가 − 1틱, 사유는 시간 청산
+    assert [(t["reason"], t["exit"], t["exit_time"]) for t in r.trades] == [("시간 청산", 0.7469, "204000")]
+    assert strat.day.stops == 0
 
 
 # ---------------------------------------------------------------- 화면의 손절·익절 (exit_levels)

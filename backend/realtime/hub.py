@@ -82,6 +82,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time  # 팀: 원문 구독자에게 넘기는 받은 순간(단조 시계)
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -270,6 +271,9 @@ class Hub:
         self._session_clock_wanted = session_clock
         self._session_clock: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        # 팀: 원문 구독자 — 묶기 전 메시지를 받은 순서대로 `(market, api_id, sym, body, 받은 순간)` 로 받는다.
+        # 서버 안에서만 쓴다(`backend/team_pyrun/rawfeed.py`). 이벤트 루프에서만 넣고 뺀다.
+        self.raw_listeners: list[Callable[[str, str, str, dict[str, Any], float], None]] = []
 
     # ── 살림 ────────────────────────────────────────────────
 
@@ -571,6 +575,14 @@ class Hub:
             # 해제 직후에 오는 메시지입니다. 그만 보겠다고 한 값을 화면에
             # 올리지 않습니다.
             return
+        # 팀: 원문 구독자에게 묶기 전에, 받은 순서대로 넘긴다(아래 if 묶음 전체). 구독자 오류는 허브로 올리지 않는다.
+        if self.raw_listeners:
+            received = time.monotonic()
+            for listener in tuple(self.raw_listeners):
+                try:
+                    listener(key[0], key[1], key[2], body, received)
+                except Exception:
+                    logger.exception("원문 구독자가 실패했습니다.")
         self._coalescer.add(feed, body)
 
     def _on_state(self, market: str, state: str, detail: str, sym: str = "") -> None:

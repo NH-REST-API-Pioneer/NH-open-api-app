@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 from backend.nh_api import client as nh_client
 from backend.team_hosts import LOCAL_HOSTS, public_hosts
-from backend.team_pyrun import apilog, strategy_files
+from backend.team_pyrun import apilog, rawfeed, strategy_files
 from backend.team_pyrun.journal import Journal
 from backend.team_pyrun.live import RunSpec, StartRefused
 from backend.team_pyrun.loader import scan_all
@@ -375,6 +375,7 @@ async def _recover() -> None:
 def pyrun_startup() -> asyncio.Task:
     """앱이 뜰 때(이벤트 루프 안에서): NH 호출 관찰자를 꽂고 남은 실행 닫기를 따로 시작한다(기다리지 않는다)."""
     nh_client.call_observer = apilog.observe
+    rawfeed.bind_loop(asyncio.get_running_loop())  # 실시간 실행이 허브 구독을 이 루프에 맡긴다
     return asyncio.create_task(_recover())
 
 
@@ -392,3 +393,4 @@ async def pyrun_shutdown(recover_task: asyncio.Task | None) -> None:
     finally:
         if nh_client.call_observer is apilog.observe:
             nh_client.call_observer = None
+        rawfeed.unbind_loop()

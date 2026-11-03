@@ -11,6 +11,7 @@
     prepare()        시작 검사 → 원문 구독(마지막에). 안 되면 `StartRefused`(run.json 은 「끝」으로 남김, 주문 없음)
     handle(item)     원문 하나·공백 표지 하나 — 그 시각까지 밀린 1초 타이머를 먼저 돌리고 넣는다 (리플레이도 이 길)
     fire_timer(t)    Engine.on_timer(t, 그 순간 벽시계 HHMMSS) 한 번
+    start_timers_at(t)  첫 타이머 시각 — 녹화 리플레이(`replay.replay_realtime`)가 첫 원문 시각으로 둘 때만
     step(now)        1초 한 번 살림 — 밀린 타이머, 끝 시각·중지·정리 요청, 잔고 대조, 청산 재시도, 1분 줄
     run_forever()    실행 스레드 본문. 끝나면(예외 포함) finish, 원문 구독은 언제나 닫음
     finish(reason)   보유 정리(멈춘 실행은 안 함)·끝 잔고·요약. 두 번 불려도 한 번만
@@ -22,7 +23,7 @@
 | KRX `KA` (`signal_sym`) | `tick_div == "1"` 이고 `exec_qty` > 0 | `on_krx(last_pric, recv_monotonic, exch_tm[:6])` |
 | MKU `FB` (`sym`) | `bid_pric_1`·`ask_pric_1` 을 수로 읽을 수 있음 | `on_quote(bid, ask, recv_monotonic, ko_exec_tm[:6])` |
 | MKU `FA` (`sym`) | 기록용 — 마지막 체결가만 1분 줄에 | 없음 |
-| 1초 타이머 | 첫 타이머 = 구독 시작 + 1초, 그 뒤 1초마다 | `on_timer(t, t 순간의 벽시계 HHMMSS)` |
+| 1초 타이머 | 첫 타이머 = 구독 시작 + 1초(리플레이는 첫 원문 시각), 그 뒤 1초마다 | `on_timer(t, t 순간의 벽시계 HHMMSS)` |
 
 시각 기준은 ws_trader 처럼 **받은 순간의 단조 시계**(`RawMessage.recv_monotonic`, 허브의 `time.monotonic()`)입니다.
 타이머는 받은 시각 순서 사이에 끼웁니다 — 원문 하나를 넣기 전에 그 원문의 받은 시각까지 밀린 타이머를 먼저 돌립니다
@@ -107,7 +108,7 @@ import math
 import threading
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -179,7 +180,8 @@ class RealtimeRun:
                  feed_factory: Callable[[str, Iterable[Feed]], Any] = default_feed_factory,
                  now: Callable[[], datetime] = now_kst, monotonic: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
-                 active_env: Callable[[], str | None] = runtime.active_environment, stops_before: int = 0):
+                 active_env: Callable[[], str | None] = runtime.active_environment, stops_before: int = 0,
+                 params: dict[str, Any] | None = None):
         self.run_id, self.folder, self.loaded, self.spec = run_id, Path(folder), loaded, spec
         self.now, self.monotonic, self.sleep = now, monotonic, sleep
         self.feed_factory, self.active_env = feed_factory, active_env
@@ -192,7 +194,8 @@ class RealtimeRun:
         self.apilog = ApiLog(self.folder / "api_log.jsonl", run_id)
         self.orders = spec.mode == "orders"
         self.tick, self.tick_value = loaded.tick, loaded.tick_value
-        self.engine = loaded.new()          # 실시간 전략은 시장이 채우는 Params 칸이 없다
+        # 실시간 전략은 시장이 채우는 Params 칸이 없다. `params` 는 기본 Params 에서 바꿀 칸(리플레이의 기준값 바꿔 보기)
+        self.engine = loaded.new() if not params else loaded.strategy_cls(replace(loaded.params_cls(), **params))
         self.p = self.engine.p
         self.stops_before = int(stops_before)
         if self.stops_before and hasattr(self.engine, "stops"):
@@ -510,6 +513,14 @@ class RealtimeRun:
                         self._catch_up(self.monotonic())
                 except Exception as e:
                     self._finish(f"오류: {error_text(e)}", to_kst(self.now()))
+
+    def start_timers_at(self, mono: float) -> None:
+        """첫 1초 타이머 시각을 정한다(`prepare` 뒤, 첫 원문 전). 장중은 쓰지 않음(구독 시작 + 1초).
+
+        녹화 리플레이가 week03 `replay_live.py` 처럼 **첫 원문의 받은 시각**에 첫 타이머를 두려고 부른다 —
+        타이머 격자가 같아야 시간 청산·마감 청산 시각이 같다."""
+        with self._lock:
+            self._next_timer = float(mono)
 
     def _hhmmss_at(self, mono: float) -> str:
         """단조 시계 `mono` 순간의 벽시계 HHMMSS."""

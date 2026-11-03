@@ -1,0 +1,57 @@
+# 팀: 도커 빌드에 보내지 않는 것. 키·설정·비밀값은 절대 이미지에 들어가면 안 된다.
+
+# 버전 관리·도구 폴더
+.git
+.claude
+.codex
+.agents
+.superpowers
+.gstack
+.vscode
+.idea
+CLAUDE.md
+claude.md
+CLAUDE.local.md
+CODEX.md
+AGENTS.md
+
+# 비밀값·설정 (.gitignore 와 같은 기준)
+.env
+.env.*
+!.env.example
+config.yaml
+config.yml
+**/config.yaml
+**/config.yml
+**/config*.local*
+**/credentials*
+**/secrets*
+*.pem
+*.key
+
+# 설치·빌드 산출물 (이미지 안에서 새로 만든다)
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+frontend/dist
+backend/static
+
+# 시험·참고 자료 (실행에 필요 없다)
+tests
+captures
+docs/images
+docs/superpowers
+rest_api_docs
+*API 문서*
+*api 문서*
+**/*.xlsx
+**/*.xls
+**/*.mst
+**/*.log
+*.png
+*.jpg
+*.jpeg
+.DS_Store

@@ -338,6 +338,59 @@ def test_로컬_Origin_과_Origin_없음은_받는다(client, reg):
     assert client.post(f"{BASE}/runs/{run_id}/stop", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 204
 
 
+# 서버 배포(도커 + Cloudflare Tunnel): 브라우저가 https://nh.example.com 으로 열면 Origin 이 그 주소이고 Host 도 그 주소다.
+SITE = "nh.example.com"
+
+
+@pytest.mark.parametrize("method,path,body", UNSAFE)
+def test_자기_주소에서_온_Origin_은_받는다_Host_와_같을_때(client, reg, method, path, body):
+    # 거절되지 않았다는 것만 본다(403 이 아니면 된다 — 실행 id·파일 때문에 다른 4xx 는 날 수 있다)
+    r = client.request(method.upper(), f"{BASE}{path}", json=body,
+                       headers={"Origin": f"https://{SITE}", "Host": SITE})
+    assert r.status_code != 403, r.text
+    # 포트가 붙은 주소(직접 접속·사설망)도 같으면 받는다
+    r = client.request(method.upper(), f"{BASE}{path}", json=body,
+                       headers={"Origin": "http://10.0.0.5:8000", "Host": "10.0.0.5:8000"})
+    assert r.status_code != 403, r.text
+
+
+@pytest.mark.parametrize("method,path,body", UNSAFE)
+def test_Host_와_다른_Origin_은_403(client, untouched, method, path, body):
+    cases = [
+        ("https://evil.com", SITE),
+        (f"https://{SITE}.evil.com", SITE),
+        (f"https://evil.{SITE}", SITE),
+        (f"https://{SITE}:8443", SITE),        # 같은 호스트라도 포트가 다르면 다른 출처
+        (f"http://{SITE}:8000", SITE),         # 기본 포트(443)가 아니다
+        (f"https://{SITE}", f"{SITE}:8000"),   # Host 쪽이 포트를 말하면 Origin 도 그 포트여야 한다
+        ("null", SITE),
+        ("https://", SITE),
+    ]
+    for origin, host in cases:
+        r = client.request(method.upper(), f"{BASE}{path}", json=body, headers={"Origin": origin, "Host": host})
+        assert (r.status_code, r.json()) == (403, DENIED), (origin, host)
+
+
+def test_자기_주소_Origin_이어도_cross_site_는_403(client, untouched):
+    r = client.post(f"{BASE}/runs/{FINISHED}/stop",
+                    headers={"Origin": f"https://{SITE}", "Host": SITE, "Sec-Fetch-Site": "cross-site"})
+    assert (r.status_code, r.json()) == (403, DENIED)
+
+
+def test_프록시_머리글이_있어도_Host_로_견준다(reg):
+    """uvicorn `--proxy-headers` 는 scheme·클라이언트 주소만 바꾸고 Host 는 건드리지 않는다. 같은 걸 시험에서 감싸 확인."""
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    proxied = TestClient(ProxyHeadersMiddleware(app, trusted_hosts="*"))
+    base = {"X-Forwarded-Proto": "https", "X-Forwarded-For": "203.0.113.9", "Host": SITE}
+    ok = proxied.post(f"{BASE}/strategies/reload", headers={**base, "Origin": f"https://{SITE}"})
+    assert ok.status_code != 403, ok.text
+    # 전달된 호스트 머리글(X-Forwarded-Host)로는 속일 수 없다 — 쓰지 않는다
+    bad = proxied.post(f"{BASE}/strategies/reload",
+                       headers={**base, "Origin": "https://evil.com", "X-Forwarded-Host": "evil.com"})
+    assert (bad.status_code, bad.json()) == (403, DENIED)
+
+
 def test_조회는_Origin_을_가리지_않는다(client):
     assert client.get(f"{BASE}/runs", headers={"Origin": "https://evil.example"}).status_code == 200
 

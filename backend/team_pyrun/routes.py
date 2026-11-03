@@ -46,12 +46,52 @@ LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 FOREIGN_SITE = "다른 사이트에서 온 요청은 받지 않습니다"
 
 
+#: 주소에 포트가 없을 때의 기본 포트.
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin_endpoint(origin: str) -> tuple[str, int] | None:
+    """`Origin` 을 (호스트, 포트)로. 뜻을 못 알아보면(`null`·빈 호스트·이상한 포트) `None`."""
+    try:
+        parts = urlparse(origin)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return None
+    if not host or parts.scheme not in DEFAULT_PORTS:
+        return None
+    return host, port if port is not None else DEFAULT_PORTS[parts.scheme]
+
+
+def _same_as_host(origin: str, host_header: str | None) -> bool:
+    """`Origin` 이 브라우저가 이 서버를 부른 주소(`Host` 머리글)와 같은 출처인지.
+
+    터널 뒤에서는 브라우저가 `https://nh.예시.com` 으로 열어 `Origin` 도 `Host` 도 그 주소다.
+    `Host` 에 포트가 없으면 `Origin` 은 그 방식의 기본 포트(80·443)여야 한다 — 프록시가 http 로 넘기든 https 로 넘기든 같다.
+    `X-Forwarded-Host` 는 보지 않는다(uvicorn 도 안 쓴다) — 밖에서 마음대로 적어 보낼 수 있는 값이다."""
+    endpoint = _origin_endpoint(origin)
+    if endpoint is None or not host_header:
+        return False
+    try:
+        wanted = urlparse("//" + host_header)
+        wanted_host, wanted_port = wanted.hostname, wanted.port
+    except ValueError:
+        return False
+    if not wanted_host:
+        return False
+    host, port = endpoint
+    if wanted_port is None:
+        return host == wanted_host and port in DEFAULT_PORTS.values()
+    return host == wanted_host and port == wanted_port
+
+
 def refuse_cross_site(request: Request) -> None:
-    """다른 사이트의 웹 페이지가 사용자 브라우저로 보낸 쓰기 요청을 막는다(CSRF) — 이 앱은 로컬에서 돌아 로그인이 없고,
+    """다른 사이트의 웹 페이지가 사용자 브라우저로 보낸 쓰기 요청을 막는다(CSRF) — 이 앱은 로그인이 없고,
     흘려보낸 `POST .../flatten` 한 번이 모의계좌 주문이 된다. 조회(GET)는 보지 않는다.
 
     - `Sec-Fetch-Site: cross-site` 면 거절.
-    - `Origin` 이 있는데 호스트가 localhost·127.0.0.1·::1 이 아니면(`null` 포함) 거절.
+    - `Origin` 이 있으면 다음 중 하나여야 한다. 아니면(`null` 포함) 거절.
+        1. 호스트·포트가 요청의 `Host` 머리글과 같다(서버 배포: 브라우저가 연 주소 그대로 온 요청).
+        2. 호스트가 localhost·127.0.0.1·::1 이다(개발 서버가 :5173 에서 :8000 으로 프록시하면 `Origin` 은 5173, `Host` 는 8000).
     - `Origin` 이 없으면 통과(curl·시험은 보내지 않는다). 브라우저의 쓰기 요청에는 늘 붙는다."""
     if request.method not in UNSAFE_METHODS:
         return
@@ -63,7 +103,8 @@ def refuse_cross_site(request: Request) -> None:
             host = urlparse(origin).hostname
         except ValueError:
             host = None
-        if host not in LOCAL_HOSTS:
+        # 팀: 서버 배포(Cloudflare Tunnel 뒤)에서는 Origin 이 localhost 가 아니라 공개 주소라서 Host 와 같으면 받는다.
+        if host not in LOCAL_HOSTS and not _same_as_host(origin, request.headers.get("host")):
             raise HTTPException(status_code=403, detail=FOREIGN_SITE)
 
 

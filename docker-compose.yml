@@ -1,0 +1,28 @@
+# 팀: 서버 배포 — 앱 + Cloudflare Tunnel. 안내: docs/team/deploy.md
+#
+# 서버 포트는 하나도 열지 않는다(`ports:` 없음). 밖에서는 터널로만 들어오고, 접속은 Cloudflare Access 가 이메일로 막는다.
+# 앱에는 자체 로그인이 없다 — 여기에 `ports:` 를 넣으면 누구나 주문 화면에 들어온다.
+#
+# Cloudflare 대시보드 > Tunnels > Public Hostname:  nh.<도메인>  →  Service: HTTP, URL: app:8000
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - nhdata:/data          # 키·토큰·전략·실행 기록. `docker compose down -v` 를 하면 지워진다.
+    expose:
+      - "8000"                # 같은 compose 망의 cloudflared 만 닿는다
+    init: true
+    stop_grace_period: 30s    # 끌 때 돌던 전략 실행에 중지를 요청하고 마무리하는 시간
+
+  cloudflared:
+    image: cloudflare/cloudflared:2025.11.1
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?.env 에 TUNNEL_TOKEN 을 넣어 주세요}
+    restart: unless-stopped
+    depends_on:
+      - app
+
+volumes:
+  nhdata:

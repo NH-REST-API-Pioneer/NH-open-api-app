@@ -161,7 +161,7 @@ Minute: date, time(HHMMSS, 봉 시작), open, high, low, close, volume
   종이 실행 둘이 한 journal 에 섞이지 않고, 폴더마다 `summary.json` 하나라 week02 `summarize_runs.py` 가 모든 실행을 읽는다.
   (week02 는 같은 날 다시 켜면 같은 폴더에 이어 쓰고 `summary_HHMMSS.json` 을 따로 써서 두 번째 실행이 요약에서 빠졌다.)
 - 종목이 최근월물이 아니면 폴더 이름에 종목을 넣는다(`…_bb_paper_A756C000`).
-- 「그날 손절 수 이어받기」는 같은 날·같은 `NAME`·같은 종목의 앞선 폴더들의 `trade` 줄에서 센다.
+- 「그날 손절 수 이어받기」는 같은 날·같은 `NAME`·같은 종목·같은 방식(`orders`/`paper`, R28)의 앞선 폴더들의 `trade` 줄에서 센다.
 - `journal.jsonl` — week02 와 **같은 kind·칸**: `event` `account` `signal` `order` `fill` `trade`.
   `signal` 은 week02 처럼 진입 신호와 「신호 후보」뿐 아니라 **판정 봉마다 전부** 남긴다(대시보드 「지금 판단」·차트용).
   week02 `summarize_runs.py` 가 읽을 수 있어야 한다.

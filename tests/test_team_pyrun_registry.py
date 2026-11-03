@@ -131,7 +131,8 @@ def test_그날_앞선_실행의_손절을_이어받는다(tmp_path):
     reg, fake, _ = make_registry(tmp_path)
     root = tmp_path / "pyruns"
     write_run(root, f"{TODAY}_fake_paper", state="끝", trades=[trade(), trade("익절", 5000)])    # 손절 1
-    write_run(root, f"{TODAY}_fake_orders_2", state="끝", mode="orders", trades=[trade()])         # 손절 1 (같은 날·NAME·종목)
+    write_run(root, f"{TODAY}_fake_paper_3", state="끝", trades=[trade()])                         # 손절 1 (같은 날·NAME·종목·방식)
+    write_run(root, f"{TODAY}_fake_orders_2", state="끝", mode="orders", trades=[trade()])         # 다른 방식(R28)
     write_run(root, f"{TODAY}_fake_paper_{OTHER_SYM}", state="끝", sym=OTHER_SYM, trades=[trade()])  # 다른 종목
     write_run(root, f"{TODAY}_bb_paper", state="끝", name="bb", trades=[trade()])                  # 다른 전략
     write_run(root, "20261102_fake_paper", state="끝", trades=[trade(date="20261102")])            # 어제
@@ -141,6 +142,18 @@ def test_그날_앞선_실행의_손절을_이어받는다(tmp_path):
     assert status["id"] == f"{TODAY}_fake_paper_2"
     assert run.stops_before == 2 and run.runner.strat.day.stops == 2
     assert status["stops"] == 2
+
+
+def test_손절_이어받기는_같은_방식의_폴더만_센다(tmp_path):
+    """R28: 종이 실행의 손절이 모의 계좌 실행의 하루 손절 한도를 쓰지 않고, 반대도 마찬가지."""
+    reg, fake, _ = make_registry(tmp_path)
+    root = tmp_path / "pyruns"
+    write_run(root, f"{TODAY}_fake_paper", state="끝", trades=[trade(), trade()])                  # 종이 손절 2
+    write_run(root, f"{TODAY}_fake_orders", state="끝", mode="orders", trades=[trade()])           # 모의 계좌 손절 1
+    orders = reg.get(reg.start(RunSpec("fake.py", "orders", None))["id"])
+    assert orders.stops_before == 1
+    paper = reg.get(reg.start(RunSpec("fake.py", "paper", None))["id"])
+    assert paper.stops_before == 2
 
 
 # ---------------------------------------------------------------- 종료·재시작

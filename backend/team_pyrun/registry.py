@@ -126,7 +126,7 @@ class Registry:
                         raise StartRefused(f"같은 종목 {sym} 의 모의 계좌 실행이 이미 있습니다 ({other.run_id}) — "
                                            "끝낸 뒤에 시작하세요")
             run_id = self._new_id(today, loaded.name, spec, nearest)
-            stops_before = count_stops(self._folders_of(today, loaded.name, sym), today)
+            stops_before = count_stops(self._folders_of(today, loaded.name, sym, spec.mode), today)
             try:    # 전략 생성자(`loaded.new()`)가 여기서 불린다 — 고장 나도 빈 폴더를 남기지 않고 거부로
                 run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
                               sleep=self._sleep, stops_before=stops_before)
@@ -181,8 +181,11 @@ class Registry:
             run_id, n = f"{base}_{n}", n + 1
         return run_id
 
-    def _folders_of(self, today: str, name: str, sym: str | None) -> list[Path]:
-        """오늘 같은 전략·같은 종목으로 돌았던 폴더들(손절 수를 이어받을 곳). 새 폴더는 아직 없다."""
+    def _folders_of(self, today: str, name: str, sym: str | None, mode: str) -> list[Path]:
+        """오늘 같은 전략·같은 종목·**같은 방식**으로 돌았던 폴더들(손절 수를 이어받을 곳). 새 폴더는 아직 없다.
+
+        방식(`run.json` 의 `mode`)이 다르면 세지 않는다(R28) — 종이 실행의 손절이 모의 계좌 실행의 하루 손절 한도를
+        쓰지 않고, 반대도 마찬가지."""
         if sym is None or not self.root.is_dir():
             return []
         out = []
@@ -190,7 +193,7 @@ class Registry:
             if not (folder.is_dir() and folder.name.startswith(f"{today}_")):
                 continue
             data = _read_run_json(folder)
-            if data is not None and data.get("name") == name and data.get("sym") == sym:
+            if data is not None and data.get("name") == name and data.get("sym") == sym and data.get("mode") == mode:
                 out.append(folder)
         return out
 

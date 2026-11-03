@@ -325,6 +325,8 @@ def test_휴장_중_손절가를_지나면_2050_첫_가격에_청산_주문_한_
     assert len(fake.orders) == 2
     assert not any(in_break(OVERSEAS, c) for c in fake.order_clocks)
     assert run.runner.strat.day.stops == 1                     # on_exit 로 한 번
+    from backend.team_pyrun.journal import count_stops
+    assert count_stops([out], TODAY) == 1                       # 휴장 중 정해 20:50 에 나간 손절도 하루 손절로 셈
 
 
 def test_휴장_중_공통_규칙_손절도_2050_첫_가격에(tmp_path):
@@ -734,3 +736,160 @@ def test_해외_리플레이_기록에도_시장과_통화(tmp_path):
     replay.replay(loaded, TODAY, [Minute(TODAY, "090000", 0.75, 0.75, 0.75, 0.75, 1)], out, sym=MKU,
                   market=OVERSEAS, fee=2.0)
     assert (read_json(out / "run.json")["currency"], read_json(out / "summary.json")["market"]) == ("USD", "overseas")
+
+
+# ---------------------------------------------------------------- 고침 1차 (리뷰)
+def test_앱_종료_중지는_휴장이어도_미루지_않고_확인_필요로_끝난다(tmp_path):
+    run, fake, out, clock = entered_buy(tmp_path)
+    go(run, clock, "204000")
+    run.request_stop(shutdown=True)
+    go(run, clock, "204001")
+    assert run.state == "끝" and len(fake.orders) == 1                # 정리 주문 없음
+    assert "정리 안 함 — 확인 필요: 휴장 중(20:35~20:50)" in run.ended_reason
+    assert read_json(out / "run.json")["ended_reason"] == run.ended_reason
+    assert "휴장" in read_json(out / "summary.json")["halted"]
+
+
+def test_stop_all_은_앱_종료_중지를_보낸다(tmp_path):
+    reg, fake, clock = make_reg(tmp_path)
+    run = reg.get(reg.start(RunSpec("fakemku.py", "orders", None))["id"])
+    got: list = []
+    real = run.request_stop
+    run.request_stop = lambda **kw: (got.append(kw), real(**kw))
+    reg.stop_all(timeout=0.1)
+    assert got == [{"shutdown": True}] and run._shutdown is True
+
+
+def test_재시작_정리는_잔고가_0이면_확인_필요를_붙이지_않는다(tmp_path):
+    reg, fake, clock = make_reg(tmp_path)
+    folder = tmp_path / "pyruns" / f"{TODAY}_fakemku_orders"
+    folder.mkdir(parents=True)
+    (folder / "run.json").write_text(json.dumps({"id": folder.name, "name": "fakemku", "sym": MKU, "mode": "orders",
+                                                 "state": "진행 중", "started_at": "2026-11-03T09:00:00"}),
+                                     encoding="utf-8")
+    reg.recover()
+    assert read_json(folder / "run.json")["ended_reason"] == "재시작"
+    fake.oi_pages = {"": ([{"sym": MKU, "trd_tp": "2", "opint_qty": "1"}], "")}
+    (folder / "run.json").write_text(json.dumps({"id": folder.name, "name": "fakemku", "sym": MKU, "mode": "orders",
+                                                 "state": "진행 중", "started_at": "2026-11-03T09:00:00"}),
+                                     encoding="utf-8")
+    reg.recover()
+    assert read_json(folder / "run.json")["ended_reason"] == "재시작 · 확인 필요"
+
+
+class SlowPrice(FakeLive):
+    """현재가 조회가 오래 걸려, 돌아올 때 시계가 `after` 로 넘어가 있는 가짜."""
+
+    after: str | None = None
+
+    def ovs_price(self, sym):
+        got = super().ovs_price(sym)
+        if self.after is not None:
+            self.clock["now"] = at(self.after)
+        return got
+
+
+def test_step_은_휴장_전이어도_조회로_늦어져_휴장이면_주문하지_않는다(tmp_path):
+    fake = SlowPrice()
+    run, fake, out, clock = entered_buy(tmp_path, fake=fake)
+    fake.last, fake.after = "0.7470", "203500"                       # 20:34:59 step, 현재가가 20:35:00 에 돌아옴
+    go(run, clock, "203459")
+    assert len(fake.orders) == 1 and run.runner.break_exit == "손절"   # 휴장으로 보고 판단만
+    fake.after = None
+    go(run, clock, "205000")
+    assert [o[1] for o in fake.orders] == ["buy", "sell"]
+    assert not any(in_break(OVERSEAS, c) for c in fake.order_clocks)
+
+
+def test_끝내기도_지금_시각이_휴장이면_정리하지_않는다(tmp_path):
+    class SlowChart(FakeLive):
+        slow = False
+
+        def ovs_chart_minute(self, sym, *, req_qty):
+            if self.slow:
+                self.clock["now"] = at("203500")
+            return super().ovs_chart_minute(sym, req_qty=req_qty)
+
+    run, fake, out, clock = entered_buy(tmp_path, fake=SlowChart())
+    fake.slow = True
+    run.runner.strat.raise_at = "203300"
+    fake.chart = [ovs_bar("203300")]
+    go(run, clock, "203458")                                         # 전략 오류 — step 시각은 휴장 전, 지금은 휴장
+    assert run.state == "오류" and len(fake.orders) == 1 and "휴장" in run.ended_reason
+
+
+#: 하루 상태에 보유 표지(`in_position`)가 없는 전략 — 앱이 on_entry 로 되살리지 않는다
+MKU_NOPOS_SRC = (MKU_SRC.replace("        self.in_position = False\n", "")
+                 .replace("or self.day.in_position", "or getattr(self.day, 'in_position', False)")
+                 .replace('NAME = "fakemku"', 'NAME = "fakemkun"'))
+
+
+def test_보유_표지가_없는_전략은_on_entry_로_되살리지_않고_앱이_신호를_버린다(tmp_path):
+    run, fake, out, clock = make_ovs(tmp_path, start="100030", src=MKU_NOPOS_SRC, file="fakemkun.py",
+                                     windows_before=("서울",))
+    fake.chart = [ovs_bar("095900")]
+    run.prepare()
+    assert run.runner.strat.entered == set()                          # on_entry 를 부르지 않았다
+    assert any("되살리지 않음" in x for x in texts(out))
+    run.runner.strat.script = {"100000": ("서울", "buy")}
+    fake.chart = [ovs_bar("100000")]
+    go(run, clock, "100104")
+    assert fake.orders == [] and any("서울 개장은 오늘 이미 진입함" in x for x in texts(out))
+
+
+def test_휴장_중_손절_뒤_미룬_중지는_손절로_세진다(tmp_path):
+    run, fake, out, clock = entered_buy(tmp_path)
+    fake.last = "0.7470"
+    go(run, clock, "204000")                                          # 휴장 중 손절 판단
+    run.request_stop()
+    go(run, clock, "204001")
+    assert len(fake.orders) == 1
+    go(run, clock, "205000")                                          # 미룬 중지 → 정리, 사유는 손절
+    assert run.state == "끝" and run.runner.trades[-1]["reason"] == "손절"
+    assert run.runner.strat.day.stops == 1 and run.runner.strat.exits[-1][1] is True
+    from backend.team_pyrun.journal import count_stops
+    assert count_stops([out], TODAY) == 1
+
+
+def test_휴장_중_정한_청산이_남은_채_끝나면_사유를_기록한다(tmp_path):
+    run, fake, out, clock = entered_buy(tmp_path)
+    fake.last = "0.7470"
+    go(run, clock, "204000")
+    run.request_stop(shutdown=True)
+    go(run, clock, "204001")
+    ev = [r for r in journal(out) if r.get("break_exit")]
+    assert ev and ev[0]["break_exit"] == "손절"
+    assert read_json(out / "summary.json")["break_exit"] == "손절"
+
+
+def test_휴장_중_끝난_종이_실행은_확인_필요가_아니다(tmp_path):
+    run, fake, out, clock = entered_buy(tmp_path, mode="paper")
+    clock["now"] = at("204500")
+    run.finish("중지")
+    assert run.state == "끝" and "확인 필요" not in run.ended_reason
+    assert "종이 보유 +1 는 마지막 가격으로 정리 안 함" in run.ended_reason
+    s = read_json(out / "summary.json")
+    assert "halted" not in s and s["trades"] == [] and s["open_paper_position"]["side"] == "buy"
+    assert fake.orders == []
+
+
+def test_리플레이_명령줄은_시장을_csv_종목과_전략_틱으로(tmp_path, monkeypatch):
+    folder = tmp_path / "strategies"
+    folder.mkdir()
+    (folder / "fakemku.py").write_text(MKU_SRC, encoding="utf-8")
+    monkeypatch.setattr(replay.storage, "state_dir", lambda env=None: tmp_path / "state")
+    seen: list = []
+    real = replay.load_minutes
+    monkeypatch.setattr(replay, "load_minutes", lambda p, **kw: (seen.append(kw.get("market")), real(p, **kw))[1])
+    data = tmp_path / "bars_1m_MKUX26.csv"
+    rows = ["ref_dt,exch_tm,open_pric,high_pric,low_pric,close_pric,cum_trd_qty"]
+    rows += [f"{TODAY},09{m:02d}00,0.75,0.75,0.75,0.75,1" for m in range(10)]      # 10봉 — 해외는 빼지 않음
+    data.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    assert replay.main([str(folder / "fakemku.py"), TODAY, str(data)]) == 0
+    out = tmp_path / "state" / "pyruns" / f"{TODAY}_fakemku_replay"
+    run_j = read_json(out / "run.json")
+    assert (run_j["sym"], run_j["market"], run_j["currency"]) == (MKU, "overseas", "USD") and seen == [OVERSEAS]
+    # 국내 종목 csv 에 MKU 틱 전략 — 시장 가드로 거부
+    bad = tmp_path / f"bars_1m_A756B000_{TODAY}.csv"
+    bad.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    assert replay.main([str(folder / "fakemku.py"), TODAY, str(bad)]) == 2

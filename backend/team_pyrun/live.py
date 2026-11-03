@@ -44,8 +44,16 @@ week02 와 다른 점
     진입 대기 신호         버리지 않고 기다렸다가 20:50 이후 첫 가격에 진입 (Runner)
     청산 재시도            막힌 동안 미룸 (Runner)
     정리 요청(flatten)     요청을 들고 있다가 휴장이 끝난 첫 step 에서 정리
-    중지 요청(보유 중)     휴장이 끝난 첫 step 에서 현재가를 한 번 받고 정리한 뒤 끝냄
-    오류·앱 종료로 끝남     정리 주문 없이 멈춤 → 「정리 안 함 — 확인 필요」 (보유는 계좌에 남음)
+    중지 요청(보유 중)     휴장이 끝난 첫 step 에서 현재가를 한 번 받고 정리한 뒤 끝냄. 휴장 중 정한 청산이
+                           있으면 그 사유로(휴장 중 손절 → 「손절」, 하루 손절 수에 들어감)
+    앱 종료 중지           `request_stop(shutdown=True)`(registry `stop_all`) — 미루지 않고 바로 끝냄 → 아래 줄
+    오류·앱 종료로 끝남     모의 계좌: 정리 주문 없이 멈춤 → 「정리 안 함 — 확인 필요: 휴장 중(20:35~20:50) …」 를
+                           run.json·summary.json 에 남김. 종이: 계좌가 없어 「확인 필요」가 아니라
+                           「휴장 중 끝 — 종이 보유 +1 는 마지막 가격으로 정리 안 함」(거래 기록에 넣지 않고
+                           summary 에 `open_paper_position`). 휴장 중 정한 청산이 남았으면 그 사유를 기록(`break_exit`)
+
+휴장인지는 step 의 시각과 **지금 시각**(`now()`) 둘 다 봅니다 — 20:34:5x 에 시작한 step 이 조회로 늦어져 실제
+주문이 20:35 를 넘기지 않게(`Runner.blocked`·끝내기 정리 둘 다).
 
 **장중 시작·같은 날 다시 세우기(개장마다 한 번)** — 준비 봉에서 **오늘** 진입 신호(`side`)가 난 개장(신호의
 `window`)과, 오늘 같은 NAME·종목·방식의 앞선 실행이 들어간 개장(`windows_before`, registry 가 `journal.entered_windows`
@@ -142,6 +150,10 @@ def run_market(sym: str | None, loaded: Loaded) -> tuple[Market, str | None]:
     return by_sym, None
 
 
+def _hhmmss(moment: datetime) -> str:
+    return to_kst(moment).strftime("%H%M%S")
+
+
 def _window(signal: object) -> str | int | None:
     """신호의 개장 이름(`window`) — 문자·정수만."""
     w = getattr(signal, "window", None)
@@ -184,7 +196,7 @@ class LiveRun:
         self.runner = Runner(loaded.new(self.market), self.j, self.broker, loaded.tick, loaded.tick_value)
         self.runner.stops_before = self.stops_before   # 화면의 오늘 손절 수용(전략에 day 가 없을 때)
         self.runner.currency = self.market.currency
-        self.runner.blocked = lambda clock: in_break(self.market, clock)    # 휴장 중엔 체결을 부르지 않음
+        self.runner.blocked = self._in_break    # 휴장 중엔 체결을 부르지 않음 (step 시각과 지금 시각 둘 다 봄)
         self.sym: str | None = spec.sym
         self.state = "대기"
         self.started_at: str | None = None
@@ -206,6 +218,7 @@ class LiveRun:
         self._day_obj: object | None = None            # 앞선 손절 수를 넣어 둔 전략의 하루 상태 객체
         self._windows: tuple = ()                      # 「이미 진입함」으로 되살린 개장 (준비 봉 신호 + 앞선 실행)
         self._stop_deferred = False                    # 휴장 중 중지 요청을 미뤘음 — 풀리면 현재가를 받고 정리
+        self._shutdown = False                         # 앱 종료 중지 — 휴장이어도 미루지 않고 바로 끝냄(정리는 안 함)
         self._break_noted: set[str] = set()            # 이번 휴장에 「요청을 미룬다」 기록을 남긴 요청 (stop·flatten)
 
     # ------------------------------------------------------------ 시작
@@ -316,8 +329,11 @@ class LiveRun:
         `on_entry` 가 없는 전략이면 되살릴 자리가 없으니 기록만 남기고, 앱이 대기 신호를 버리는 것으로 막는다."""
         r = self.runner
         fn = getattr(r.strat, "on_entry", None)
-        if fn is None:
-            self.j.write("event", text="전략에 on_entry 가 없어 개장을 되살리지 않음 — 그 개장의 신호는 앱이 버림")
+        day = getattr(r.strat, "day", None)
+        if fn is None or day is None or not hasattr(day, "in_position"):
+            # on_entry 를 부르면 보유 표지가 켜지는데 앱이 되돌릴 자리(day.in_position)가 없다 — 부르지 않는다
+            self.j.write("event", text="전략에 on_entry 나 day.in_position 이 없어 개장을 되살리지 않음 — "
+                                       "그 개장의 대기 신호는 앱이 버림")
             return
         for w in self._windows:
             args, kwargs = _entry_args(fn, _WindowOnly(w))     # 인자 대응이 틀리면 TypeError → 시작 거부
@@ -346,14 +362,14 @@ class LiveRun:
     def _step(self, now: datetime) -> None:
         r = self.runner
         clock = now.strftime("%H%M%S")
-        in_brk = in_break(self.market, clock)
+        in_brk = self._in_break(clock)
         held_in_break = in_brk and r.pos is not None and not r.halted
         if not in_brk and self._break_noted:
             self._break_noted = set()
         if clock >= self.market.end_time:
             self._finish("장 끝", now)
             return
-        if self._stop_requested and held_in_break:
+        if self._stop_requested and held_in_break and not self._shutdown:
             # 팀: 휴장 중엔 정리 주문을 낼 수 없다 — 휴장이 끝난 첫 step 에서 현재가를 받고 정리한 뒤 끝낸다
             self._stop_deferred = True
             self._note_break("stop", clock, "휴장 중 중지 요청 — 휴장이 끝나면 정리하고 끝냄")
@@ -371,7 +387,7 @@ class LiveRun:
             self._feed_minutes(now, clock)
             self._reconcile(now, clock)     # 주문이 나갈 수 있는 현재가·정리 요청보다 먼저 대조
             self._feed_price(clock)
-            if self._flatten_requested and in_break(self.market, clock) and r.pos is not None:
+            if self._flatten_requested and self._in_break(clock) and r.pos is not None:
                 self._note_break("flatten", clock, "휴장 중 정리 요청 — 휴장이 끝난 첫 가격에 정리")   # 요청은 들고 있는다
             elif self._flatten_requested:
                 self._flatten_requested = False
@@ -383,6 +399,13 @@ class LiveRun:
             return
         if r.halted:
             self._set_state("확인 필요")
+
+    def _in_break(self, clock: str) -> bool:
+        """휴장 중인가 — step 의 시각과 **지금** 시각(`now()`) 둘 다 본다. 20:34:5x 에 시작한 step 이 조회로 늦어져
+        실제 주문이 20:35 를 넘기지 않게(주문 직전 `Runner.blocked` 가 이걸 부름)."""
+        if not self.market.breaks:      # 국내 — 휴장이 없다(시계도 부르지 않음, week02 그대로)
+            return False
+        return in_break(self.market, clock) or in_break(self.market, _hhmmss(self.now()))
 
     def _note_break(self, key: str, clock: str, text: str) -> None:
         """휴장 중 미룬 요청 — 요청마다 휴장 하나에 한 번만 기록."""
@@ -536,12 +559,23 @@ class LiveRun:
     def _wrap_up(self, reason: str, clock: str) -> str:
         """보유 정리·끝 잔고·summary.json. 바뀐 끝 까닭을 돌려준다."""
         r, b, j = self.runner, self.broker, self.j
-        if not r.halted and r.pos is not None and in_break(self.market, clock):
-            # 팀: 휴장 중 끝남(오류·앱 종료) — 정리 주문을 내지 않는다. 보유는 계좌에 남으니 확인 필요
-            start, end = next((a, z) for a, z in self.market.breaks if a <= clock < z)
-            r.halt(f"휴장 중({start[:2]}:{start[2:4]}~{end[:2]}:{end[2:4]}) 끝 — 정리 주문을 내지 않음 · "
-                   f"보유 {r.expected_position():+d}")
-        if not r.halted and r.pos is not None:
+        paper_left = None
+        if r.break_exit is not None and r.pos is not None:
+            # 휴장 중 정한 청산이 주문되지 못한 채 끝남 — 그 사유를 기록에 남긴다(손절이었는지 나중에 알 수 있게)
+            j.write("event", clock=clock, text=f"휴장 중 정한 청산({r.break_exit})을 주문하지 못한 채 끝남",
+                    break_exit=r.break_exit)
+        if not r.halted and r.pos is not None and self._in_break(clock):
+            now_t = _hhmmss(self.now())
+            span = next((f"{a[:2]}:{a[2:4]}~{z[:2]}:{z[2:4]}" for a, z in self.market.breaks
+                         if a <= clock < z or a <= now_t < z), "휴장")
+            if isinstance(b, MockAccountBroker):
+                # 팀: 휴장 중 끝남(오류·앱 종료) — 정리 주문을 내지 않는다. 보유는 계좌에 남으니 확인 필요
+                r.halt(f"휴장 중({span}) 끝 — 정리 주문을 내지 않음 · 보유 {r.expected_position():+d}")
+            else:
+                # 종이: 계좌가 없어 「확인 필요」가 아니다. 휴장 중엔 종이 체결도 안 하므로 보유는 정리하지 않고 끝낸다
+                paper_left = f"휴장 중({span}) 끝 — 종이 보유 {r.expected_position():+d} 는 마지막 가격으로 정리 안 함"
+                j.write("event", clock=clock, text=paper_left + " (계좌 없음 · 거래 기록에 넣지 않음)")
+        if paper_left is None and not r.halted and r.pos is not None:
             try:
                 if isinstance(b, MockAccountBroker):
                     # 정리 주문 전에 계좌가 실행과 같은지 본다 — 이미 청산됐는데 또 주문하면 반대 포지션이 생긴다
@@ -561,6 +595,8 @@ class LiveRun:
             if not r.halted and held != r.expected_position():
                 # 정리했는데도 계좌가 실행이 아는 보유와 다르다(못 읽은 경우 포함) — 깨끗한 끝으로 보이지 않게
                 r.halt(f"끝 잔고 불일치 · 기대 {r.expected_position():+d} · 계좌 {got}")
+        if paper_left is not None:
+            reason = f"{reason} · {paper_left}"
         if r.halted:
             reason = f"{reason} · 정리 안 함 — 확인 필요: {r.halted}"
             j.write("event", clock=clock, text=f"정리하지 않고 끝냄 — 보유는 그대로 남겨 두었습니다. "
@@ -580,6 +616,10 @@ class LiveRun:
         }
         if r.halted:
             data["halted"] = r.halted
+        if paper_left is not None:
+            data["open_paper_position"] = {k: r.pos.get(k) for k in ("side", "entry", "entry_time", "window") if k in r.pos}
+        if r.break_exit is not None and r.pos is not None:
+            data["break_exit"] = r.break_exit
         if open_order is not None:
             data["unresolved_order"] = open_order
         write_summary(self.folder, data)
@@ -603,8 +643,10 @@ class LiveRun:
             self.finish("중지")
 
     # ------------------------------------------------------------ 요청 (다른 스레드에서)
-    def request_stop(self) -> None:
+    def request_stop(self, shutdown: bool = False) -> None:
         """다음 step 에서 끝낸다(보유가 있으면 정리)."""
+        if shutdown:
+            self._shutdown = True       # 앱 종료 — 휴장이어도 미루지 않는다(정리 없이 「확인 필요」로 끝남)
         self._stop_requested = True
 
     def request_flatten(self) -> None:

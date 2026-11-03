@@ -198,9 +198,10 @@ def test_재시작하면_끝나지_않은_실행을_닫는다(tmp_path):
     (broken / "run.json").write_text("{깨짐", encoding="utf-8")
     (root / "빈폴더").mkdir()
     reg.recover()
-    for folder in (orders, paper):
+    # 잔고가 남은 모의 계좌 실행은 「확인 필요」를 붙여 닫는다 (종이는 계좌가 없으니 그대로)
+    for folder, why in ((orders, "재시작 · 확인 필요"), (paper, "재시작")):
         run = read_json(folder / "run.json")
-        assert run["state"] == "끝" and run["ended_reason"] == "재시작"
+        assert run["state"] == "끝" and run["ended_reason"] == why
         summary = read_json(folder / "summary.json")
         assert summary["summary"]["trades"] == len(summary["trades"])
     assert read_json(orders / "summary.json")["summary"]["net_pnl"] == -5000
@@ -224,7 +225,7 @@ def test_재시작_정리에서_잔고를_못_읽으면_확인_실패로_적고_
     folder = write_run(tmp_path / "pyruns", f"{TODAY}_fake_orders", mode="orders")
     (folder / "summary.json").write_text('{"keep": 1}', encoding="utf-8")
     reg.recover()
-    assert read_json(folder / "run.json")["ended_reason"] == "재시작"
+    assert read_json(folder / "run.json")["ended_reason"] == "재시작 · 확인 필요"      # 잔고를 못 읽음
     assert read_json(folder / "summary.json") == {"keep": 1}
     events = [r["text"] for r in Journal(folder / "journal.jsonl").read() if r["kind"] == "event"]
     assert any("확인 실패" in t for t in events) and fake.orders == []

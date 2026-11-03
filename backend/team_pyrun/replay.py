@@ -5,6 +5,9 @@
 
     python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv>
 
+시장은 장중 실행과 같은 규칙(`live.run_market`: csv 이름의 종목, 없으면 전략 TICK)으로 정하고, 하루 봉 수 거르기·
+종이 수수료·슬리피지·끝 정리 시각을 그 시장 값으로 씁니다(국내는 week02 그대로).
+
 전략 파일 이름에 폴더가 없으면 전략 폴더에서 찾고, 결과는 `<상태 폴더>/pyruns/<날짜>_<NAME>_replay/` 에
 (같은 이름 폴더가 있으면 비우고) 씁니다: `journal.jsonl` `summary.json` `run.json`.
 """
@@ -103,16 +106,26 @@ def main(argv: list[str] | None = None) -> int:
         print("사용법: python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv>", file=sys.stderr)
         return 2
     file, date, data = args
+    from backend.team_pyrun.live import run_market     # 장중 실행과 같은 시장 규칙 (명령줄에서만 쓰므로 여기서)
     path = Path(file)
     folder, name = (path.parent, path.name) if path.parent != Path(".") else (strategies_dir(), file)
     loaded = load(folder, name)
     out = storage.state_dir() / "pyruns" / f"{date}_{loaded.name}_replay"
     if out.exists():
         shutil.rmtree(out)
-    m = re.search(r"bars_1m_([A-Za-z0-9]+)_\d{8}", Path(data).name)
-    result = replay(loaded, date, load_minutes(Path(data)), out, sym=m.group(1) if m else DEFAULT_SYM)
+    # 종목은 csv 이름(`bars_1m_<종목>[_<날짜>].csv`)에서, 시장은 실행과 같은 규칙(`live.run_market`)으로
+    m = re.search(r"bars_1m_([A-Za-z0-9]+?)(?:_\d{8})?\.csv$", Path(data).name)
+    sym = m.group(1) if m else None
+    market, refusal = run_market(sym, loaded)
+    if refusal:
+        print(f"시장이 맞지 않습니다: {refusal}", file=sys.stderr)
+        return 2
+    record_sym = sym or (DEFAULT_SYM if market is DOMESTIC else "MKU")
+    result = replay(loaded, date, load_minutes(Path(data), market=market), out, sym=record_sym, market=market,
+                    fee=market.paper_fee, slip_ticks=market.paper_slip_ticks)
     s = result["summary"]
-    print(f"{loaded.name} {date}: 거래 {s['trades']}건 · 손익 {s['net_pnl']:+,}원 · {out}")
+    money = f"{s['net_pnl']:+,}원" if market.currency == "KRW" else f"{s['net_pnl']:+,.2f} USD"
+    print(f"{loaded.name} {date}: 거래 {s['trades']}건 · 손익 {money} · {out}")
     return 0
 
 

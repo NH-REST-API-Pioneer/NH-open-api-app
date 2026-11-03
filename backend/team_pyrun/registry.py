@@ -281,7 +281,8 @@ class Registry:
             preparing = set(self._preparing)
             self._stop_asked |= preparing
         for _, run in runs:
-            run.request_stop()
+            # 앱 종료 — 휴장이어도 미루지 않는 중지(정리할 수 없으면 「확인 필요」를 run.json·summary 에 남기고 끝남)
+            run.request_stop(shutdown=True)
         pending: list[str] = []
         for run_id, run in runs:
             if run_id in preparing:                     # 준비 중 — 기다리지도 직접 끝내지도 않는다
@@ -300,7 +301,8 @@ class Registry:
     def recover(self) -> list[str]:
         """끝나지 않은 채 남은 폴더(앱이 꺼졌거나 죽은 것)를 닫고 닫은 id 를 돌려준다. **주문은 보내지 않는다.**
 
-        orders 는 잔고를 한 번 조회해 `journal.jsonl` 에 남기고(못 읽으면 「확인 실패」), `summary.json` 이 없으면
+        orders 는 잔고를 한 번 조회해 `journal.jsonl` 에 남기고(못 읽으면 「확인 실패」 — 잔고가 0 이 아니거나 못 읽으면
+        끝 까닭은 「재시작 · 확인 필요」), `summary.json` 이 없으면
         `trade` 줄로 만든다. 끝에 `run.json` 을 상태 「끝」·까닭 「재시작」으로 바꾼다 — 그래서 중간에 죽어도 다음에 다시 한다."""
         closed: list[str] = []
         if not self.root.is_dir():
@@ -326,6 +328,7 @@ class Registry:
     def _close(self, folder: Path, data: dict) -> None:
         j, run_id, sym = Journal(folder / "journal.jsonl"), folder.name, data.get("sym")
         apilog = ApiLog(folder / "api_log.jsonl", run_id)
+        ended = "재시작"
         if data.get("mode") == "orders":
             try:
                 if not sym:
@@ -334,7 +337,10 @@ class Registry:
                 with bind(apilog), purpose("잔고확인"):
                     held = ad.net_position(ad.open_interest(), sym)
                 j.write("event", text=f"재시작으로 닫음 — 잔고 {sym} {held:+d}계약 (정리 주문은 보내지 않음, 계좌에서 확인하세요)")
+                if held:
+                    ended = "재시작 · 확인 필요"      # 보유가 남아 있다 — 깨끗한 끝으로 보이지 않게
             except Exception as e:
+                ended = "재시작 · 확인 필요"          # 잔고를 못 읽었다
                 j.write("event", text="재시작으로 닫음 — 잔고 확인 실패 (정리 주문은 보내지 않음, 계좌에서 확인하세요)",
                         error=error_text(e))
         if not (folder / "summary.json").exists():
@@ -344,9 +350,9 @@ class Registry:
                 "trades": trades, "summary": summarize(trades),
                 "account_start": None, "account_end": None, "api": apilog.stats(),
                 "strategy": {k: data.get(k) for k in ("file", "name", "title", "sha256")},
-                "ended_reason": "재시작",
+                "ended_reason": ended,
             })
-        data.update(state="끝", ended_reason="재시작",
+        data.update(state="끝", ended_reason=ended,
                     ended_at=to_kst(self._now()).replace(tzinfo=None).isoformat(timespec="seconds"))
         path = folder / "run.json"
         tmp = path.with_name(f".run.json.{threading.get_ident()}.tmp")

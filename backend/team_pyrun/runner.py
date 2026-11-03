@@ -80,6 +80,8 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
   `break_exit` 에 두고 **다시 묻지 않으며**, 막힘이 풀린 첫 가격(그 가격이 기준가)에 그 사유로 청산합니다 —
   그 사이 가격이 돌아왔어도. 순서는 앱의 장 마감 정리(`flatten_at`) 다음, 전략·공통 규칙 앞입니다.
 - 청산 재시도(`retry_after`)도 막힌 동안엔 미룹니다. `force_flat` 도 막힌 시각엔 주문하지 않습니다(실행이 「확인 필요」로 끝냄).
+  막힘이 풀린 뒤 `force_flat`(정리·중지 요청)이 `break_exit` 를 가진 보유를 닫으면 사유는 「실행 종료 정리」가 아니라
+  그 `break_exit`(예: 「손절」 — `on_exit(stopped=True)`, 하루 손절 수에 들어감)입니다.
 """
 from __future__ import annotations
 
@@ -610,7 +612,8 @@ class Runner:
         if self.blocked is not None and self.blocked(clock):
             return      # 팀: 휴장 중엔 정리 주문도 내지 않는다 — 실행이 「확인 필요」로 끝낸다
         if self.pos is not None and self.last_price is not None:
-            self._exit(clock, self.last_price, END_REASON)
+            # 휴장 중 정한 청산이 아직이면 그 사유로 (휴장 중 손절 → 20:50 정리가 「손절」로 세지게). 없으면 실행 종료 정리
+            self._exit(clock, self.last_price, self.break_exit or END_REASON)
 
     # ---- 상태
     def expected_position(self) -> int:

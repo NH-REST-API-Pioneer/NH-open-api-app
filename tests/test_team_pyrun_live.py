@@ -1295,3 +1295,23 @@ def test_주문_없이_막힌_청산에서_계좌가_0이면_청산으로_적지
     run.step(at("090110"))
     assert [o[1] for o in fake.orders] == ["buy"]
     assert run.runner.trades == [] and run.runner.halted == "잔고 불일치 · 기대 +1 · 계좌 +0"
+
+
+def test_종이_실행에서_on_exit_가_예외면_거래는_하나뿐이고_두_번_닫지_않는다(tmp_path):
+    """청산을 적은 뒤 전략의 on_exit 가 고장 나도 보유는 이미 비어 있어야 한다 — 끝내기 정리가 또 닫아 거래를 지어내지 않게."""
+    run, fake, out = make_run(tmp_path, mode="paper")
+    run.prepare()
+    run.runner.strat.script = {"090000": "buy"}
+    fake.chart = [bar("090000")]
+    run.step(at("090104"))
+    assert run.runner.pos is not None
+
+    def boom(pnl, stopped):
+        raise RuntimeError("on_exit 고장")
+    run.runner.strat.on_exit = boom
+    fake.last = "1300.0"                        # 손절
+    run.step(at("090105"))
+    assert run.state == "오류" and "on_exit 고장" in run.ended_reason
+    assert [t["reason"] for t in run.runner.trades] == ["손절"]
+    assert [r["reason"] for r in journal(out) if r["kind"] == "trade"] == ["손절"]
+    assert run.runner.pos is None

@@ -278,8 +278,10 @@ class Runner:
         self.j.write("trade", clock=clock, text=f"{reason} {ticks:+d}틱 ({pnl:+,}원){fee_txt}",
                      **{k: t[k] for k in ("side", "entry", "exit", "entry_time", "exit_time", "ticks", "pnl",
                                           "fee", "pnl_after_fee", "reason", "exit_date")})
-        self.strat.on_exit(pnl, stopped=reason == "손절")
+        # 보유를 먼저 비운다 — 전략의 on_exit 가 예외를 내도 끝내기 정리가 이미 닫은 보유를 또 닫지 않게
         self.pos = None
+        self.retry_after = ""
+        self.strat.on_exit(pnl, stopped=reason == "손절")
 
     def _mine(self, held: int, *, sent_needed: bool = False, want: int | None = None) -> bool:
         """체결가 없이 받은 잔고 held 를 이 실행의 체결로 따라도 되는가(`fill` 이 None 을 돌려준 바로 뒤).

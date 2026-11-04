@@ -149,13 +149,16 @@ class MockAccountBroker:
 
     # ---- 주문
     def _row_of(self, mine: list[dict]) -> dict:
-        """한 주문번호의 주문내역 줄들 중 볼 줄 — 끝난 줄(전체체결·거부·취소)이 있으면 그것, 없으면 첫 줄.
+        """한 주문번호의 주문내역 줄들 중 볼 줄 — 전체체결 줄이 있으면 그것, 없으면 거부·취소 줄, 없으면 첫 줄.
 
-        같은 주문이 접수·체결 줄로 여럿 올 수 있어(쪽·순서도 모름) 첫 줄만 보면 체결을 놓칠 수 있다."""
-        done = (self.api.filled, *self.api.rejected)
-        for row in mine:
-            if str(row.get("ord_sts", "")).strip() in done:
-                return row
+        같은 주문이 접수·체결 줄로 여럿 올 수 있어(쪽·순서도 모름) 첫 줄만 보면 체결을 놓칠 수 있다.
+        체결과 거부 줄이 같이 있으면 체결이 먼저 — 실제로 계약이 생긴 쪽을 놓치지 않게."""
+        def sts(row: dict) -> str:
+            return str(row.get("ord_sts", "")).strip()
+        for want in ((self.api.filled,), tuple(self.api.rejected)):
+            for row in mine:
+                if sts(row) in want:
+                    return row
         return mine[0]
 
     def _mark_unknown(self) -> None:

@@ -472,6 +472,24 @@ def test_같은_주문의_줄이_여럿이면_체결_줄을_본다(tmp_path):
     assert px == pytest.approx(0.7448) and b.unresolved is None and b.blind is None
 
 
+def test_같은_주문에_거부_줄과_체결_줄이_같이_있으면_체결을_본다(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "6"
+    b = ovs_broker(tmp_path, fake)
+    real_hist = fake.ovs_order_history_page
+
+    def reject_then_fill(nxt_key=""):
+        got, key = real_hist(nxt_key)
+        out = []
+        for r in got:                                       # 거부(8) 줄이 먼저, 체결(6) 줄이 둘째
+            out += [{**r, "ord_sts": "8", "exec_pric": "0"}, r]
+        return out, key
+
+    fake.ovs_order_history_page = reject_then_fill
+    px = b.fill("buy", 0.7447, "101500", "진입 · 시험")
+    assert px == pytest.approx(0.7448) and b.unresolved is None and b.blind is None
+
+
 def test_unresolved_다시_볼_때도_같은_주문의_체결_줄을_본다(tmp_path):
     fake = FakeOvsApi()
     fake.status = "1"

@@ -21,8 +21,9 @@ week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 �
 대상 파일은 **해시한 바이트 그대로** 컴파일해 실행합니다(이 파일의 `from __future__` 를 물려주지 않습니다. pyc 캐시를 쓰지 않아 해시와 코드가 어긋나지 않고, 폴더에 `__pycache__` 도 안 생깁니다. 옆 모듈의 pyc 도 쓰지 않습니다).
 
 **판단 부분만 골라 쓰기** — 맨 위 import 중 앱 환경에서 못 찾는 모듈이 있으면(week03 `ws_trader.py` 처럼 실행기와
-판단이 한 파일), 파일을 실행하기 전에 전략 클래스가 쓰는 이름만 골라 그 부분만 실행합니다(`decision.py`). 실행기 쪽
-(`Trader`·`main`·못 찾는 import)은 실행하지 않고, 목록에 알림으로 남깁니다. 못 찾는 모듈이 없으면 지금까지와 같습니다.
+판단이 한 파일), 파일을 실행하기 전에 **그 모듈을 쓰는 문장만 빼고** 나머지를 원래 순서·줄 번호로 실행합니다(`decision.py`).
+실행기 쪽(`Trader`·`main`·못 찾는 import)은 실행하지 않고 목록에 알림으로 남깁니다. 전략 클래스나 앱이 읽는 이름(`TICK` 등)이
+그 모듈에 기대면 불러오지 않습니다. 못 찾는 모듈이 없으면 지금까지와 같습니다.
 
 **전략 파일은 옆 모듈을 맨 위에서 import 해야 합니다.** 메서드 안에서 하는 import 는 불러온 뒤 폴더의 모듈이
 `sys.modules` 에서 빠지므로 실패합니다.
@@ -207,7 +208,7 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
             picked = None
             if missing:
                 try:
-                    picked = decision.pick(tree, missing)
+                    picked = decision.pick(tree, data.decode("utf-8"), str(path), missing)
                 except decision.PickError as e:
                     raise LoadError(str(e)) from e
                 code = compile(picked.module, str(path), "exec", dont_inherit=True)   # 원래 줄 번호 그대로
@@ -376,7 +377,7 @@ def _check(module: ModuleType, file: str) -> _Checked:
     notes: list[str] = []
     picked = getattr(module, decision.DECISION_ATTR, None)
     if isinstance(picked, decision.Picked):     # 실행기와 판단이 한 파일 — 판단 부분만 불러왔다
-        notes.append(picked.note())
+        notes.append(picked.note(getattr(strategy_cls, "__name__", "?")))
     try:
         params = params_cls()
         absent: tuple[str, ...] = ()

@@ -343,6 +343,7 @@ def _prev_folder(reg, run_id, run_json=None, summary=None):
     ({"state": "끝", "ended_reason": "실행 끝 시각"}, {"halted": "잔고 불일치"}, False),
     ({"state": "끝", "ended_reason": "중지 · 끝내기 처리 실패 (X)"}, None, False),
     (None, None, False),                                        # 앞선 실행 폴더가 없음 — 모르면 막는다
+    ({"state": "진행 중"}, None, False),                          # 객체는 없는데 폴더는 돈다고 — 정리가 못 닫은 것
     ({"state": "끝"}, {"unresolved_order": {"ord_no": "7"}}, True),  # 도는 객체가 있어도 폴더 요약을 본다
 ])
 def test_앞선_실행을_모르거나_결과_모름_주문이_남았으면_막는다(tmp_path, run_json, summary, live):

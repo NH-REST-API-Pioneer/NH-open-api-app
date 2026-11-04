@@ -251,6 +251,9 @@ class Schedules:
             if data is None:
                 return f"앞선 실행({run_id})의 기록을 찾지 못함 — 기록·계좌를 확인한 뒤 다시 켜세요", None
             state, reason = data.get("state"), data.get("ended_reason")
+            if state in RUNNING_STATES or state == "확인 필요":
+                # 이 앱에 그 실행 객체가 없는데 폴더는 아직 돈다고 적혀 있다 — 켤 때 정리(recover)가 못 닫은 것. 기다리면 영영 안 끝난다
+                return f"앞선 실행({run_id})이 끝나지 않은 채 남음({state}) — 기록·계좌를 확인한 뒤 다시 켜세요", state
         if state in RUNNING_STATES:
             return None, state
         why = blocked_reason(state, reason) or summary_reason(self._read_folder_json(run_id, "summary.json"))

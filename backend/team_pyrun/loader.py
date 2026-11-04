@@ -20,6 +20,10 @@ week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 �
 같은 파일을 두 번 불러오면 서로 다른 모듈이 됩니다 — 파일을 고쳐도 돌던 실행은 처음 것 그대로입니다.
 대상 파일은 **해시한 바이트 그대로** 컴파일해 실행합니다(이 파일의 `from __future__` 를 물려주지 않습니다. pyc 캐시를 쓰지 않아 해시와 코드가 어긋나지 않고, 폴더에 `__pycache__` 도 안 생깁니다. 옆 모듈의 pyc 도 쓰지 않습니다).
 
+**판단 부분만 골라 쓰기** — 맨 위 import 중 앱 환경에서 못 찾는 모듈이 있으면(week03 `ws_trader.py` 처럼 실행기와
+판단이 한 파일), 파일을 실행하기 전에 전략 클래스가 쓰는 이름만 골라 그 부분만 실행합니다(`decision.py`). 실행기 쪽
+(`Trader`·`main`·못 찾는 import)은 실행하지 않고, 목록에 알림으로 남깁니다. 못 찾는 모듈이 없으면 지금까지와 같습니다.
+
 **전략 파일은 옆 모듈을 맨 위에서 import 해야 합니다.** 메서드 안에서 하는 import 는 불러온 뒤 폴더의 모듈이
 `sys.modules` 에서 빠지므로 실패합니다.
 
@@ -46,6 +50,7 @@ week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 �
 """
 from __future__ import annotations
 
+import ast
 import dataclasses
 import hashlib
 import importlib.util
@@ -61,6 +66,7 @@ from types import ModuleType
 from typing import Any
 
 from backend import config
+from backend.team_pyrun import decision
 from backend.team_pyrun.markets import Market, market_of_tick
 from backend.team_pyrun.runner import EXIT_HOOK, TARGET_NAMES
 
@@ -194,7 +200,22 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
                 raise LoadError(f"불러올 수 없는 파일입니다: {file}")
             module = importlib.util.module_from_spec(spec)
             sys.modules[modname] = module   # dataclass 등이 모듈을 이름으로 찾는다
-            exec(compile(data, str(path), "exec", dont_inherit=True), module.__dict__)   # 해시한 바이트 그대로
+            # 팀: 실행하기 전에 맨 위 import 를 문법으로만 훑는다 — 앱에 없는 모듈(실행기 쪽 `nh_client` 등)이 있으면
+            # 판단 부분만 골라 실행한다(`decision.py`). 없으면 지금까지처럼 해시한 바이트 그대로 전체를 실행한다.
+            tree = ast.parse(data, filename=str(path))
+            missing = decision.unresolved(tree)
+            picked = None
+            if missing:
+                try:
+                    picked = decision.pick(tree, missing)
+                except decision.PickError as e:
+                    raise LoadError(str(e)) from e
+                code = compile(picked.module, str(path), "exec", dont_inherit=True)   # 원래 줄 번호 그대로
+            else:
+                code = compile(data, str(path), "exec", dont_inherit=True)   # 해시한 바이트 그대로
+            exec(code, module.__dict__)
+            if picked is not None:
+                setattr(module, decision.DECISION_ATTR, picked)
             return module, sha
         except LoadError:
             raise
@@ -353,6 +374,9 @@ def _check(module: ModuleType, file: str) -> _Checked:
     kind = _kind(strategy_cls)
     params_cls = _params_class(module, strategy_cls, PARAMS_NAMES[kind])
     notes: list[str] = []
+    picked = getattr(module, decision.DECISION_ATTR, None)
+    if isinstance(picked, decision.Picked):     # 실행기와 판단이 한 파일 — 판단 부분만 불러왔다
+        notes.append(picked.note())
     try:
         params = params_cls()
         absent: tuple[str, ...] = ()

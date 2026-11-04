@@ -431,7 +431,22 @@ ORB 의 Params 에는 장 시간 칸이 없으므로 해외 실행이 시장 시
 틱 가치는 모듈의 `TICK_VALUE`, 없으면 `TICK_USD` 로 읽습니다. 앱은 **주문 중인 동안 Engine 이 새 행동을 내지 않는다**고 가정하므로(`pending`),
 약속을 어기고 행동을 내면 주문하지 않습니다.
 
-### 예제와 ws_trader 에서 떼어 오기
+### ws_trader.py 를 그대로 올려도 됩니다 (판단 부분만 골라 씀)
+
+팀원이 쓴 `ws_trader.py` 처럼 **실행기(접속·주문·기록)와 판단이 한 파일**이어도 고치지 않고 그대로 올리면 됩니다.
+앱은 파일을 실행하기 **전에** 맨 위 import 를 훑어, 앱에 없는 모듈(`nh_client`·`fee_test`·`ws_probe` 등)이 있으면
+**전략 클래스(`Engine`, 1분봉이면 `on_minute` 클래스)가 쓰는 이름만** 따라가 그 부분만 실행합니다.
+
+- 쓰는 것: 전략 클래스와 그것이 쓰는 맨 위 이름(`TICK` · `TICK_USD` · `FEE_TICKS` · `LiveParams` · `Engine` …), 앱이 읽는 이름(`Params` `LiveParams` `TICK` `TICK_VALUE` `TICK_USD` `TITLE` `NAME` `STRATEGY`)
+- 안 쓰는 것(실행하지도 않음): `Trader` · `Recorder` · `Backoff` · `main` · `if __name__ == "__main__":` · 앱에 없는 모듈의 import · 그 밖의 맨 위 문장
+- 목록 줄 밑에 「판단 부분만 불러옴 — 쓴 것 … · 안 쓴 것 … · 앱에 없는 모듈 …」 알림이 붙습니다
+- 판단이 바뀌면(깃허브의 `Engine`·`LiveParams` 수정) 새 `ws_trader.py` 를 다시 올리면 됩니다 — 손으로 떼어 낼 필요가 없습니다
+- **안 되는 경우**: 전략 클래스가 앱에 없는 모듈을 **직접** 쓰면(예: `Engine` 안에서 `nh_client` 로 주문) 골라 쓸 수 없고,
+  「전략 클래스가 앱에 없는 모듈을 직접 씁니다: Engine 이 이름(모듈) …」 오류가 납니다. 판단 클래스와 실행기를 나눠 주세요
+- 앱에 있는 모듈만 쓰는 파일은 지금까지처럼 파일 전체를 실행합니다(보통 전략 파일은 달라지지 않음)
+- 전략 값은 `LiveParams` 기본값 그대로입니다 — `ws_trader` 의 명령줄 옵션(`--move` 등)은 앱에서 쓰지 않습니다
+
+### 예제와 ws_trader 에서 떼어 오기 (손으로 할 때)
 
 - 예제: `docs/team/examples/strategy_leadlag.py`. 이대로 올리면 됩니다(표준 라이브러리만 씁니다).
 - 내 `ws_trader.py` 에서 직접 떼어 낼 때 **남길 것**(한 글자도 고치지 않음 — 시험이 원문과 글자 그대로 비교합니다):

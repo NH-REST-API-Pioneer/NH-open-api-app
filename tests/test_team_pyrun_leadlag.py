@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "docs/team/examples"
 EXAMPLE = EXAMPLES / "strategy_leadlag.py"
 WEEK03 = Path(__file__).parent / "fixtures/team_pyrun/week03/leadlag"
-WS_TRADER = WEEK03 / "ws_trader.py"         # week03 원본 사본 — 글로만 읽는다(실행 금지)
+WS_TRADER = WEEK03 / "ws_trader.py"         # week03 원본 사본(깃허브 11/04 판) — 여기선 글로만 읽는다. 그대로 불러오기는 test_team_pyrun_decision
 RAW_1103 = WEEK03 / "20261103/raw.jsonl.gz"
 RAW_1102 = WEEK03 / "20261102/raw.jsonl.gz"
 

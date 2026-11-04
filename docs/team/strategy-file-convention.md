@@ -251,3 +251,251 @@ class MeanRevert:
 - `STRATEGY`·`TITLE`·`NAME` 이 없으므로 전략은 `MeanRevert`, 이름은 파일 이름(`my_strategy`), 제목은 모듈 문서 첫 줄의 「 — 」 앞(`이동평균 되돌림`)입니다.
 - `TICK` 을 기본 공용 모듈에서 가져왔으므로 틱은 0.1, 틱가치는 기본값 1000 입니다.
 - `day`·`on_entry`·`on_exit` 가 없으므로 그날 손절 한도나 청산 뒤 대기는 없습니다. 필요하면 week02 `DayState` 처럼 더하세요.
+
+## 9. 전략이 청산을 판단하는 약속 (`exit_reason` · `exit_levels`)
+
+기본은 앱의 공통 청산(진입가 ∓ `stop_ticks` 손절 · `target` 익절 · `hold_min` 시간 청산)입니다. 전략이 **자기 규칙으로**
+청산하고 싶으면(예: 기준 범위 끝에서 손절, 목표 틱 익절) 전략 클래스에 `exit_reason` 을 더하세요. 있으면 앱은
+공통 손절·익절·시간 청산을 **쓰지 않고** 이것만 묻습니다 — 시간 청산도 전략이 직접 챙겨야 합니다. 없으면 지금까지와 같습니다.
+
+```text
+exit_reason(clock, price, low, high, pos) -> None | "사유" | ("사유", 기준가)
+```
+
+| 인자 | 뜻 |
+|---|---|
+| `clock` | `HHMMSS` |
+| `price` | 이번 가격 |
+| `low` · `high` | 그 분의 저가·고가. **가격 하나만 줄 때는 `None`** (장중 현재가, 리플레이의 시가) |
+| `pos` | 보유의 **사본**(바꿔도 앱의 보유는 그대로): `side` `entry` `entry_time` `entry_date` `signal_time` `stop`(진입가 ∓ `stop_ticks` 틱) `stop_ticks` `signal`(진입 신호 객체, 모르면 `None`) `window`(진입 신호에 있으면) |
+
+**두 번 묻습니다 (리플레이).** 한 분을 넣을 때 먼저 그 분 **시가**로(`low`·`high` 는 `None`), 다음에 **종가와 그 분의 저가·고가**로 묻습니다.
+시가가 이미 손절가를 지났으면 첫 물음에서 시가로, 아니면 둘째 물음에서 손절가로 청산합니다 — 「손절가를 지나면 `min(시가, 손절가)`」 를
+그대로 옮길 수 있습니다. 장중(실시간 현재가)에는 가격 하나로만 묻습니다.
+
+**돌려주는 값**
+
+| 값 | 뜻 |
+|---|---|
+| `None` | 들고 있음 |
+| `"사유"` | 지금 가격(`price`)으로 청산 |
+| `("사유", 기준가)` | 그 가격을 기준가로 청산 |
+
+- **기준가는 앱이 묶습니다.** 가격 하나일 때는 언제나 그 가격, 범위(`low`·`high` 숫자)일 때는 `[low, high]` 안으로 맞춥니다.
+  바뀌면 `event` 줄이 남습니다 — 전략이 엉뚱한 가격으로 체결을 지어낼 수 없습니다. 기준가는 종이 체결가(∓ 슬리피지)와 체결가를
+  못 받았을 때 기록할 가격입니다. **모의 계좌의 실제 주문은 언제나 시장가**입니다.
+- 사유는 글자 40자까지. 사유가 `"손절"` 이면 `on_exit(…, stopped=True)` 로 하루 손절 수에 들어갑니다.
+- **쓸 수 없는 사유**: `"장 마감 정리"` · `"실행 종료 정리"` (앱이 쓰는 이름 — 기록에서 섞이지 않게). 그 밖에 약속에 없는 값(숫자, 빈 글자,
+  기준가 0 이하 등)을 돌려주면 `TypeError` — 장중이면 실행이 「오류」로 끝나고 보유를 정리합니다.
+
+**앱이 먼저인 안전 규칙 (위가 먼저, 앞에 걸리면 전략에 묻지 않음)**
+
+| 순서 | 규칙 |
+|---|---|
+| 1 | 멈춤(`halted`, 「확인 필요」) — 진입도 청산도 하지 않음 |
+| 2 | 청산 체결이 확인 안 돼 기다리는 중 — 아무것도 안 함 |
+| 3 | `flatten_at` 이후 — 앱이 「장 마감 정리」 |
+| 4 | 앞서 정한 청산이 확인 안 됨 — 10초 뒤 **같은 사유로 다시** (전략에 다시 묻지 않음) |
+| 5 | `exit_reason` 이 돌려준 사유 (전략) |
+| 끝 | 실행 끝·중지·오류 정리(「실행 종료 정리」) — 언제나 |
+
+해외 휴장(20:35~20:50)엔 주문이 없습니다. 청산은 **판단만** 해서 사유를 정해 두고, 20:50 이후 첫 가격에 그 사유로 냅니다(다시 묻지 않음, 3장).
+
+**화면의 손절·익절** — 전략에 `exit_levels(pos) -> {"stop": 가격|None, "target": 가격|None}` 이 있으면 보유 중 화면이 그 값을 보입니다.
+**표시 전용**이라 판단에는 쓰지 않습니다(청산은 `exit_reason` 그대로). 예외가 나거나 수가 아닌 칸이면 원래 값(앱의 손절가·`target`)을 보입니다.
+
+**`on_entry` 인자** — 매개변수가 없으면 `on_entry()`. 있으면 **이름이 같은 진입 신호 칸의 값**을 넘깁니다
+(ORB `on_entry(window)` 는 신호의 `window`). 신호에 없는 이름은 기본값이 있으면 기본값, 없으면 `TypeError` —
+이 대응은 **진입 주문을 내기 전에** 맞춰 보므로, 틀리면 주문 없이 오류입니다. `*args`·`**kwargs` 에는 아무것도 넘기지 않습니다.
+신호에 `window` 가 있으면 보유와 `trade` 줄, 진입 기록에도 남습니다(3장의 「개장마다 한 번」).
+
+**짧은 예제** — 8장 전략에 「손절은 진입가 ∓ `stop_ticks`, 익절은 이동평균, 시간 청산은 직접」 을 `exit_reason` 으로 옮긴 것입니다.
+이것도 이대로 올리면 돕니다(시험이 불러옵니다).
+
+```python
+"""평균 되돌림 (전략 청산) — 작성 규칙 예제. exit_reason 으로 청산을 직접 판단합니다."""
+from collections import deque
+from dataclasses import dataclass
+
+from strategy import TICK, Signal   # 앱에 든 기본 공용 모듈
+
+
+@dataclass(frozen=True)
+class Params:
+    period: int = 20
+    gap_ticks: int = 5
+    stop_ticks: int = 5
+    hold_min: int = 30
+    session_start: str = "090000"
+    session_end: str = "153500"
+    entry_start: str = "093000"
+    entry_end: str = "150000"
+    flatten_at: str = "153000"
+
+
+@dataclass
+class Bar:
+    date: str
+    start: str
+    end: str
+    close: float
+    ma: float | None = None
+
+
+def _min(hhmmss: str) -> int:
+    return int(hhmmss[:2]) * 60 + int(hhmmss[2:4])
+
+
+class MeanRevertExit:
+    """평균에서 벗어나면 반대로 들어가고, 손절·평균 도달·시간 청산을 exit_reason 이 정합니다."""
+
+    def __init__(self, p: Params) -> None:
+        self.p = p
+        self.closes = deque(maxlen=p.period)
+        self.ma = None
+
+    def on_minute(self, m) -> list:
+        if not (self.p.session_start <= m.time < self.p.session_end):
+            return []
+        self.closes.append(m.close)
+        bar = Bar(m.date, m.time, m.time, m.close)
+        if len(self.closes) < self.p.period:
+            return [Signal(bar, None, "평균 준비 전")]
+        bar.ma = self.ma = sum(self.closes) / len(self.closes)
+        gap = (m.close - bar.ma) / TICK
+        if gap >= self.p.gap_ticks:
+            return [Signal(bar, "sell", f"평균 위 {gap:.0f}틱", self.p.stop_ticks)]
+        if gap <= -self.p.gap_ticks:
+            return [Signal(bar, "buy", f"평균 아래 {-gap:.0f}틱", self.p.stop_ticks)]
+        return [Signal(bar, None, "평균 근처")]
+
+    def exit_reason(self, clock, price, low, high, pos):
+        buy = pos["side"] == "buy"
+        lo, hi = (price, price) if low is None or high is None else (low, high)
+        if (lo <= pos["stop"]) if buy else (hi >= pos["stop"]):
+            return "손절", pos["stop"]              # 앱이 [low, high] 안으로 묶습니다
+        if self.ma is not None and ((hi >= self.ma) if buy else (lo <= self.ma)):
+            return "평균 도달", self.ma
+        if _min(clock) - _min(pos["entry_time"]) >= self.p.hold_min:
+            return "시간 청산"                      # 공통 시간 청산은 안 쓰므로 직접
+        return None
+
+    def exit_levels(self, pos) -> dict:
+        return {"stop": pos["stop"], "target": self.ma}   # 화면에만 보임
+```
+
+## 10. ORB 를 앱에 올리는 법 (MKU 1분봉)
+
+week03 후보 B(세션 개장 돌파, ORB)를 앱 1분봉 실행기로 돌리는 파일이 저장소에 있습니다.
+
+- 예제: `docs/team/examples/strategy_orb_app.py`
+- **파일 세 개를 같은 전략 폴더에 올립니다**(「파일 올리기」를 세 번): `strategy_orb.py`(week03 원본) · `common.py`(week03 원본) · `strategy_orb_app.py`(위 예제).
+  앱 목록에는 `strategy_orb_app.py` 가 전략으로 보입니다. `strategy_orb.py`·`common.py` 는 **한 글자도 고치지 않습니다**(시험이 해시로 비교합니다).
+- **판정(진입 신호)은 옮기지 않고 물려받습니다.** `OrbApp(SessionBreakout)` — 기준 범위 쌓기·돌파 판정·진입 막기·`on_entry(window)`·`on_exit` 가 원본 그대로입니다.
+- **`backtest.py` 에서 옮긴 것**은 ORB 체결·청산 규칙(`run()` 81~176줄)입니다. 앱의 공통 청산이 ORB 와 달라서 `exit_reason`(9장)으로 옮겼습니다:
+  손절 = 진입 신호의 **범위 반대편 끝**, 익절 = 진입가 ± `target_ticks`, 기한 = 진입 + `hold_min`(또는 신호의 `exit_by` 가 이르면 그것), 손절 먼저 → 익절.
+  옮기고 남은 대응표와 한 가지 다른 점(시가가 이미 익절가를 넘었는데 같은 분 저가가 손절가까지 간 봉)은 예제 파일 머리말에 있습니다.
+  화면의 손절·익절 선은 `exit_levels`(범위 끝 · 목표가)입니다.
+
+**MKU 시간표** (한국시간): 장 **08:25** 시작 · **20:35~20:50 휴장**(주문 없음, 판단은 기다림) · **23:50** 보유 정리(`flatten_at`) · **23:55** 실행 끝.
+ORB 의 Params 에는 장 시간 칸이 없으므로 해외 실행이 시장 시간표로 채웁니다(`session_start`·`entry_start` 08:25, `flatten_at` 23:50, `session_end` 23:55).
+휴장 동안의 규칙은 3장 「해외 MKU 로 돌릴 때」 그대로입니다: 진입 대기는 20:50 이후 첫 가격에, 정해진 청산은 다시 묻지 않고 20:50 이후 첫 가격에 그 사유로.
+
+- **돈은 USD** 입니다(틱 0.0001 = US$2.5). 요약·화면의 손익·수수료 단위가 달러입니다.
+- **장중에 켜면(중간 시작)**: 앱이 준비 봉(전날부터)을 넣어 오늘의 개장 상태를 되살립니다. 준비 봉에서 **오늘** 진입 신호가 이미 난 개장과,
+  오늘 같은 `NAME`·종목·방식의 앞선 실행이 들어간 개장은 「이미 진입함」입니다 — 앱이 그 개장마다 `on_entry(window)` 를 부르고
+  `day.in_position` 을 `False` 로 되돌리며, 그 개장의 진입 신호가 또 나와도 버립니다. 앞선 실행의 손절 수는 `day.stops` 로 이어받습니다.
+  (그래서 같은 개장에 두 번 들어가지 않습니다. 보유 자체는 이어받지 않습니다 — 켜는 순간 계좌에 보유가 있으면 시작을 거부합니다.)
+- **같은 MKU 모의 실행 하나**: 모의 계좌(`orders`)는 주문하는 종목 하나에 실행 하나입니다. 1분봉이든 실시간(11장)이든 통틀어
+  같은 `MKU…` 종목에 둘이 돌 수 없고, 두 번째는 폴더를 만들기 전에 거부됩니다. 「종이」 실행은 계좌를 만지지 않아 이 제한이 없습니다.
+- 리플레이: `uv run python -m backend.team_pyrun.replay strategy_orb_app.py <YYYYMMDD> bars_1m_MKUX26.csv` (파일 이름의 `MKUX26` 으로 시장을 정합니다).
+  week03 백테스트와 같게 휴장을 막지 않습니다.
+
+## 11. 실시간 전략(leadlag) 약속과 ws_trader 에서 `Engine` 떼어 올리는 법
+
+초 단위 전략(KRX 체결을 보고 MKU 를 주문하는 leadlag)은 1분봉이 아니라 **실시간 실행기**가 돌립니다. 앱이 `Engine` 에 `on_krx`·`on_quote` 가
+있으면 실시간 전략으로 알아봅니다(둘 다 `on_minute` 도 있으면 불러오기 오류).
+
+### Engine 약속 (판단만 — 접속·주문은 앱)
+
+| 이름 | 뜻 |
+|---|---|
+| `Engine(p)` | 생성자 인자는 Params 하나 (`Params` 또는 `LiveParams`, dataclass, **모든 칸 기본값**). 실시간은 필수 칸이 없습니다 |
+| `on_krx(price, now, hhmmss)` | KRX 체결 하나 (`now` 는 받은 순간의 단조 시계, 초). 행동 `dict` 또는 `None` |
+| `on_quote(bid, ask, now, hhmmss)` | MKU 1단 호가 하나. 행동 `dict` 또는 `None` |
+| `on_timer(now, hhmmss)` | 1초마다 |
+| `filled_entry(…)` · `filled_exit(…)` | 앱이 체결을 알리는 자리 |
+| `p` | 받은 Params |
+
+행동은 `{"act": "enter"|"exit", "side": ±1, "ref": 기준 호가, …}` 입니다. `pending`·`pos`·`stops` 가 있으면 화면이 씁니다.
+틱 가치는 모듈의 `TICK_VALUE`, 없으면 `TICK_USD` 로 읽습니다. 앱은 **주문 중인 동안 Engine 이 새 행동을 내지 않는다**고 가정하므로(`pending`),
+약속을 어기고 행동을 내면 주문하지 않습니다.
+
+### 예제와 ws_trader 에서 떼어 오기
+
+- 예제: `docs/team/examples/strategy_leadlag.py`. 이대로 올리면 됩니다(표준 라이브러리만 씁니다).
+- 내 `ws_trader.py` 에서 직접 떼어 낼 때 **남길 것**(한 글자도 고치지 않음 — 시험이 원문과 글자 그대로 비교합니다):
+  `TICK` · `TICK_USD` · `FEE_TICKS` · `LiveParams` · `Engine`.
+- **지울 것**:
+
+| 지울 것 | 까닭 |
+|---|---|
+| `Recorder` | 기록은 앱이 함 (민감 칸은 쓰는 순간 지움). 원문 `raw.jsonl` 은 남기지 않음 |
+| `Trader` | 웹소켓 접속·다시 붙기·주문·체결 확인은 앱 실시간 실행기가 함 — 올린 코드는 주문을 낼 수 없음 |
+| `main` · `argparse` | 명령줄 대신 앱 「실행 세우기」 |
+| `open_raw` · `HERE` | 녹화 읽기는 앱 리플레이가 함 |
+| `SILENCE_S` | 끊김 판단은 앱 허브가 함 |
+| `websockets` · `nh_client` · `fee_test` · `ws_probe` import | 위를 빼면 쓰이지 않음 |
+| `asyncio` · `csv` · `gzip` · `json` · `time` · `datetime` · `Path` · `asdict` import | 위와 같음 |
+
+### 종목: 시세는 KRX, 주문은 MKU
+
+실행을 세울 때 종목이 둘입니다. **신호 종목**(`signal_sym`)은 KRX 미국달러선물 `A75…` 로 **시세만** 봅니다(비우면 국내 최근월물).
+**주문 종목**(`sym`)은 `MKU…` 이고 실시간 실행은 MKU 만 주문합니다(전략 `TICK` 이 0.0001 이어야 함). 같은 종목 제한(10장)은 주문 종목에만 걸립니다 —
+신호 종목은 막지 않습니다.
+
+### 앱이 하는 일
+
+- 원문을 **받은 순서 그대로** Engine 에 넣습니다: KRX 체결(`tick_div == "1"` 이고 체결량 > 0) → `on_krx`, MKU 호가 → `on_quote`, 1초 타이머 → `on_timer`.
+  시각 기준은 받은 순간의 단조 시계입니다. 주문·체결 확인(최대 15초)을 기다리는 동안 쌓인 원문은 확인 뒤 순서대로 넣되,
+  체결 결과는 쌓인 원문을 다 넣은 **뒤**에 Engine 에 알립니다(ws_trader 와 같은 판단).
+- 「모의 계좌」는 시장가 1계약(주문 전 잔고 관문 · 재전송 금지), 「종이」는 **반대 호가** 체결(수수료 US$2/체결, 슬리피지 없음).
+  Engine 의 `ref` 가 반대 호가와 다르면 기록만 하고 반대 호가로 체결합니다.
+
+| 만나는 것 | 앱이 하는 일 |
+|---|---|
+| **끊겼다 다시 붙음**(공백 표지) | 기록만 합니다. 끊긴 동안의 가짜 충격은 Engine 의 `stale_s` 규칙이 버립니다 |
+| **모의↔실전 환경이 바뀜** | 보유 중이면 멈춤(「확인 필요」), 보유가 없으면 끝 |
+| **원한 구독이 밀리거나 거절됨** | 위와 같음 (시세 없이 청산 판단을 할 수 없음). 기록용 MKU 체결만 밀린 것이면 기록만 |
+| **쌓임 한도(5,000건) 넘음** (`overflow`) | 보유·결과 모름 주문이 있으면 멈춤, 없으면 「끝 — 쌓임 한도」 — 빠진 원문이 있으면 같은 판단을 보장할 수 없음 |
+| **체결을 모름**(응답 없음·번호 없음·15초 안에 확인 안 됨) | **멈춤(확인 필요)**. 더 주문하지 않고 끝에도 정리하지 않으며 새로 판단하지 않음 |
+| **청산 주문이 거절됨**(결과를 아는 실패) | 잔고를 한 번 보고 앱이 아는 보유와 같으면 10초 뒤 **같은 사유로** 다시. **3번째까지 안 되면** 멈춤(「청산 주문이 3번 거절됨」) |
+| **진입 주문이 거절됨** | 그 신호를 버립니다(ws_trader 와 같음) |
+
+멈춘 실행은 Engine 에 더 넣지 않고 주문도 하지 않으며, 중지·끝 시각에 정리 없이 끝납니다(끝 까닭 「정리 안 함 — 확인 필요」).
+휴장(20:35~20:50)엔 주문하지 않습니다 — 진입 신호는 버리고, 청산은 들고 있다가 휴장이 끝난 첫 순간에.
+
+**끝 시각** = Params 의 `flatten_at` + 5분(해외 23:55 를 넘지 않음, `flatten_at` 이 없으면 23:55). 그 전에 Engine 이 「마감」 청산을 냅니다.
+끝·중지·오류 때 보유가 남아 있고 멈추지 않았으면 앱이 청산 주문을 내고 `filled_exit(…, "실행 종료 정리")` 를 알립니다.
+
+**리플레이(녹화로 다시 돌리기)**
+
+```text
+uv run python -m backend.team_pyrun.replay strategy_leadlag.py <YYYYMMDD> <raw.jsonl.gz>
+```
+
+week03 `ws_trader.py` 가 남긴 원문 녹화(`results/live/<날짜>/raw.jsonl.gz`)를 앱 실행기와 같은 길로 흘립니다. 서버 접속·주문은 없고 체결은 종이입니다.
+
+## 12. MKU 공통
+
+- **틱·통화**: 틱 0.0001 = **US$2.5**, 통화 USD. 1분봉 전략은 `TICK = 0.0001`·`TICK_VALUE = 2.5` 로 시장이 정해집니다(종목을 비우면 MKU 최근월물).
+- **수수료**: 종이는 **체결마다 US$2**(편도), 슬리피지 1틱. 모의 계좌는 서버가 낸 수수료를 예수금에서 읽어 기록합니다.
+- **아직 기록으로 확인하지 못한 것**: 해외 주문내역의 **상태 코드**(`ord_sts`: 1 접수 · 3 확인 · 4 부분체결 · 6 전체체결 · 8 자동취소 · 9 거부)와
+  주문·잔고·예수금의 **칸 이름**은 운영자 코드(`backend/overseas_futureoption/`)에서 가져온 것이고, 해외 주문·잔고 **응답 기록(`tests/fixtures/nh/`)은 아직 없습니다.**
+  국내처럼 실제 응답으로 맞춰 본 적이 없다는 뜻입니다.
+- **그래서 첫 장중은 이 순서로 하세요.**
+  1. 먼저 **「종이」** 로 한 번 돌려 판단·시간표·휴장 동작을 봅니다(계좌를 만지지 않습니다).
+  2. 그다음 **「모의 계좌」** 로 돌리고, **첫 주문의 체결**(체결가·수량·상태·수수료)을 앱 기록과 NH 앱 화면 양쪽으로 맞춰 봅니다.
+     체결을 못 읽으면 앱은 새 주문을 내지 않고 「확인 필요」로 멈춥니다 — 이때 기록(`api_log.jsonl`)의 응답 칸 이름을 확인해 상태 코드·칸 이름을 고칩니다.
+  3. 같은 종목에 실행이 하나뿐인지(10장) 확인하고 켭니다.
+- 모든 NH 호출은 모의(`paper`) 서버로만 나갑니다. 주문은 재전송하지 않고, 응답이 없으면 주문내역·잔고로 확인될 때까지 새 주문을 막습니다.

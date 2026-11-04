@@ -488,3 +488,17 @@ def test_작성_규칙_문서의_예제를_불러온다(tmp_path):
     # 문서에 적은 결과 그대로 (2026-10-30 리플레이: 53건, −81,000원)
     assert (r["summary"]["trades"], r["summary"]["net_pnl"]) == (53, -81000)
     assert "53건, −81,000원" in text
+
+
+def test_작성_규칙_문서의_exit_reason_예제를_불러온다(tmp_path):
+    """문서의 둘째 python 덩어리(전략 청산 예제) — 불러오고, exit_reason·exit_levels 가 있고, 하루를 돌려 기록이 나온다."""
+    blocks = re.findall(r"```python\n(.*?)```", DOC.read_text(encoding="utf-8"), re.S)
+    assert len(blocks) == 2, "문서의 python 덩어리는 불러올 수 있는 예제 둘이어야 합니다"
+    folder = _write(tmp_path / "s", "my_exit.py", blocks[1])
+    got = load(folder, "my_exit.py")
+    s = got.new()
+    assert callable(s.exit_reason) and callable(s.exit_levels)
+    r = replay(got, "20261030", load_minutes(DATA), tmp_path / "out")
+    assert r["summary"]["trades"] > 0
+    reasons = {t["reason"] for t in r["trades"]}
+    assert reasons <= {"손절", "평균 도달", "시간 청산", "장 마감 정리"} and reasons

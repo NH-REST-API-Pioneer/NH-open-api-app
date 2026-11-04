@@ -61,7 +61,7 @@ from types import ModuleType
 from typing import Any
 
 from backend import config
-from backend.team_pyrun.markets import Market
+from backend.team_pyrun.markets import Market, market_of_tick
 from backend.team_pyrun.runner import EXIT_HOOK, TARGET_NAMES
 
 #: 1분봉 전략 파라미터(`Params`) 칸 — 1분봉 실행기가 읽는 것. 이 중 `SCHEDULE_PARAMS` 는 없으면 시장이 채운다.
@@ -108,6 +108,8 @@ class StrategyFile:
     params: dict | None
     error: str | None
     notes: list[str] = field(default_factory=list)   # 알림(오류 아님) — 예: 익절 목표가 없음
+    kind: str | None = None                          # "minute" | "realtime" — 화면이 종목 칸 수를 정함. 오류면 None
+    market: str | None = None                        # 종목을 비우면 쓸 시장(`market_of_tick`) — 화면의 「최근월물」 어림. 오류면 None
 
 
 @dataclass(frozen=True)
@@ -425,7 +427,8 @@ def scan_all(folder: Path) -> tuple[list[StrategyFile], list[str]]:
         try:
             c = _check(module, file)
             params: dict[str, Any] | None = dataclasses.asdict(c.instance.p)
-            out.append(StrategyFile(file, c.name, c.title, params, None, c.notes))
+            out.append(StrategyFile(file, c.name, c.title, params, None, c.notes, c.kind,
+                                    market_of_tick(c.tick).id))
         except LoadError as e:
             out.append(StrategyFile(file, name, title, None, str(e)))
     return out, modules

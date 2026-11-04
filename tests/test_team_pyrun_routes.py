@@ -63,13 +63,15 @@ def test_전략_목록(client, reg):
     by_file = {s["file"]: s for s in body["strategies"]}
     assert by_file["strategy_bb.py"]["name"] == "bb" and by_file["strategy_bb.py"]["error"] is None
     assert by_file["strategy_bb.py"]["params"]["bar_min"] == 5
-    assert {"file", "name", "title", "params", "error", "notes"} == set(by_file["fake.py"])
+    assert {"file", "name", "title", "params", "error", "notes", "kind", "market"} == set(by_file["fake.py"])
     assert by_file["fake.py"]["notes"] == []
+    assert (by_file["fake.py"]["kind"], by_file["fake.py"]["market"]) == ("minute", "domestic")
     # 다시 읽기는 같은 것 — 그 사이 새로 놓은 파일도 보인다
     (reg.strategies / "late.py").write_text("raise RuntimeError('깨짐')\n", encoding="utf-8")
     again = client.post(f"{BASE}/strategies/reload").json()
     late = next(s for s in again["strategies"] if s["file"] == "late.py")
     assert late["error"] and late["name"] is None
+    assert late["kind"] is None and late["market"] is None     # 못 쓰는 파일은 종류·시장을 모른다
 
 
 # ---------------------------------------------------------------- 시작
@@ -941,6 +943,16 @@ def test_도는_실시간_실행의_차트도_실시간_모양(rt_reg):
     client = TestClient(app)
     run_id = client.post(f"{BASE}/runs", json={**RT_BODY, "mode": "paper"}).json()["id"]
     assert client.get(f"{BASE}/runs/{run_id}/bars").json() == {"kind": "realtime", "bars": [], "marks": []}
+
+
+def test_전략_목록에_실행기_종류(rt_reg):
+    """화면이 실시간 전략이면 종목 칸 둘(신호·주문)을 세운다 — 목록이 종류를 알려 준다."""
+    rows = {s["file"]: s for s in TestClient(app).get(f"{BASE}/strategies").json()["strategies"]}
+    assert (rows["fake.py"]["kind"], rows["fakemku.py"]["kind"], rows["strategy_rt_fake.py"]["kind"]) == \
+        ("minute", "minute", "realtime")
+    # 종목을 비우면 쓸 시장(전략 TICK) — 화면이 「최근월물」 코드를 어림하는 데 쓴다
+    assert (rows["fake.py"]["market"], rows["fakemku.py"]["market"], rows["strategy_rt_fake.py"]["market"]) == \
+        ("domestic", "overseas", "overseas")
 
 
 def test_1분봉_차트는_kind_minute(client):

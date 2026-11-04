@@ -440,13 +440,18 @@ ORB 의 Params 에는 장 시간 칸이 없으므로 해외 실행이 시장 시
 - 빼는 것(실행 안 함): 앱에 없는 모듈의 import · 실행할 때 그 이름을 쓰는 맨 위 문장(예: `CLIENT = NHClient()`) ·
   함수·클래스 안에서 그 이름을 쓰는 정의(예: `Trader`, `Trader` 를 쓰는 `main`) · `if __name__ == "__main__":` — 끝까지 따라갑니다
 - 그대로 두는 것: 나머지 전부(`Engine` · `LiveParams` · `TICK` …, 없는 모듈을 안 쓰는 `Recorder` 같은 것도 정의만 됨)
-- 목록 줄 밑에 「실행기와 판단이 한 파일 — 판단 Engine 만 씀 · 앱에 없는 모듈(…)을 써서 실행하지 않는 부분: Trader, main, …」 알림
+- 목록 줄 밑에 「실행기와 판단이 한 파일 — 판단 Engine 으로 돌림 · 앱에 없는 모듈(…)을 써서 실행하지 않는 부분: Trader, main, …」 알림
+- 파일 저장 형식은 상관없습니다(UTF-8, BOM 붙은 UTF-8, `# -*- coding: … -*-` 표시)
 - 판단이 바뀌면(깃허브의 `Engine`·`LiveParams` 수정) 새 `ws_trader.py` 를 다시 올리면 됩니다 — 손으로 떼어 낼 필요가 없습니다
 - **불러오지 않는 경우**(조용히 다른 값으로 돌지 않게):
   - 전략 클래스가 앱에 없는 모듈을 쓰면(예: `Engine` 안에서 `nh_client` 로 주문, 또는 옆 파일을 같이 안 올림) —
     「전략 클래스가 앱에 없는 모듈을 씁니다: Engine 이 이름(모듈) …」. 옆 파일이면 같이 올리고, 실행기면 판단 클래스와 나눠 주세요
   - 앱이 읽는 이름(`TICK` `TICK_VALUE` `TICK_USD` `Params` `LiveParams` `STRATEGY` `TITLE` `NAME`)이 그 모듈에 기대면
     (예: `from nh_client import TICK`) — 기본값(0.1)으로 돌면 시장이 바뀌므로 값을 파일에 직접 적어 주세요
+  - 그 모듈을 쓰는 맨 위 문장이 **값을 바꾸거나 흐름을 막는 문장**이면(예: `FEES.update(nh_client.FEES)` · `X['a'] = nh_client.A` ·
+    `if nh_client.ENV != "paper": raise …` · 맨 위에서 부르는 `init()`), 또는 그 모듈을 쓰는 함수가 `global X` 로 모듈 값을 바꾸면 —
+    빼면 남은 값이 몰래 달라지므로 막습니다. 그 문장을 함수 안이나 `if __name__ == "__main__":` 아래로 옮겨 주세요
+  - 전략 `__init__` 첫 인자의 주석이 그 모듈의 이름이면(예: `def __init__(self, p: nh_client.Cfg)`) — Params 를 알 수 없어 막습니다
 - 앱에 있는 모듈만 쓰는 파일은 지금까지처럼 파일 전체를 실행합니다(보통 전략 파일은 달라지지 않음)
 - 전략 값은 `LiveParams` 기본값 그대로입니다 — `ws_trader` 의 명령줄 옵션(`--move` 등)은 앱에서 쓰지 않습니다
 - 이름은 문법으로 따라갑니다 — `globals()["X"]` 처럼 글자로 찾는 이름은 따라가지 못합니다

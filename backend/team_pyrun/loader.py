@@ -208,7 +208,7 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
             picked = None
             if missing:
                 try:
-                    picked = decision.pick(tree, data.decode("utf-8"), str(path), missing)
+                    picked = decision.pick(tree, importlib.util.decode_source(data), str(path), missing)
                 except decision.PickError as e:
                     raise LoadError(str(e)) from e
                 code = compile(picked.module, str(path), "exec", dont_inherit=True)   # 원래 줄 번호 그대로
@@ -276,15 +276,27 @@ def _strategy_class(module: ModuleType) -> type:
     return found[0]
 
 
-def _first_arg_type(strategy_cls: type) -> object:
-    """전략 `__init__` 의 첫 인자(self 다음) 주석. 문자열 주석(`from __future__ import annotations`)도 풀어 본다. 없으면 None."""
+def _first_arg_type(strategy_cls: type, strict: bool = False) -> object:
+    """전략 `__init__` 의 첫 인자(self 다음) 주석. 문자열 주석(`from __future__ import annotations`)도 풀어 본다. 없으면 None.
+
+    # 팀: 첫 인자의 주석 **하나만** 푼다 — 다른 인자의 주석(예: 쓰지 않는 `client: NHClient`)이 풀리지 않아 첫 인자까지
+    # 못 읽고 엉뚱한 Params 를 고르는 일이 없게. `strict`(판단 부분만 골라 쓴 파일)면 첫 인자 주석이 안 풀릴 때 막는다."""
     try:
-        params = list(inspect.signature(strategy_cls.__init__, eval_str=True).parameters.values())
+        params = list(inspect.signature(strategy_cls.__init__).parameters.values())
     except Exception:
         return None
     if len(params) < 2 or params[1].annotation is inspect.Parameter.empty:
         return None
-    return params[1].annotation
+    ann = params[1].annotation
+    if not isinstance(ann, str):
+        return ann
+    try:
+        return eval(ann, getattr(strategy_cls.__init__, "__globals__", {}))   # noqa: S307 — 이미 실행한 전략 파일의 주석 글
+    except Exception as e:
+        if strict:
+            raise LoadError(f"전략 __init__ 첫 인자의 주석({ann})을 풀 수 없습니다 — {type(e).__name__}: {e}. "
+                            "앱에 없는 모듈의 이름이면 Params 클래스 이름을 직접 적어 주세요") from e
+        return None
 
 
 def _params_class(module: ModuleType, strategy_cls: type, names: tuple[str, ...] = ("Params",)) -> type:
@@ -299,7 +311,8 @@ def _params_class(module: ModuleType, strategy_cls: type, names: tuple[str, ...]
         return isinstance(candidate, type) and dataclasses.is_dataclass(candidate)
 
     found = [getattr(module, n, None) for n in names]
-    annotated = _first_arg_type(strategy_cls)
+    annotated = _first_arg_type(strategy_cls, strict=isinstance(getattr(module, decision.DECISION_ATTR, None),
+                                                                 decision.Picked))
     # 실시간 전략: 같은 파일에 Params 와 LiveParams 가 함께 있으면 `__init__` 이 밝힌 것(그 파일 정의)을 먼저 —
     # leadlag `Engine(p: LiveParams)` 이 옆의 다른 Params 로 돌지 않게
     if len(names) > 1 and ok(annotated) and annotated.__module__ == module.__name__:

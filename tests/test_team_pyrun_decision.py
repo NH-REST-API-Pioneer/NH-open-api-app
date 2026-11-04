@@ -65,7 +65,7 @@ def test_ws_trader_를_그대로_올리면_판단_부분만_불러_실시간_전
     (row,) = scan_all(ws_folder)[0]
     assert row.error is None and row.kind == "realtime" and row.market == "overseas"
     note = next(n for n in row.notes if n.startswith("실행기와 판단이 한 파일"))
-    assert "판단 Engine 만 씀" in note
+    assert "판단 Engine 으로 돌림" in note
     skipped = note.split("실행하지 않는 부분:")[1]
     for unused in ("Trader", "main", "__main__"):
         assert unused in skipped
@@ -105,8 +105,7 @@ import {MISSING}
 TICK = 0.0001
 TICK_USD = 2.5
 open({str(kept)!r}, "w").write("top")
-{MISSING}.log(open({str(marker)!r}, "w"))
-CLIENT = {MISSING}.Client()
+CLIENT = {MISSING}.Client(open({str(marker)!r}, "w"))
 
 
 @dataclass(frozen=True)
@@ -128,7 +127,7 @@ if __name__ == "__main__":
 ''')
     got = load(tmp_path / "s", "mixed.py")
     assert got.strategy_cls.__name__ == "Engine" and got.kind == "realtime"
-    assert kept.exists() and not marker.exists()            # 없는 모듈을 쓰는 맨 위 문장은 실행 안 함
+    assert kept.exists() and not marker.exists()            # 없는 모듈을 쓰는 맨 위 대입은 실행 안 함
     (row,) = scan_all(tmp_path / "s")[0]
     skipped = row.notes[-1].split("실행하지 않는 부분:")[1]
     for name in ("CLIENT", "Trader", "main", "줄 "):
@@ -366,3 +365,59 @@ def test_한_줄에_섞인_import_는_있는_모듈만_남긴다(tmp_path):
     write(tmp_path / "s", "t.py", f"from dataclasses import dataclass\nimport json, {MISSING}\n" + MKU + LIVE
           + engine_krx("json.dumps([price])"))
     assert load(tmp_path / "s", "t.py").new().on_krx(1, 0, "090000") == "[1]"
+
+
+# ---------------------------------------------------------------- 재검토에서 찾은 경우
+@pytest.mark.parametrize("prefix,encoding", [("\ufeff", "utf-8"), ("# -*- coding: cp949 -*-\n", "cp949")])
+def test_BOM_이나_coding_표시가_있는_파일도(tmp_path, prefix, encoding):
+    folder = tmp_path / "s"
+    folder.mkdir()
+    (folder / "t.py").write_bytes((prefix + '"""한글 제목."""\n' + HEAD + MKU + LIVE + ENGINE).encode(encoding))
+    got = load(folder, "t.py")
+    assert got.strategy_cls.__name__ == "Engine" and got.title == "한글 제목"
+
+
+@pytest.mark.parametrize("stmt", [
+    f"FEES.update({MISSING}.FEES)\n",
+    f"FEES['x'] = {MISSING}.FEE\n",
+    f"if {MISSING}.ENV != 'paper':\n    raise SystemExit('실전')\n",
+    f"assert {MISSING}.ok()\n",
+])
+def test_값을_바꾸거나_흐름을_막는_문장은_빼지_않고_막는다(tmp_path, stmt):
+    write(tmp_path / "s", "t.py", HEAD + MKU + "FEES = {'x': 2.0}\n" + stmt + LIVE + engine_krx("FEES['x']"))
+    with pytest.raises(LoadError, match="뺄 수 없습니다"):
+        load(tmp_path / "s", "t.py")
+
+
+def test_모듈_값을_global_로_바꾸는_함수가_빠지면_막는다(tmp_path):
+    write(tmp_path / "s", "t.py", HEAD + MKU + "CFG = {'move': 1}\n\n\ndef init():\n    global CFG\n"
+          f"    CFG = {MISSING}.load()\n" + LIVE + engine_krx("CFG['move']"))
+    with pytest.raises(LoadError, match="global CFG"):
+        load(tmp_path / "s", "t.py")
+
+
+def test_첫_인자_밖의_주석이_안_풀려도_Params_는_첫_인자_주석으로(tmp_path):
+    write(tmp_path / "s", "t.py", f"from __future__ import annotations\nfrom dataclasses import dataclass\n"
+          f"from {MISSING} import Client\n" + MKU + "\n\n@dataclass(frozen=True)\nclass Params:\n    hold_min: int = 30\n"
+          + LIVE + ENGINE.replace("def __init__(self, p):", "def __init__(self, p: LiveParams, c: Client | None = None):"))
+    assert load(tmp_path / "s", "t.py").params_cls.__name__ == "LiveParams"
+
+
+def test_첫_인자_주석이_없는_모듈이면_막는다(tmp_path):
+    write(tmp_path / "s", "t.py", f"from __future__ import annotations\nfrom dataclasses import dataclass\n"
+          f"from {MISSING} import Cfg\n" + MKU + LIVE
+          + ENGINE.replace("def __init__(self, p):", "def __init__(self, p: Cfg):"))
+    with pytest.raises(LoadError, match="첫 인자의 주석"):
+        load(tmp_path / "s", "t.py")
+
+
+def test_main_블록에서만_정한_이름은_막지_않는다(tmp_path):
+    write(tmp_path / "s", "t.py", HEAD + MKU + LIVE + ENGINE
+          + f"\n\nif __name__ == \"__main__\":\n    TICK = {MISSING}.tick()\n")
+    assert load(tmp_path / "s", "t.py").tick == 0.0001
+
+
+def test_별표_import_가_있어도_모듈_dunder_는_막지_않는다(tmp_path):
+    write(tmp_path / "s", "t.py", f"from dataclasses import dataclass\nfrom pathlib import Path\nfrom {MISSING} import *\n"
+          + MKU + "HERE = Path(__file__).parent\n" + LIVE + engine_krx("str(HERE) != ''"))
+    assert load(tmp_path / "s", "t.py").new().on_krx(1, 0, "090000") is True

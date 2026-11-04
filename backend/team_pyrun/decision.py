@@ -55,7 +55,7 @@ class Picked:
     missing: tuple[str, ...]       # 앱 환경에서 못 찾은 모듈
 
     def note(self, strategy: str) -> str:
-        return (f"실행기와 판단이 한 파일 — 판단 {strategy} 만 씀 · 앱에 없는 모듈({', '.join(self.missing)})을 써서 "
+        return (f"실행기와 판단이 한 파일 — 판단 {strategy} 으로 돌림 · 앱에 없는 모듈({', '.join(self.missing)})을 써서 "
                 "실행하지 않는 부분: " + (", ".join(self.dropped) or "없음"))
 
 
@@ -152,6 +152,37 @@ def _table_globals(table: symtable.SymbolTable) -> set[str]:
     return out
 
 
+def _table_global_writes(table: symtable.SymbolTable) -> set[str]:
+    """그 범위와 안쪽 범위가 `global X` 로 대입하는 모듈 이름."""
+    out = {sym.get_name() for sym in table.get_symbols() if sym.is_declared_global() and sym.is_assigned()}
+    for child in table.get_children():
+        out |= _table_global_writes(child)
+    return out
+
+
+def _is_main_block(node: ast.stmt) -> bool:
+    return (isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__")
+
+
+def _droppable(node: ast.stmt) -> bool:
+    """빼도 남은 코드의 값이 몰래 바뀌지 않는 문장 — import·정의·이름에만 대입·`__main__` 블록.
+    그 밖(식 문장·속성/첨자 대입·raise·assert·if·for·try·with)은 남은 값을 바꾸거나 흐름을 막을 수 있어 빼지 않고 막는다."""
+    if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return True
+    if _is_main_block(node):
+        return True
+
+    def names_only(t: ast.expr) -> bool:
+        return isinstance(t, ast.Name) or (isinstance(t, (ast.Tuple, ast.List)) and all(names_only(e) for e in t.elts))
+
+    if isinstance(node, ast.Assign):
+        return all(names_only(t) for t in node.targets)
+    if isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        return isinstance(node.target, ast.Name)
+    return False
+
+
 def _bound(node: ast.stmt, top: set[str]) -> list[str]:
     """맨 위 문장이 묶는 모듈 이름. 복합문(if·for·try·with)은 그 안에서 묶는 모듈 이름 전부(`top` = 모듈 범위 이름)."""
     if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -173,8 +204,7 @@ def _bound(node: ast.stmt, top: set[str]) -> list[str]:
 def _label(node: ast.stmt, names: list[str]) -> str:
     if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
         return node.name
-    if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name) \
-            and node.test.left.id == "__name__":
+    if _is_main_block(node):
         return f'줄 {node.lineno} if __name__ == "__main__"'
     return " · ".join(names) if names else f"줄 {node.lineno}"
 
@@ -226,6 +256,11 @@ def pick(tree: ast.Module, source: str, filename: str, missing: list[str]) -> Pi
         else:
             later.append(set())
     bound = [_bound(node, top_names) for node in body]
+    writes: list[set[str]] = []         # 함수·클래스 안에서 `global X` 로 바꾸는 모듈 이름
+    for node in body:
+        table = tables.get((node.name, node.lineno)) if isinstance(
+            node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) else None
+        writes.append(_table_global_writes(table) if table is not None else set())
     dropped: dict[int, str] = {}         # 문장 번호 → 까닭(이름(모듈))
     for i, node in enumerate(tree.body):
         if isinstance(node, (ast.Import, ast.ImportFrom)) and _import_roots(node) \
@@ -233,10 +268,11 @@ def pick(tree: ast.Module, source: str, filename: str, missing: list[str]) -> Pi
             dropped[i] = f"import {', '.join(_import_roots(node))}"
 
     def bad_names(names: set[str]) -> list[str]:
-        out = [f"{n}({tainted[n]})" for n in sorted(names) if n in tainted]
-        if star_missing:     # 어디에도 묶이지 않은 이름은 `from 없는것 import *` 에서 왔을 수 있다
+        out = [n if n == tainted[n] else f"{n}({tainted[n]})" for n in sorted(names) if n in tainted]
+        if star_missing:     # 어디에도 묶이지 않은 이름은 `from 없는것 import *` 에서 왔을 수 있다(모듈 dunder 는 아님)
             out += [f"{n}({star_missing})" for n in sorted(names)
-                    if n not in tainted and n not in defined and n not in _BUILTINS]
+                    if n not in tainted and n not in defined and n not in _BUILTINS
+                    and not (n.startswith("__") and n.endswith("__"))]
         return out
 
     changed = True
@@ -248,10 +284,21 @@ def pick(tree: ast.Module, source: str, filename: str, missing: list[str]) -> Pi
             why = bad_names(eager[i]) or bad_names(later[i])
             if why:
                 dropped[i] = ", ".join(why)
-                for n in bound[i]:
-                    tainted.setdefault(n, why[0].split("(")[-1].rstrip(")"))
+                cause = why[0].split("(")[-1].rstrip(")")
+                for n in bound[i] + sorted(writes[i]):      # 함수가 `global X` 로 바꾸는 X 도 쓸 수 없게 된다
+                    tainted.setdefault(n, cause)
                 changed = True
 
+    unsafe = [i for i in sorted(dropped) if not _droppable(tree.body[i])]
+    if unsafe:
+        parts = [f"줄 {tree.body[i].lineno}({dropped[i]})" for i in unsafe]
+        raise PickError("앱에 없는 모듈을 쓰는 맨 위 문장을 뺄 수 없습니다 — 남은 값을 바꾸거나 흐름을 막는 문장입니다: "
+                        + "; ".join(parts) + ". 이 문장을 함수 안이나 `if __name__ == \"__main__\":` 아래로 옮겨 주세요")
+    changers = [i for i in sorted(dropped) if writes[i]]
+    if changers:
+        parts = [f"{_label(tree.body[i], bound[i])}(global {', '.join(sorted(writes[i]))})" for i in changers]
+        raise PickError("앱에 없는 모듈을 쓰는 함수가 모듈 값을 바꿉니다: " + "; ".join(parts)
+                        + " — 빼면 그 값이 기본값으로 남습니다. 판단에 쓰는 값은 파일에 직접 적어 주세요")
     strategy_like = [i for i, n in enumerate(tree.body) if _is_strategy_class(n)
                      or "STRATEGY" in bound[i]]
     if not strategy_like:
@@ -261,7 +308,8 @@ def pick(tree: ast.Module, source: str, filename: str, missing: list[str]) -> Pi
         raise PickError("전략 클래스가 앱에 없는 모듈을 씁니다: " + "; ".join(parts)
                         + ". 옆 파일이면 같이 올리고, 설치되지 않은 패키지이거나 실행기(접속·주문) 모듈이면"
                         " 판단(진입·청산을 정하는 클래스)과 나눠 주세요")
-    lost = [(n, dropped[i]) for i in dropped for n in bound[i] if n in MODULE_NAMES]
+    lost = [(n, dropped[i]) for i in dropped if not _is_main_block(tree.body[i])     # `__main__` 블록은 앱에서 안 돎
+            for n in bound[i] if n in MODULE_NAMES]
     if lost:
         raise PickError("앱이 읽는 이름이 앱에 없는 모듈에 기대어 빠집니다: "
                         + ", ".join(f"{n} ← {why}" for n, why in lost)

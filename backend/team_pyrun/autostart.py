@@ -10,8 +10,11 @@
     저장         = `state_dir()/pyrun_schedules.json` (앱을 다시 켜도 남음)
 
 **안 하는 것 (주문 재전송 금지 원칙)**
-- 전날(앞선) 실행이 「확인 필요」 또는 「오류」로 끝났으면 **다음 날 시작하지 않고 예약을 막아 둡니다**(`blocked`).
-  화면에서 계좌를 확인한 뒤 「다시 켜기」를 눌러야 풉니다. 앞선 실행이 아직 도는 중이면(대기·진행 중) 그날은 건너뜁니다.
+- 앞선 실행이 「확인 필요」·「오류」로 끝났거나, `summary.json` 에 결과 모름 주문(`unresolved_order`)·멈춤(`halted`)이
+  남았거나, 끝내기가 실패했거나, 기록을 못 찾으면(**모르면 막는다**) **다음 날 시작하지 않고 예약을 막아 둡니다**(`blocked`).
+  화면에서 계좌를 확인한 뒤 「다시 켜기」를 눌러야 풉니다 — 그날 시작 시각이 지난 뒤 켜면 그날은 건너뜁니다(`skip_day`).
+  앞선 실행이 아직 도는 중이면(대기·진행 중) 그날은 기다립니다.
+- 앱을 끌 때는 `Registry.close_starts()` 로 새 실행을 먼저 막고 이 루프를 멈춥니다(준비 조회 중이던 시작도 등록 전에 거부).
 - 그날 이미 세운 실행이 있으면(앱을 다시 켰더라도) 그날은 다시 세우지 않습니다 — 하루 중간에 끊긴 실행을 이어 돌리는
   「재시작 시 자동 재개」가 되지 않게. 시도를 적은 **뒤에** 시작을 부릅니다(시작 도중 앱이 죽어도 다시 세우지 않음).
 - 휴장일은 따로 알지 못합니다 — 그날도 실행은 세워지고, 시세가 없으니 거래 없이 끝납니다.
@@ -77,6 +80,20 @@ def blocked_reason(state: str | None, ended_reason: str | None) -> str | None:
         return f"앞선 실행이 「확인 필요」로 끝남 — 계좌를 확인한 뒤 다시 켜세요 ({reason or state})"
     if state == "오류" or reason.startswith("오류"):
         return f"앞선 실행이 「오류」로 끝남 — 기록을 확인한 뒤 다시 켜세요 ({reason or state})"
+    if "끝내기 처리 실패" in reason:
+        return f"앞선 실행의 끝내기(정리·끝 잔고)가 실패함 — 계좌를 확인한 뒤 다시 켜세요 ({reason})"
+    return None
+
+
+def summary_reason(summary: dict | None) -> str | None:
+    """앞선 실행의 `summary.json` 이 결과 모름 주문·멈춤을 남겼으면 그 까닭. 끝 까닭에 「확인 필요」가 없어도 막는다
+    (잔고가 맞아 멈추지 않고 끝난 실행도 `unresolved_order` 를 남길 수 있다 — 그 주문이 나중에 체결될 수 있음)."""
+    if not isinstance(summary, dict):
+        return None
+    if summary.get("unresolved_order"):
+        return "앞선 실행에 결과를 모르는 주문이 남음 — 주문내역·잔고를 확인한 뒤 다시 켜세요"
+    if summary.get("halted"):
+        return f"앞선 실행이 멈춘 채 끝남 — 계좌를 확인한 뒤 다시 켜세요 ({summary.get('halted')})"
     return None
 
 
@@ -87,6 +104,7 @@ class Schedules:
         self.path, self.registry, self._now = Path(path), registry, now
         self._lock = threading.RLock()
         self._stop = threading.Event()
+        self._closed = False                        # 한 번 멈추면(앱을 끄는 중) 다시 띄우지 않는다
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------ 저장
@@ -127,8 +145,13 @@ class Schedules:
         market, refusal = run_market(None, loaded)
         if refusal:
             raise ScheduleError(refusal)
-        if run_id is not None and self.registry.get(run_id) is None:
-            raise ScheduleError(f"그 실행을 찾지 못했습니다: {run_id}")
+        if run_id is not None:
+            run = self.registry.get(run_id)
+            if run is None:
+                raise ScheduleError(f"그 실행을 찾지 못했습니다: {run_id}")
+            spec = getattr(run, "spec", None)
+            if spec is None or spec.file != file or spec.mode != mode:
+                raise ScheduleError(f"이은 실행({run_id})이 다른 전략·방식입니다 — 같은 파일·방식의 실행만 이을 수 있습니다")
         now = to_kst(self._now())
         sid = _ID_SAFE.sub("_", f"{Path(file).stem}_{mode}")
         with self._lock:
@@ -170,7 +193,12 @@ class Schedules:
             items = self._read()
             for s in items:
                 if s["id"] == sid:
-                    s.update(blocked=None, last_run_id=None, last_result=f"다시 켬 ({self._stamp()})")
+                    # 오늘 시작 시각이 이미 지났으면 오늘은 세우지 않는다 — 다시 켜는 순간 확인 없이 실행이 서지 않게
+                    # (시작 도중 꺼진 날이면 같은 날 두 번째 실행이 되기도 한다). 장 전에 켜면 오늘 시작 시각에 선다
+                    now = to_kst(self._now())
+                    late = now.strftime("%H%M%S") >= str(s.get("at") or "")
+                    s.update(blocked=None, last_run_id=None, skip_day=now.strftime("%Y%m%d") if late else s.get("skip_day"),
+                             last_result=f"다시 켬 ({self._stamp()})" + (" — 오늘은 시작 시각이 지나 다음 장 날부터" if late else ""))
                     self._write(items)
                     return {**s, "next_start": self._next_start(s, to_kst(self._now()))}
         raise KeyError(sid)
@@ -205,16 +233,30 @@ class Schedules:
     def _end_of(self, s: dict) -> str:
         return _MARKETS.get(str(s.get("market")), DOMESTIC).end_time
 
+    def _read_folder_json(self, run_id: str, name: str) -> dict | None:
+        try:
+            data = json.loads((self.registry.root / run_id / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
     def _previous(self, run_id: str) -> tuple[str | None, str | None]:
-        """앞선 실행의 (상태, 끝 까닭). 도는 실행이면 그 객체, 아니면 폴더의 run.json. 못 찾으면 (None, None)."""
+        """앞선 실행 확인. (막는 까닭 | None, 상태). 도는 실행이면 그 객체, 아니면 폴더의 run.json 으로 상태를 보고,
+        폴더의 summary.json 도 본다. **못 찾으면 막는다**(모르는 끝을 깨끗한 끝으로 치지 않는다)."""
         run = self.registry.get(run_id)
         if run is not None:
-            return getattr(run, "state", None), getattr(run, "ended_reason", None)
-        try:
-            data = json.loads((self.registry.root / run_id / "run.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None, None
-        return (data.get("state"), data.get("ended_reason")) if isinstance(data, dict) else (None, None)
+            state, reason = getattr(run, "state", None), getattr(run, "ended_reason", None)
+        else:
+            data = self._read_folder_json(run_id, "run.json")
+            if data is None:
+                return f"앞선 실행({run_id})의 기록을 찾지 못함 — 기록·계좌를 확인한 뒤 다시 켜세요", None
+            state, reason = data.get("state"), data.get("ended_reason")
+        if state in RUNNING_STATES:
+            return None, state
+        why = blocked_reason(state, reason) or summary_reason(self._read_folder_json(run_id, "summary.json"))
+        if why is None and state not in ("끝", "오류"):
+            why = f"앞선 실행({run_id})의 상태를 알 수 없음({state}) — 기록을 확인한 뒤 다시 켜세요"
+        return why, state
 
     def tick(self) -> list[str]:
         """지금 시작할 예약을 시작하고, 세운 실행 id 들을 돌려준다. 예약 루프가 20초마다 부른다."""
@@ -234,6 +276,8 @@ class Schedules:
         return started
 
     def _tick_one(self, sid: str, today: str, clock: str, now: datetime) -> str | None:
+        if self._stop.is_set():
+            return None
         with self._lock:
             items = self._read()
             s = next((x for x in items if x["id"] == sid), None)
@@ -244,8 +288,7 @@ class Schedules:
             if s.get("last_day") != today:            # 오늘 첫 시도 — 앞선 실행의 끝을 본다
                 prev = s.get("last_run_id")
                 if prev:
-                    state, reason = self._previous(prev)
-                    why = blocked_reason(state, reason)
+                    why, state = self._previous(prev)
                     if why:
                         s.update(blocked=why, last_result=why)
                         self._write(items)
@@ -292,7 +335,7 @@ class Schedules:
     # ------------------------------------------------------------ 예약 루프 (앱을 켜고 끌 때)
     def start_loop(self) -> None:
         """예약 루프를 띄운다(앱이 켜질 때, 남은 실행 닫기 **뒤에**). 시작 도중 꺼진 예약은 먼저 막아 둔다."""
-        if self._thread is not None and self._thread.is_alive():
+        if self._closed or (self._thread is not None and self._thread.is_alive()):
             return
         self.block_interrupted()
         self._stop.clear()
@@ -300,6 +343,7 @@ class Schedules:
         self._thread.start()
 
     def stop_loop(self, timeout: float = 5.0) -> None:
+        self._closed = True
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout)

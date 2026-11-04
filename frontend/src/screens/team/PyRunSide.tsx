@@ -556,9 +556,15 @@ export function PySchedulesCard({
 
 type StartMode = 'orders' | 'paper'
 
-const DAILY_TEXT =
-  '다음 장 날부터 장 시작 5분 전(MKU 08:20 · 국내 08:55)에 같은 파일·방식으로 새 실행을 세웁니다. 종목은 그날의 최근월물입니다. ' +
-  '앞선 실행이 「확인 필요」·「오류」로 끝나면 세우지 않고 멈춰 둡니다.'
+/** 「매일 자동 시작」 설명. 모의 계좌는 날마다 **확인 없이** 주문이 나간다는 것과, 파일을 고치면 다음 날부터 고친 파일로
+ *  돈다는 것을 분명히 적습니다(확인 얼굴은 오늘 한 번뿐). */
+function dailyText(mode: StartMode): string {
+  const base =
+    '다음 장 날부터 장 시작 5분 전(MKU 08:20 · 국내 08:55)에 같은 파일·방식으로 새 실행을 세웁니다. 종목은 그날의 최근월물입니다. ' +
+    '그날 전략 폴더에 있는 파일 그대로 돌므로, 파일을 고치거나 덮어쓰면 다음 날부터 고친 파일로 돕니다. ' +
+    '앞선 실행이 「확인 필요」·「오류」로 끝났거나 결과를 모르는 주문이 남았으면 세우지 않고 멈춰 둡니다.'
+  return mode === 'orders' ? `${base} 모의 계좌는 날마다 이 확인 없이 주문이 나갑니다.` : base
+}
 
 /** 실행 세우기 폼. `orders` 는 확인 얼굴을 한 번 지납니다. 거부 문장은 서버가 준 그대로 섭니다. */
 export function PyAddForm({
@@ -647,7 +653,7 @@ export function PyAddForm({
           {daily && (
             <div className="run-confirm-row">
               <dt>매일 자동 시작</dt>
-              <dd>{DAILY_TEXT}</dd>
+              <dd>{dailyText(mode)}</dd>
             </div>
           )}
         </dl>
@@ -716,7 +722,7 @@ export function PyAddForm({
         <input type="checkbox" checked={daily} onChange={(e) => setDaily(e.target.checked)} />
         <span>매일 자동 시작</span>
       </label>
-      {daily && <p className="run-hint">{DAILY_TEXT}</p>}
+      {daily && <p className="run-hint">{dailyText(mode)}</p>}
       <div className="run-add-acts">
         <button type="button" className="btn btn-quiet" aria-disabled={sending || undefined} onClick={() => !sending && onCancel()}>
           그만두기

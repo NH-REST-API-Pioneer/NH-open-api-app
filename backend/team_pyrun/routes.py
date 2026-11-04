@@ -486,7 +486,8 @@ async def pyrun_shutdown(recover_task: asyncio.Task | None) -> None:
         recover_task.cancel()
         await asyncio.gather(recover_task, return_exceptions=True)
     try:
-        # 자동 시작을 먼저 멈춘다 — 끄는 동안 새 실행을 세우지 않게
+        # 새 실행을 먼저 막고(준비 조회 중이던 자동 시작도 등록 전에 거부됨) 자동 시작 루프를 멈춘다 — 그 뒤에 stop_all
+        registry().close_starts()
         await asyncio.to_thread(lambda: schedules().stop_loop())
     except Exception:
         logger.exception("파이썬 전략 자동 시작을 멈추지 못했습니다")

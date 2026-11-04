@@ -18,8 +18,8 @@ TUE, WED, SAT = "20261103", "20261104", "20261107"
 
 
 class FakeRun:
-    def __init__(self, state="대기", ended_reason=None):
-        self.state, self.ended_reason = state, ended_reason
+    def __init__(self, state="대기", ended_reason=None, spec=None):
+        self.state, self.ended_reason, self.spec = state, ended_reason, spec
 
 
 class FakeRegistry:
@@ -34,7 +34,7 @@ class FakeRegistry:
             raise StartRefused(self.refuse)
         self.n += 1
         run_id = f"run{self.n}"
-        self.runs[run_id] = FakeRun()
+        self.runs[run_id] = FakeRun(spec=spec)
         return {"id": run_id, "state": "대기"}
 
     def get(self, run_id):
@@ -104,7 +104,10 @@ def test_앞선_실행이_확인_필요나_오류면_다음_날_시작하지_않
     assert s["blocked"] and s["next_start"] is None
     move(clock, "090000", WED)
     assert sch.tick() == []                                     # 막힌 채로
-    sch.resume(s["id"])                                         # 사람이 확인하고 다시 켬
+    resumed = sch.resume(s["id"])                               # 사람이 확인하고 다시 켬 — 시작 시각이 지났으니 오늘은 안 세움
+    assert resumed["next_start"] == "2026-11-05T08:20:00"
+    assert sch.tick() == [] and len(reg.calls) == 1
+    move(clock, "082000", "20261105")
     assert sch.tick() == ["run2"]
 
 
@@ -173,7 +176,11 @@ def test_시작_시각이_지난_뒤_만들면_첫_시작은_다음_장_날(tmp_
 
 def test_지금_세운_실행과_이으면_그날은_다시_세우지_않고_다음_날_그_끝을_본다(tmp_path):
     sch, reg, clock = setup(tmp_path, "120000")
-    reg.runs["manual"] = FakeRun("진행 중")
+    from backend.team_pyrun.live import RunSpec
+    reg.runs["manual"] = FakeRun("진행 중", spec=RunSpec("mku.py", "orders", None, None))
+    reg.runs["other"] = FakeRun("진행 중", spec=RunSpec("fake.py", "orders", None, None))
+    with pytest.raises(ScheduleError, match="다른 전략"):
+        sch.create("mku.py", "orders", run_id="other")
     sch.create("mku.py", "orders", run_id="manual")
     assert sch.tick() == []
     reg.runs["manual"].state, reg.runs["manual"].ended_reason = "끝", "정리 안 함 — 확인 필요: x"
@@ -286,3 +293,84 @@ def test_라우트는_다른_사이트_요청을_받지_않는다(api):
     r = c.post("/api/team/pyrun/schedules", json={"file": "mku.py", "mode": "paper"},
                headers={"Origin": "https://evil.example"})
     assert r.status_code == 403
+
+
+
+def test_다시_켜기는_시작_시각_전이면_오늘_세운다(tmp_path):
+    sch, reg, clock = setup(tmp_path, "081500")
+    sch.create("mku.py", "paper")
+    move(clock, "082000", TUE)
+    sch.tick()
+    reg.runs["run1"].state, reg.runs["run1"].ended_reason = "끝", "재시작 · 확인 필요"
+    move(clock, "082000", WED)
+    assert sch.tick() == [] and sch.list()[0]["blocked"]
+    move(clock, "080000", "20261105")                           # 다음 날 장 전에 확인하고 다시 켬
+    assert sch.resume(sch.list()[0]["id"])["next_start"] == "2026-11-05T08:20:00"
+    move(clock, "082000", "20261105")
+    assert sch.tick() == ["run2"]
+
+
+def test_시작_도중_꺼진_뒤_다시_켜도_같은_날_다시_세우지_않는다(tmp_path):
+    sch, reg, clock = setup(tmp_path, "081500")
+    sch.create("mku.py", "orders")
+    move(clock, "082000", TUE)
+
+    def die(spec):
+        raise SystemExit("앱 꺼짐")
+
+    reg.start = die
+    with pytest.raises(SystemExit):
+        sch.tick()
+    reg2 = FakeRegistry(reg.root, reg.strategies)
+    again = Schedules(sch.path, reg2, now=lambda: clock["now"])
+    sid = again.block_interrupted()[0]
+    move(clock, "120000", TUE)
+    again.resume(sid)
+    assert again.tick() == [] and reg2.calls == []
+
+
+def _prev_folder(reg, run_id, run_json=None, summary=None):
+    folder = reg.root / run_id
+    folder.mkdir(parents=True, exist_ok=True)
+    if run_json is not None:
+        (folder / "run.json").write_text(json.dumps(run_json), encoding="utf-8")
+    if summary is not None:
+        (folder / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+
+@pytest.mark.parametrize("run_json,summary,live", [
+    ({"state": "끝", "ended_reason": "실행 끝 시각"}, {"unresolved_order": {"ord_no": "7"}}, False),
+    ({"state": "끝", "ended_reason": "실행 끝 시각"}, {"halted": "잔고 불일치"}, False),
+    ({"state": "끝", "ended_reason": "중지 · 끝내기 처리 실패 (X)"}, None, False),
+    (None, None, False),                                        # 앞선 실행 폴더가 없음 — 모르면 막는다
+    ({"state": "끝"}, {"unresolved_order": {"ord_no": "7"}}, True),  # 도는 객체가 있어도 폴더 요약을 본다
+])
+def test_앞선_실행을_모르거나_결과_모름_주문이_남았으면_막는다(tmp_path, run_json, summary, live):
+    sch, reg, clock = setup(tmp_path, "081500")
+    sch.create("mku.py", "orders")
+    move(clock, "082000", TUE)
+    sch.tick()
+    if live:
+        reg.runs["run1"].state, reg.runs["run1"].ended_reason = "끝", "실행 끝 시각"
+    else:
+        del reg.runs["run1"]
+    if run_json is not None or summary is not None:
+        _prev_folder(reg, "run1", run_json, summary)
+    move(clock, "082000", WED)
+    assert sch.tick() == [] and sch.list()[0]["blocked"]
+
+
+def test_앱을_끄는_중엔_실행_관리가_새_실행을_받지_않는다(tmp_path):
+    from tests.test_team_pyrun_registry import make_registry
+    reg, fake, clock = make_registry(tmp_path, now="085500")
+    reg.close_starts()
+    from backend.team_pyrun.live import RunSpec
+    with pytest.raises(StartRefused, match="끄는 중"):
+        reg.start(RunSpec("fake.py", "paper", None, None))
+
+
+def test_예약_루프를_멈춘_뒤엔_다시_띄우지_않는다(tmp_path):
+    sch, reg, clock = setup(tmp_path, "081500")
+    sch.stop_loop()
+    sch.start_loop()
+    assert sch._thread is None

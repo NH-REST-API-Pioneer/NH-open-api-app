@@ -122,10 +122,21 @@ class Registry:
         self._threads: dict[str, threading.Thread] = {}
         self._preparing: set[str] = set()              # 준비 중(스레드를 시작하기 전)인 실행 id
         self._stop_asked: set[str] = set()             # 준비 중에 중지 요청이 들어온 실행 id
+        self._closing = False                          # 앱을 끄는 중 — 새 실행을 받지 않는다(`close_starts`)
 
     # ------------------------------------------------------------ 시작
+    CLOSING = "앱을 끄는 중이라 새 실행을 세우지 않습니다"
+
+    def close_starts(self) -> None:
+        """앱을 끌 때 `stop_all` **전에** 부른다 — 그 뒤로 오는 `start` 는 거부. 이미 등록된 실행은 `stop_all` 이 본다
+        (등록과 이 표지 검사가 같은 잠금 안이라, 표지 뒤에 등록되는 실행은 없다). 자동 시작 루프가 준비 조회 중이던 시작도 막힌다."""
+        with self._lock:
+            self._closing = True
+
     def start(self, spec: RunSpec) -> dict:
         """실행을 세우고 그 `status()` 를 돌려준다. 거부되면 `StartRefused`(전략 파일·생성 실패 포함)."""
+        if self._closing:
+            raise StartRefused(self.CLOSING)
         if spec.mode not in MODES:
             raise StartRefused(f"실행 방식이 올바르지 않습니다: {spec.mode!r} (orders 또는 paper)")
         now = to_kst(self._now())
@@ -175,6 +186,8 @@ class Registry:
             raise StartRefused("최근월물을 알 수 없습니다 — 잠시 뒤 다시 시작하세요")
         today = now.strftime("%Y%m%d")
         with self._lock:
+            if self._closing:                           # 준비 조회 중에 앱을 끄기 시작했다 — 등록하지 않는다
+                raise StartRefused(self.CLOSING)
             if spec.mode == "orders" and sym is not None:
                 for other in self._runs.values():
                     # 키 = 주문하는 종목 (실행기 종류와 무관 — 실시간 실행도 같은 이름 `order_sym` 을 가진다)

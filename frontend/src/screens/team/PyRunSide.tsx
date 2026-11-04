@@ -3,17 +3,20 @@ import { Modal } from '../../app/Modal'
 import {
   ORDERS_CONFIRM_TEXT,
   PY_FINISHED,
+  currencyOf,
+  dateDigits,
   deleteStrategy,
   downloadUrl,
+  isRealtime,
   loadConvention,
   modeLabel,
+  pnlText,
   startRun,
   uploadStrategy,
   type PyRunStatus,
   type PyStrategies,
   type PyStrategyFile,
 } from '../../data/pyrun'
-import { moneyIn } from '../../lib/number'
 import { useMasterStatus } from '../../lib/useMaster'
 import { PySymbolPicker, symConfirmText } from './PySymbolPicker'
 
@@ -26,6 +29,11 @@ export function ModeBadge({ mode }: { mode: string }) {
   return (
     <span className={`badge run-kind ${mode === 'orders' ? 'run-kind-sim' : 'run-kind-paper'}`}>{modeLabel(mode)}</span>
   )
+}
+
+/** 실행기 종류 배지 — 초 단위로 도는 실시간 실행에만 「실시간」을 답니다(1분봉은 배지 없음, 지금과 같음). */
+export function KindBadge({ kind }: { kind: string | null | undefined }) {
+  return kind === 'realtime' ? <span className="badge">실시간</span> : null
 }
 
 /** 상태 배지. 낱말은 서버가 준 그대로입니다. 손을 써야 하는 「확인 필요」만 경고색입니다. */
@@ -41,10 +49,11 @@ export function StateBadge({ state }: { state: string }) {
   return <span className={`badge${tone}`}>{state}</span>
 }
 
-/** `20261030` → `10/30`. */
+/** `20261030`(또는 `2026-10-30`) → `10/30`. */
 export function shortDate(date: string | null | undefined): string {
-  if (!date || date.length < 8) return ''
-  return `${date.slice(4, 6)}/${date.slice(6, 8)}`
+  const digits = dateDigits(date)
+  if (!digits) return ''
+  return `${digits.slice(4, 6)}/${digits.slice(6, 8)}`
 }
 
 /** `2026-11-03T09:24:33` → `11/03 09:24`. */
@@ -431,12 +440,16 @@ export function PyRunsCard({
                 <span className="run-name">
                   <span className="run-name-text">{run.title || run.name || run.file}</span>
                   <ModeBadge mode={run.mode} />
+                  <KindBadge kind={run.kind} />
                 </span>
                 <span className="run-sub">
-                  {[run.file, run.sym].filter(Boolean).join(' · ')}
+                  {/* 실시간은 신호 종목(KRX) → 주문 종목(MKU). */}
+                  {[run.file, isRealtime(run) && run.signal_sym ? `${run.signal_sym} → ${run.sym ?? ''}` : run.sym]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </span>
                 <span className="run-sub" title={run.id}>
-                  {[startedText(run.started_at), pnl !== null ? `${pnl > 0 ? '+' : ''}${moneyIn(pnl, 'KRW')}` : '']
+                  {[startedText(run.started_at), pnl !== null ? pnlText(pnl, currencyOf(run)) : '']
                     .filter(Boolean)
                     .join(' · ')}
                 </span>
@@ -491,16 +504,24 @@ export function PyAddForm({
   const file = usable.some((one) => one.file === chosen) ? chosen : ''
   const [mode, setMode] = useState<StartMode>('paper')
   const [sym, setSym] = useState('')
+  /** 실시간 전략의 신호 종목(KRX). 빈 글 = 국내 최근월물. */
+  const [signalSym, setSignalSym] = useState('')
   const [sending, setSending] = useState(false)
   const [why, setWhy] = useState<string | null>(null)
   // 확인 얼굴의 종목 글이 마스터를 읽으므로, 마스터가 도착하면 다시 그립니다.
   useMasterStatus()
 
+  const picked = files.find((one) => one.file === file)
+  const realtime = picked?.kind === 'realtime'
+  /* 비워 둘 때 서버가 고를 시장 — 실시간은 주문이 늘 MKU, 1분봉은 전략 TICK 으로 정해집니다(모르면 국내). */
+  const orderMarket = realtime ? 'overseas' : (picked?.market ?? 'domestic')
+
   async function send() {
     if (sending || !file) return
     setSending(true)
     setWhy(null)
-    const got = await startRun(file, mode, sym)
+    /* 실시간 전략만 `signal_sym` 을 보냅니다 — 1분봉 전략에 주면 서버가 409 로 거절합니다. */
+    const got = await startRun(file, mode, sym, realtime ? signalSym : undefined)
     setSending(false)
     if (got.ok) onStarted(got.data)
     else {
@@ -508,8 +529,6 @@ export function PyAddForm({
       onBack()
     }
   }
-
-  const picked = files.find((one) => one.file === file)
 
   if (asking) {
     return (
@@ -525,9 +544,15 @@ export function PyAddForm({
               <ModeBadge mode={mode} />
             </dd>
           </div>
+          {realtime && (
+            <div className="run-confirm-row">
+              <dt>신호 종목(KRX)</dt>
+              <dd>{symConfirmText(signalSym, 'domestic')}</dd>
+            </div>
+          )}
           <div className="run-confirm-row">
-            <dt>종목</dt>
-            <dd>{symConfirmText(sym)}</dd>
+            <dt>{realtime ? '주문 종목(MKU)' : '종목'}</dt>
+            <dd>{symConfirmText(sym, orderMarket)}</dd>
           </div>
         </dl>
         <p className="run-approve">{ORDERS_CONFIRM_TEXT}</p>
@@ -553,7 +578,16 @@ export function PyAddForm({
     <div className="run-add">
       <label className="run-add-row">
         <span className="run-add-label">전략 파일</span>
-        <select className="control" value={file} onChange={(e) => setFile(e.target.value)}>
+        <select
+          className="control"
+          value={file}
+          onChange={(e) => {
+            setFile(e.target.value)
+            /* 파일이 바뀌면 고른 종목을 비웁니다 — 실시간·1분봉은 칸 수와 고를 수 있는 종목이 달라 앞 선택이 새 칸에 맞지 않을 수 있습니다. */
+            setSym('')
+            setSignalSym('')
+          }}
+        >
           {files.length === 0 && <option value="">전략 파일이 없습니다</option>}
           {files.length > 0 && file === '' && <option value="">파일을 고르세요</option>}
           {files.map((one) => (
@@ -572,8 +606,16 @@ export function PyAddForm({
           <option value="orders">모의 계좌</option>
         </select>
       </label>
-      {/* 종목은 검색해서 고릅니다 — 미국달러선물만 고를 수 있고, 안 고르면 서버가 최근월물을 정합니다. */}
-      <PySymbolPicker sym={sym} onChange={setSym} />
+      {/* 종목은 검색해서 고릅니다 — 미국달러선물·MKU 만 고를 수 있고, 안 고르면 서버가 최근월물을 정합니다.
+          실시간 전략은 칸이 둘입니다: 신호를 보는 KRX 종목과 주문이 나가는 MKU 종목. */}
+      {realtime ? (
+        <>
+          <PySymbolPicker sym={signalSym} onChange={setSignalSym} label="신호 종목(KRX)" allow="usd" market="domestic" />
+          <PySymbolPicker sym={sym} onChange={setSym} label="주문 종목(MKU)" allow="mku" market="overseas" />
+        </>
+      ) : (
+        <PySymbolPicker sym={sym} onChange={setSym} market={orderMarket} />
+      )}
       <div className="run-add-acts">
         <button type="button" className="btn btn-quiet" aria-disabled={sending || undefined} onClick={() => !sending && onCancel()}>
           그만두기

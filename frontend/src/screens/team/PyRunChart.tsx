@@ -11,7 +11,7 @@ import {
 import { styleFromTokens } from '../trade/chartStyle'
 import { CANDLE_PANE } from '../trade/chartLayout'
 import { PALETTE } from '../trade/chartIndicators'
-import type { PyBar, PyBars, PyMark } from '../../data/pyrun'
+import { dateDigits, type PyBar, type PyBars, type PyMark, type PyRtBar } from '../../data/pyrun'
 
 /* 팀: 파이썬 전략 실행의 차트 — 판정 봉 캔들, 전략이 계산한 지표선, 진입 ▲▼·청산 ●, 보유 중 손절가.
  *
@@ -19,8 +19,12 @@ import type { PyBar, PyBars, PyMark } from '../../data/pyrun'
  * **같은 라이브러리와 같은 스타일(`styleFromTokens`)** 로 따로 그립니다. 봉과 지표 값은
  * 모두 서버가 준 기록(신호 줄)이라 화면이 다시 셈하지 않습니다.
  *
- * 지표 칸은 이름으로 자리를 정합니다(명세 4장): `upper` `middle` `lower` `vwap` → 가격 위 선,
- * `rsi` → 아래 창. 모르는 칸은 표에만 섭니다.
+ * 지표 칸은 이름으로 자리를 정합니다(명세 4장): `upper` `middle` `lower` `vwap` `range_high` `range_low`(ORB 범위)
+ * → 가격 위 선, `rsi` → 아래 창. 모르는 칸은 표에만 섭니다.
+ *
+ * 실시간 실행(`PyRtChart`)은 봉이 없고 1분 요약(`minute` 줄)만 있어 선 둘로 그립니다 — MKU 중간값(왼쪽 축)과
+ * KRX 가격(오른쪽 축). 두 값은 단위가 달라(0.75 대 1,400) 축을 하나로 쓰면 한 선이 납작해지므로, 같은 칸에
+ * 축을 하나 더 둡니다(라이브러리 10 의 지표별 `yAxisId`).
  */
 
 /** 가격 위에 그리는 지표 칸과 선 색(앱 지표 팔레트 — 이동평균에 쓰던 주황·보라·초록·청록). */
@@ -29,12 +33,21 @@ export const PRICE_LINES: { key: string; label: string; color: string }[] = [
   { key: 'middle', label: '중심', color: PALETTE[2][2] },
   { key: 'lower', label: '하단', color: PALETTE[7][1] },
   { key: 'vwap', label: 'VWAP', color: PALETTE[6][2] },
+  /* ORB 개장 범위 — 위·아래 끝이 손절가이기도 해서 같은 색 한 쌍입니다. */
+  { key: 'range_high', label: '범위 위', color: PALETTE[5][2] },
+  { key: 'range_low', label: '범위 아래', color: PALETTE[5][1] },
 ]
 export const RSI_COLOR = PALETTE[5][2]
 /** 옛 기록(시가·고가·저가 없음)에서 그리는 종가 선. */
 const CLOSE_COLOR = PALETTE[0][1]
 
 const LINES = 'PYRUN_LINES'
+/** 실시간 차트의 KRX 선 — 다른 축에 서야 해서 이름이 따로입니다(같은 칸에 같은 이름의 지표는 둘이 못 섭니다). */
+const LINES_KRX = 'PYRUN_LINES_KRX'
+const KRX_AXIS = 'pyrun_krx_axis'
+/** 실시간 차트 선 색 — MKU 중간값·KRX. 오름·내림 색(빨강·파랑)과 겹치지 않는 지표 팔레트에서. */
+export const MKU_COLOR = PALETTE[2][2]
+export const KRX_COLOR = PALETTE[4][2]
 const MARK = 'pyrunMark'
 const STOP = 'pyrunStop'
 const RSI_PANE = 'pane_pyrun_rsi'
@@ -54,16 +67,18 @@ function ensureRegistered(): void {
   if (registered) return
   registered = true
   /* 봉에 실려 온 칸을 그대로 잇는 선. 어느 칸을 그릴지는 `extendData.keys` 가 정합니다. */
-  registerIndicator<Record<string, number | undefined>, number, { keys: string[] }>({
-    name: LINES,
-    shortName: '',
-    calcParams: [],
-    figures: [],
-    calc: (dataList, indicator) => {
-      const keys = indicator.extendData?.keys ?? []
-      return dataList.map((bar) => Object.fromEntries(keys.map((key) => [key, numberOr(bar[key])])))
-    },
-  })
+  for (const name of [LINES, LINES_KRX]) {
+    registerIndicator<Record<string, number | undefined>, number, { keys: string[] }>({
+      name,
+      shortName: '',
+      calcParams: [],
+      figures: [],
+      calc: (dataList, indicator) => {
+        const keys = indicator.extendData?.keys ?? []
+        return dataList.map((bar) => Object.fromEntries(keys.map((key) => [key, numberOr(bar[key])])))
+      },
+    })
+  }
   registerOverlay({
     name: MARK,
     totalStep: 1,
@@ -144,9 +159,11 @@ function ensureRegistered(): void {
   })
 }
 
-/** `20261030` + `093000` → 한국시간 그 순간(ms). */
-export function kstStamp(date: string | null | undefined, time: string | null | undefined): number | null {
-  if (!date || !time || date.length < 8 || time.length < 4) return null
+/** `20261030`(또는 `2026-10-30`) + `093000` → 한국시간 그 순간(ms). 1분봉 체결 표시는 날짜에 대시가 있을 수 있고
+ *  실시간은 없습니다 — 둘 다 받습니다. */
+export function kstStamp(rawDate: string | null | undefined, time: string | null | undefined): number | null {
+  const date = dateDigits(rawDate)
+  if (!date || !time || time.length < 4) return null
   const y = Number(date.slice(0, 4))
   const m = Number(date.slice(4, 6))
   const d = Number(date.slice(6, 8))
@@ -195,6 +212,11 @@ export interface StopLine {
   label: string
 }
 
+/** 1분봉 실행의 판정 봉. 실시간 모양이면 빈 목록입니다. */
+function minuteBars(bars: PyBars | null): PyBar[] {
+  return bars && bars.kind !== 'realtime' ? bars.bars : []
+}
+
 export function PyRunChart({
   bars,
   decimals,
@@ -216,10 +238,7 @@ export function PyRunChart({
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
 
-  const data = useMemo(
-    () => (bars?.bars ?? []).map(toKLine).filter((one): one is KLineData => one !== null),
-    [bars],
-  )
+  const data = useMemo(() => minuteBars(bars).map(toKLine).filter((one): one is KLineData => one !== null), [bars])
   /* 그 실행의 봉에 있는 칸만 그립니다. */
   const priceKeys = useMemo(
     () => PRICE_LINES.filter((line) => data.some((bar) => numberOr(bar[line.key]) !== undefined)),
@@ -228,7 +247,7 @@ export function PyRunChart({
   const hasRsi = useMemo(() => data.some((bar) => numberOr(bar.rsi) !== undefined), [data])
   /* 옛 기록이면 종가 선을 같이 긋습니다 — 납작한 봉만으로는 흐름이 안 읽힙니다. */
   const closeOnly = useMemo(
-    () => (bars?.bars ?? []).some((bar) => bar.open === null || bar.high === null || bar.low === null),
+    () => minuteBars(bars).some((bar) => bar.open === null || bar.high === null || bar.low === null),
     [bars],
   )
 
@@ -414,6 +433,152 @@ export function PyRunChart({
       <div className="pyrun-chart-frame">
         <div className="pyrun-chart-box" ref={boxRef} />
         {data.length === 0 && <p className="pyrun-chart-empty">아직 판정 봉이 없습니다</p>}
+      </div>
+    </div>
+  )
+}
+
+/* ── 실시간 실행 차트 ───────────────────────────────────── */
+
+/** 1분 요약 줄 → 라이브러리 봉. 봉 모양은 쓰지 않고(면 차트로 `mku` 칸만 이음) KRX 는 지표 칸으로 실립니다.
+ *  MKU 중간값이 없던 분은 `mku` 가 비어 선이 그 분을 건너뜁니다 — 앞 값을 끌어와 채우지 않습니다. */
+function toRtKLine(bar: PyRtBar): KLineData | null {
+  const at = kstStamp(bar.date, bar.time)
+  if (at === null) return null
+  const mku = numberOr(bar.mku_mid)
+  const krx = numberOr(bar.krx)
+  if (mku === undefined && krx === undefined) return null
+  /* 시가·고가·저가·종가는 라이브러리가 요구하는 칸일 뿐 그리지 않습니다(면 차트 + 가격 표시 끔). */
+  const base = mku ?? 0
+  return { timestamp: at, open: base, high: base, low: base, close: base, volume: 0, mku, krx }
+}
+
+/** 실시간 실행 — MKU 중간값 선(왼쪽 축) · KRX 선(오른쪽 축) · 진입 ▲▼ · 청산 ●. 1분 요약 줄이 오면 다시 그립니다. */
+export function PyRtChart({
+  bars,
+  mkuDecimals,
+  krxDecimals,
+}: {
+  bars: PyBars | null
+  mkuDecimals: number
+  krxDecimals: number
+}) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<Chart | null>(null)
+  const rows = useMemo(() => (bars && bars.kind === 'realtime' ? bars.bars : []), [bars])
+  const data = useMemo(() => rows.map(toRtKLine).filter((one): one is KLineData => one !== null), [rows])
+  const dataRef = useRef<KLineData[]>(data)
+
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box) return
+    ensureRegistered()
+    const chart = init(box, { styles: styleFromTokens(), timezone: 'Asia/Seoul' })
+    if (!chart) return
+    chartRef.current = chart
+    /* 봉 대신 `mku` 칸을 잇는 선(면은 칠하지 않음). 가격 표시(최고·최저·현재가)는 봉 값이라 끕니다. */
+    chart.setStyles({
+      candle: {
+        type: 'area',
+        area: {
+          lineSize: 1.5,
+          lineColor: MKU_COLOR,
+          value: 'mku',
+          smooth: false,
+          backgroundColor: 'rgba(0, 0, 0, 0)',
+          point: { show: false },
+        },
+        priceMark: { show: false },
+      },
+    })
+    chart.setOffsetRightDistance(24)
+    chart.setPeriod({ type: 'minute', span: 1 })
+    chart.setDataLoader({
+      getBars: ({ type, callback }) => callback(type === 'init' ? dataRef.current : [], false),
+    })
+    const observer = new ResizeObserver(() => chart.resize())
+    observer.observe(box)
+    const theme = new MutationObserver(() => chart.setStyles(styleFromTokens()))
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => {
+      observer.disconnect()
+      theme.disconnect()
+      chartRef.current = null
+      dispose(box)
+    }
+  }, [])
+
+  useEffect(() => {
+    chartRef.current?.setSymbol({ ticker: 'pyrun-rt', pricePrecision: mkuDecimals, volumePrecision: 0 })
+  }, [mkuDecimals])
+
+  /* 선 둘. KRX 는 같은 칸의 다른 축(오른쪽)에, MKU(봉 칸의 기본 축)는 왼쪽에 둡니다. */
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    dataRef.current = data
+    chart.setStyles({ yAxis: { tickText: { show: data.length > 0 } } })
+    chart.resetData()
+    const width = boxRef.current?.clientWidth ?? 0
+    /* 하루치(수백 분)가 한 화면에 들도록 — 진입·청산이 왼쪽 밖으로 밀려 안 보이지 않게 1px 까지 좁힙니다. */
+    if (width > 0 && data.length > 0) chart.setBarSpace(Math.max(1, Math.min(14, (width - 140) / (data.length + 2))))
+    chart.removeIndicator({ name: LINES_KRX })
+    chart.createIndicator(
+      {
+        name: LINES_KRX,
+        paneId: CANDLE_PANE,
+        yAxisId: KRX_AXIS,
+        precision: krxDecimals,
+        figures: [{ key: 'krx', title: 'KRX: ', type: 'line' }],
+        extendData: { keys: ['krx'] },
+        styles: { lines: [{ color: KRX_COLOR, size: 1.5, style: 'solid' as const, smooth: false, dashedValue: [2, 2] }] },
+      },
+      true,
+    )
+    for (const axis of chart.getYAxes({ paneId: CANDLE_PANE })) {
+      chart.overrideYAxis({ paneId: CANDLE_PANE, id: axis.id, position: axis.id === KRX_AXIS ? 'right' : 'left' })
+    }
+  }, [data, krxDecimals])
+
+  /* 진입 ▲▼·청산 ● — 체결가는 MKU 가격이라 기본(MKU) 축에 섭니다. 체결 시각을 품은 1분 줄에 앉힙니다. */
+  const marks = bars?.marks
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.removeOverlay({ name: MARK })
+    for (const mark of marks ?? []) {
+      if (mark.kind === 'trade' || mark.price === null) continue
+      const at = kstStamp(mark.date, mark.time)
+      const seat = at === null ? null : seatOf(data, at)
+      if (!seat) continue
+      chart.createOverlay({
+        name: MARK,
+        paneId: CANDLE_PANE,
+        points: [{ timestamp: seat.timestamp, value: mark.price }],
+        extendData: mark,
+      })
+    }
+  }, [data, marks])
+
+  return (
+    <div className="pyrun-chart">
+      <div className="pyrun-legend">
+        <span>1분 요약</span>
+        <span>
+          <i className="pyrun-swatch" style={{ background: MKU_COLOR }} />
+          MKU 중간값 (왼쪽 축)
+        </span>
+        <span>
+          <i className="pyrun-swatch" style={{ background: KRX_COLOR }} />
+          KRX (오른쪽 축)
+        </span>
+        <span className="pyrun-legend-marks">
+          <span className="up">▲</span> 매수 진입 · <span className="down">▼</span> 매도 진입 · ● 청산
+        </span>
+      </div>
+      <div className="pyrun-chart-frame">
+        <div className="pyrun-chart-box" ref={boxRef} />
+        {data.length === 0 && <p className="pyrun-chart-empty">아직 1분 요약이 없습니다</p>}
       </div>
     </div>
   )

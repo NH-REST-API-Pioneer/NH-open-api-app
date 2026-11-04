@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { MINUS, moneyIn } from '../lib/number'
 
 /* 팀: 파이썬 전략 실행(`/api/team/pyrun/...`)을 부르는 자리.
  *
@@ -40,13 +41,18 @@ export const ORDERS_CONFIRM_TEXT =
 
 /* ── 종목 고르기 ──────────────────────────────────────── */
 
-/** 이 실행기가 돌리는 종목코드의 앞부분(미국달러선물). 서버(`registry.py` 의 `USD_PREFIX`)와 같은 값입니다 —
- *  서버가 다른 종목을 거절하므로, 화면은 미리 못 고르게만 합니다. */
+/** 이 실행기가 돌리는 종목코드의 앞부분 — 국내 미국달러선물과 해외 SGX 미니 원달러(MKU).
+ *  서버(`markets.market_of`)와 같은 값입니다 — 서버가 다른 종목을 거절하므로, 화면은 미리 못 고르게만 합니다. */
 export const USD_PREFIX = 'A75'
-/** 마스터의 미국달러 품목 코드. 「최근월물」이 어느 코드인지 보여 줄 때 이 품목의 월물을 봅니다. */
+export const MKU_PREFIX = 'MKU'
+/** 마스터의 품목 코드(국내 미국달러·해외 MKU). 「최근월물」이 어느 코드인지 보여 줄 때 이 품목의 월물을 봅니다. */
 export const USD_PRODUCT = 'USD'
-/** 미국달러선물이 아닌 종목 줄에 서는 까닭. */
-export const SYM_REFUSED = '이 실행기는 미국달러선물만 됩니다'
+export const MKU_PRODUCT = 'MKU'
+/** 미국달러선물·MKU 가 아닌 종목 줄에 서는 까닭. */
+export const SYM_REFUSED = '이 실행기는 미국달러선물·MKU 만 됩니다'
+/** 실시간 전략의 두 칸에서 반대 쪽 종목을 고른 줄의 까닭. */
+export const SIGNAL_REFUSED = '신호 종목은 미국달러선물(KRX)만 됩니다'
+export const ORDER_REFUSED = '주문 종목은 MKU 만 됩니다'
 /** 종목을 안 고른 기본 선택. 서버가 최근월물을 고릅니다(`sym: null`). */
 export const SYM_AUTO = '최근월물 (자동)'
 
@@ -54,9 +60,48 @@ export function isUsdFutures(code: string): boolean {
   return code.startsWith(USD_PREFIX)
 }
 
+export function isMku(code: string): boolean {
+  return code.startsWith(MKU_PREFIX)
+}
+
+/** 칸마다 고를 수 있는 종목 — `any` 1분봉(국내·MKU), `usd` 실시간 신호(KRX), `mku` 실시간 주문. */
+export type SymAllow = 'any' | 'usd' | 'mku'
+
 /** 고를 수 있는 코드인지. 못 고르면 줄 오른쪽에 설 까닭이 함께 옵니다. */
-export function symVerdict(code: string): { ok: true } | { ok: false; reason: string } {
-  return isUsdFutures(code) ? { ok: true } : { ok: false, reason: SYM_REFUSED }
+export function symVerdict(code: string, allow: SymAllow = 'any'): { ok: true } | { ok: false; reason: string } {
+  const usd = isUsdFutures(code)
+  const mku = isMku(code)
+  if (!usd && !mku) return { ok: false, reason: SYM_REFUSED }
+  if (allow === 'usd' && !usd) return { ok: false, reason: SIGNAL_REFUSED }
+  if (allow === 'mku' && !mku) return { ok: false, reason: ORDER_REFUSED }
+  return { ok: true }
+}
+
+/* ── 금액·날짜 ────────────────────────────────────────── */
+
+/** 실행 통화. 이 기능 전 기록에는 없어 종목으로 정합니다(MKU 면 USD). */
+export function currencyOf(run: { currency?: string | null; sym?: string | null }): string {
+  if (run.currency) return run.currency
+  return run.sym && isMku(run.sym) ? 'USD' : 'KRW'
+}
+
+/** 손익 글 — 부호를 붙이고, USD 는 `US$` 두 자리, 원은 앱의 원 표기(`moneyIn`)와 같습니다. */
+export function pnlText(value: unknown, currency: string): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
+  if (currency === 'USD') {
+    const text = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    const zero = Number(text.replace(/,/g, '')) === 0
+    const sign = zero ? '' : value > 0 ? '+' : value < 0 ? MINUS : ''
+    return `${sign}US$${text}`
+  }
+  return `${value > 0 ? '+' : ''}${moneyIn(value, 'KRW')}`
+}
+
+/** 기록 날짜를 `YYYYMMDD` 로. 1분봉 체결 표시는 `YYYY-MM-DD`, 실시간은 `YYYYMMDD` 로 오므로 둘 다 받습니다. */
+export function dateDigits(date: string | null | undefined): string | null {
+  if (!date) return null
+  const digits = date.replace(/-/g, '')
+  return /^\d{8}$/.test(digits) ? digits : null
 }
 
 /** 기본 선택의 글. 최근월물 코드를 마스터에서 알면 옆에 붙이고, 모르면 뺍니다. */
@@ -87,7 +132,14 @@ export interface PyStrategyFile {
   error: string | null
   /** 알림(오류 아님) — 예: 익절 목표가 없어 익절 없이 돕니다. 실행은 세울 수 있습니다. */
   notes?: string[]
+  /** 실행기 종류 — `realtime` 이면 종목 칸이 둘(신호·주문)입니다. 못 쓰는 파일은 null. */
+  kind?: PyKind | null
+  /** 종목을 비우면 쓸 시장(전략 TICK) — 「최근월물」 코드를 어림할 때 씁니다. 못 쓰는 파일은 null. */
+  market?: 'domestic' | 'overseas' | null
 }
+
+/** 실행기 종류 — 1분봉 판정(`minute`) · 초 단위 실시간(`realtime`). */
+export type PyKind = 'minute' | 'realtime'
 
 export interface PyStrategies {
   folder: string
@@ -152,12 +204,38 @@ export interface PyRunStatus {
   params?: Record<string, unknown> | null
   summary?: PySummary | null
   sha256?: string
+  /** 실행기 종류·시장·통화. 이 기능 전 기록에는 없습니다(국내·원·1분봉). */
+  kind?: PyKind
+  market?: 'domestic' | 'overseas'
+  currency?: string
+  /* 실시간 실행만 — `sym` 은 주문 종목(MKU), `signal_sym` 은 신호 종목(KRX). */
+  signal_sym?: string | null
+  /** 실행 끝 시각(HHMMSS). */
+  end_at?: string | null
+  side?: string | null
+  /** 보유 초. 보유가 없으면 null. */
+  held_s?: number | null
+  krx?: number | null
+  bid?: number | null
+  ask?: number | null
+  mku_last?: number | null
+  last_dk?: number | null
+  last_rho?: number | null
+  /** 마지막 KRX 체결·MKU 호가를 받은 시각(HHMMSS). */
+  last_krx_at?: string | null
+  last_quote_at?: string | null
+  /** 체결 확인을 기다리는 중. */
+  pending?: boolean
 }
 
-/** 이 앱에서 지금 세운 실행인지 — `status()` 에만 판정 봉 칸이 있습니다. 지난 실행 폴더는
- *  중지·청산할 수 없습니다(서버가 409). */
+export function isRealtime(run: { kind?: string | null }): boolean {
+  return run.kind === 'realtime'
+}
+
+/** 이 앱에서 지금 세운 실행인지 — `status()` 에만 판정 봉 칸이 있습니다(실시간은 값이 null 이지만 칸은 있음).
+ *  지난 실행 폴더(`run.json`)는 중지·청산할 수 없습니다(서버가 409). */
 export function isLiveRun(run: PyRunStatus): boolean {
-  return typeof run.bar_min === 'number'
+  return 'bar_min' in run
 }
 
 /** 차트 봉 하나 = 판정 봉 하나(신호 줄). 지표 칸은 이름 그대로 붙어 옵니다. */
@@ -181,6 +259,7 @@ export interface PyBar {
 export interface PyMark {
   /** `entry`·`exit` 는 체결 줄, `trade` 는 거래 줄(손익 라벨용). */
   kind: 'entry' | 'exit' | 'trade'
+  /** 1분봉은 `YYYY-MM-DD` 로 올 때가 있고 실시간은 `YYYYMMDD` 입니다 — 읽는 쪽은 `dateDigits` 로. */
   date: string
   time: string | null
   side: string | null
@@ -192,10 +271,24 @@ export interface PyMark {
   entry_time?: string | null
 }
 
-export interface PyBars {
-  bars: PyBar[]
-  marks: PyMark[]
+/** 실시간 실행의 차트 줄 = 1분 요약(`minute` 줄). `time` 은 그 분 시작(HHMMSS), 없던 값은 null. */
+export interface PyRtBar {
+  date: string | null
+  time: string | null
+  krx: number | null
+  mku_mid: number | null
+  bid: number | null
+  ask: number | null
+  spread_ticks: number | null
+  mku_last: number | null
+  position: number | null
 }
+
+/** `/bars` — 1분봉이면 판정 봉, 실시간이면 1분 요약 줄. 표시(`marks`)는 두 종류가 같은 모양입니다.
+ *  `kind` 는 이 기능 전 서버에는 없습니다(1분봉). */
+export type PyBars =
+  | { kind?: 'minute'; bars: PyBar[]; marks: PyMark[] }
+  | { kind: 'realtime'; bars: PyRtBar[]; marks: PyMark[] }
 
 interface Tail<T> {
   rows: T[]
@@ -268,10 +361,26 @@ export async function loadRuns(signal?: AbortSignal): Promise<PyResult<PyRunStat
 }
 
 /** 실행을 세웁니다. 거부(409)·다른 사이트(403)는 서버 문장이 `why` 에 그대로 옵니다.
- *  `sym` 이 비면 서버가 최근월물을 고릅니다. */
-export function startRun(file: string, mode: 'orders' | 'paper', sym?: string | null): Promise<PyResult<PyRunStatus>> {
+ *  `sym` 이 비면 서버가 최근월물을 고릅니다 — 빈 글(`""`)은 서버가 거절하므로 늘 `null` 로 보냅니다.
+ *  `signalSym` 은 실시간 전략에만 넣습니다(`undefined` 면 칸을 아예 빼고, 비면 `null` = 국내 최근월물).
+ *  서버는 모르는 칸을 422 로 거절하므로 본문은 `{file, mode, sym, signal_sym}` 그대로입니다. */
+export function startRun(
+  file: string,
+  mode: 'orders' | 'paper',
+  sym?: string | null,
+  signalSym?: string | null,
+): Promise<PyResult<PyRunStatus>> {
   const code = sym?.trim()
-  return post<PyRunStatus>('/runs', { file, mode, sym: code ? code : null })
+  const body: { file: string; mode: string; sym: string | null; signal_sym?: string | null } = {
+    file,
+    mode,
+    sym: code ? code : null,
+  }
+  if (signalSym !== undefined) {
+    const signal = signalSym?.trim()
+    body.signal_sym = signal ? signal : null
+  }
+  return post<PyRunStatus>('/runs', body)
 }
 
 export function loadRun(id: string, signal?: AbortSignal): Promise<PyResult<PyRunStatus>> {
@@ -395,8 +504,8 @@ interface Held extends PyRunView {
   /** 이 값이 어느 실행의 것인지. 보는 실행이 바뀐 직후 앞 실행의 값을 보이지 않게 합니다. */
   forId: string | null
 }
-/** 이 갈래의 줄이 새로 오면 차트 봉을 다시 받습니다(봉·표시가 바뀌는 줄). */
-const CHART_KINDS = new Set(['signal', 'fill', 'trade'])
+/** 이 갈래의 줄이 새로 오면 차트 봉을 다시 받습니다(봉·표시가 바뀌는 줄). `minute` 은 실시간의 1분 요약 줄입니다. */
+const CHART_KINDS = new Set(['signal', 'fill', 'trade', 'minute'])
 
 /** 실행 하나를 2초마다 봅니다. 기록·API 로그는 `after=<next>` 로 이어 받고, 차트 봉은 봉·체결·거래
  *  줄이 새로 왔을 때만 다시 받습니다. 화면을 떠나면 멈추고, `id` 가 바뀌면 처음부터 받습니다. */

@@ -2,18 +2,22 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Modal } from '../../app/Modal'
 import { resolve } from '../../data/instruments'
 import {
+  currencyOf,
   downloadUrl,
   flattenRun,
   isLiveRun,
+  isRealtime,
+  pnlText,
   stopRun,
+  type PyBars,
   type PyJournalRow,
   type PyRunStatus,
   type PyRunView,
   type PyStrategyFile,
 } from '../../data/pyrun'
-import { MINUS, moneyIn, toneOf } from '../../lib/number'
-import { PyRunChart, type StopLine } from './PyRunChart'
-import { ModeBadge, StateBadge, isFinished, shortDate } from './PyRunSide'
+import { MINUS, toneOf } from '../../lib/number'
+import { PyRtChart, PyRunChart, type StopLine } from './PyRunChart'
+import { KindBadge, ModeBadge, StateBadge, isFinished, shortDate } from './PyRunSide'
 
 /* 팀: 「파이썬 전략」 오른쪽 — ③ 머리줄·상태 막대 ④ 차트 ⑤ 지금 판단 ⑥ 아래 표.
  * 자리와 클래스는 「전략 진행」(`vrf-title` · `run-bar` · `run-attention` · `run-bottom`)과 같습니다. */
@@ -24,9 +28,10 @@ export type PyBottomTab = (typeof PY_BOTTOM_TABS)[number]
 /** 한 표에 그리는 줄 상한. 넘으면 최근 것만 그리고 그 사실을 적습니다(전부는 ⬇ 결과). */
 const ROW_CAP = 500
 
-/** 신호 줄에서 지표 칸이 아닌 것. */
+/** 신호 줄에서 지표 칸이 아닌 것. `ref`(실시간 신호의 기준가)는 종가 자리에 섭니다. */
 const SIGNAL_TAGS = new Set([
   'kind', 'at', 'clock', 'date', 'bar', 'close', 'side', 'reason', 'stop_ticks', 'open', 'high', 'low', 'text',
+  'ref', 'act', 'time',
 ])
 
 const INDICATOR_LABEL: Record<string, string> = {
@@ -37,6 +42,13 @@ const INDICATOR_LABEL: Record<string, string> = {
   atr: 'ATR',
   vwap: 'VWAP',
   sigma: 'σ',
+  range_high: '범위 위',
+  range_low: '범위 아래',
+  krx: 'KRX',
+  bid: '매수 호가',
+  ask: '매도 호가',
+  dk: 'dk',
+  rho: 'rho',
 }
 
 const SIDE_WORD: Record<string, string> = { buy: '매수', sell: '매도' }
@@ -75,11 +87,43 @@ function indicatorText(value: unknown): string {
   return v < 0 ? `${MINUS}${text}` : text
 }
 
-/** 원 손익 — 부호를 붙입니다. */
-function wonText(value: unknown): string {
-  const v = num(value)
+/** 신호 줄의 값 칸 중 가격인 것 — 지표 자릿수(최대 3)가 아니라 그 종목 자릿수로 적습니다(MKU 는 5자리).
+ *  `krx` 는 신호 종목(KRX) 자릿수, 나머지는 주문 종목 자릿수. */
+const PRICE_KEYS = new Set(['bid', 'ask', 'krx', 'mku_last', 'range_high', 'range_low'])
+
+function cellText(key: string, value: unknown, decimals: number, krxDecimals: number): string {
+  if (!PRICE_KEYS.has(key)) return indicatorText(value)
+  return priceText(value, key === 'krx' ? krxDecimals : decimals)
+}
+
+/** 판단 글 — 「매수 신호 · 까닭」, 까닭이 없으면 「매수 신호」. */
+function verdictText(side: unknown, reason: unknown): string {
+  const why = typeof reason === 'string' && reason ? reason : ''
+  return why ? `${sideWord(side)} 신호 · ${why}` : `${sideWord(side)} 신호`
+}
+
+/** 받은 시각 — 초까지(`093005` → `09:30:05`). */
+function secondsText(time: unknown): string {
+  if (typeof time !== 'string' || time.length < 6) return clockText(time)
+  return `${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`
+}
+
+/** 보유 초 → `45초` · `3분 05초`. */
+function heldText(seconds: unknown): string {
+  const v = num(seconds)
   if (v === null) return '—'
-  return `${v > 0 ? '+' : ''}${moneyIn(v, 'KRW')}`
+  const whole = Math.max(0, Math.round(v))
+  return whole < 60 ? `${whole}초` : `${Math.floor(whole / 60)}분 ${String(whole % 60).padStart(2, '0')}초`
+}
+
+/** 신호 줄의 판단 시각 — 1분봉은 봉(`bar`), 실시간은 그 순간(`time`, 없으면 기록 시각). */
+function signalClock(row: PyJournalRow): string {
+  return row.bar !== undefined ? clockText(row.bar) : secondsText(row.time ?? row.clock)
+}
+
+/** 신호 줄의 가격 — 1분봉은 종가, 실시간은 기준가(`ref`). */
+function signalPrice(row: PyJournalRow): unknown {
+  return row.close !== undefined ? row.close : row.ref
 }
 
 function sideWord(side: unknown): string {
@@ -109,6 +153,13 @@ function decimalsOf(sym: string | null | undefined, closes: number[]): number {
   return closes.length > 0 ? most : 2
 }
 
+/** 차트 줄의 값 하나를 모읍니다(자릿수 어림용). */
+function valuesOf(bars: PyBars | null, key: 'close' | 'mku_mid' | 'krx'): number[] {
+  if (!bars) return []
+  const rows: Record<string, unknown>[] = bars.bars as unknown as Record<string, unknown>[]
+  return rows.map((row) => row[key]).filter((v): v is number => num(v) !== null)
+}
+
 /* ── 오른쪽 전체 ───────────────────────────────────────── */
 
 export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyFile[] }) {
@@ -119,10 +170,13 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
   const [actWhy, setActWhy] = useState<string | null>(null)
 
   const signals = useMemo(() => journal.filter((row) => row.kind === 'signal'), [journal])
+  const realtime = run ? isRealtime(run) || bars?.kind === 'realtime' : false
+  /* 주문 종목의 자릿수(1분봉은 종가, 실시간은 MKU 중간값)와 실시간의 KRX 자릿수. */
   const decimals = useMemo(
-    () => decimalsOf(run?.sym, (bars?.bars ?? []).map((bar) => bar.close).filter((c): c is number => num(c) !== null)),
-    [run?.sym, bars],
+    () => decimalsOf(run?.sym, valuesOf(bars, realtime ? 'mku_mid' : 'close')),
+    [run?.sym, bars, realtime],
   )
+  const krxDecimals = useMemo(() => decimalsOf(run?.signal_sym, valuesOf(bars, 'krx')), [run?.signal_sym, bars])
 
   if (!run) {
     return (
@@ -183,9 +237,11 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
 
   const subLine = [
     run.file,
-    run.sym,
+    /* 실시간은 신호 종목(KRX) → 주문 종목(MKU). */
+    realtime && run.signal_sym ? `신호 ${run.signal_sym} → 주문 ${run.sym ?? '—'}` : run.sym,
     run.bar_min ? `판정 봉 ${run.bar_min}분` : null,
     run.next_decision_at && !finished ? `다음 판정 ${clockText(run.next_decision_at)}` : null,
+    realtime && run.end_at && !finished ? `실행 끝 ${clockText(run.end_at)}` : null,
     finished && run.ended_reason ? `끝 · ${run.ended_reason}` : null,
   ]
     .filter(Boolean)
@@ -199,6 +255,7 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
           <span className="vrf-title-name">{run.title || run.name}</span>
         </p>
         <ModeBadge mode={run.mode} />
+        <KindBadge kind={realtime ? 'realtime' : run.kind} />
         <StateBadge state={run.state} />
         <div className="pyrun-head-acts">
           <a className="btn btn-quiet" href={downloadUrl(run.id)} download>
@@ -245,26 +302,36 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
         </p>
       )}
 
-      <StatusBar run={run} decimals={decimals} />
+      {realtime ? (
+        <RtStatusBar run={run} decimals={decimals} krxDecimals={krxDecimals} />
+      ) : (
+        <StatusBar run={run} decimals={decimals} />
+      )}
 
       <div className="pyrun-mid">
-        {/* ④ 차트 */}
+        {/* ④ 차트 — 실시간은 1분 요약의 MKU 중간값·KRX 선 */}
         <div className="card">
-          <PyRunChart
-            bars={bars}
-            decimals={decimals}
-            barMin={barMin}
-            barMinFromFile={barMinFromFile}
-            stop={stopLine}
-            rsiGuides={rsiGuides}
-          />
+          {realtime ? (
+            <PyRtChart bars={bars} mkuDecimals={decimals} krxDecimals={krxDecimals} />
+          ) : (
+            <PyRunChart
+              bars={bars}
+              decimals={decimals}
+              barMin={barMin}
+              barMinFromFile={barMinFromFile}
+              stop={stopLine}
+              rsiGuides={rsiGuides}
+            />
+          )}
         </div>
         {/* ⑤ 지금 판단 */}
         <Decision
           signal={lastSignal}
           decimals={decimals}
+          krxDecimals={krxDecimals}
           params={params}
           paramsFromFile={paramsFromFile}
+          realtime={realtime}
         />
       </div>
 
@@ -277,7 +344,16 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
             </button>
           ))}
         </div>
-        <BottomTable tab={bottom} run={run} journal={journal} signals={signals} apiLog={apiLog} apiTotal={apiTotal} decimals={decimals} />
+        <BottomTable
+          tab={bottom}
+          run={run}
+          journal={journal}
+          signals={signals}
+          apiLog={apiLog}
+          apiTotal={apiTotal}
+          decimals={decimals}
+          krxDecimals={krxDecimals}
+        />
       </div>
 
       {ask && (
@@ -342,7 +418,8 @@ function StatusBar({ run, decimals }: { run: PyRunStatus; decimals: number }) {
         시간 청산 <b>{run.time_exit_at ? clockText(run.time_exit_at) : '—'}</b>
       </span>
       <span className="run-bar-item">
-        {past ? '실행 손익' : '오늘 손익'} <b className={num(pnl) !== null ? toneOf(pnl as number) || undefined : undefined}>{wonText(pnl)}</b>
+        {past ? '실행 손익' : '오늘 손익'}{' '}
+        <b className={num(pnl) !== null ? toneOf(pnl as number) || undefined : undefined}>{pnlText(pnl, currencyOf(run))}</b>
       </span>
       <span className="run-bar-item">
         {past ? '손절 / 한도' : '오늘 손절 / 한도'}{' '}
@@ -354,18 +431,69 @@ function StatusBar({ run, decimals }: { run: PyRunStatus; decimals: number }) {
   )
 }
 
+/** 실시간 실행의 상태 막대(스펙 6-3) — 보유(방향·진입가·보유 초) · KRX 가격 · MKU 매수/매도 호가 · 최근 dk/rho ·
+ *  오늘 손절/한도 · 오늘 손익(USD) · 마지막으로 받은 KRX 체결·MKU 호가 시각. 지난 실행은 요약으로 손익·손절 수만. */
+function RtStatusBar({ run, decimals, krxDecimals }: { run: PyRunStatus; decimals: number; krxDecimals: number }) {
+  const past = run.position === undefined
+  const position = run.position ?? null
+  const side = run.side ?? (position ? (position > 0 ? 'buy' : 'sell') : null)
+  const hold =
+    position === null
+      ? '—'
+      : position === 0
+        ? '없음'
+        : `${sideWord(side)} ${Math.abs(position)} @ ${priceText(run.entry, decimals)}`
+  const pnl = past ? (run.summary?.net_pnl ?? null) : (run.today_pnl ?? null)
+  const stops = past ? (run.summary?.by_reason?.['손절'] ?? (run.summary ? 0 : null)) : (run.stops ?? null)
+  return (
+    <div className="run-bar">
+      <span className="run-bar-item">
+        보유 <b className={sideClass(side)}>{hold}</b>
+        {position ? <> · <b>{heldText(run.held_s)}</b></> : null}
+        {run.pending && <span className="run-note"> 체결 확인 중</span>}
+      </span>
+      <span className="run-bar-item">
+        KRX <b>{priceText(run.krx, krxDecimals)}</b>
+      </span>
+      <span className="run-bar-item">
+        MKU 매수/매도 <b>{priceText(run.bid, decimals)} / {priceText(run.ask, decimals)}</b>
+      </span>
+      <span className="run-bar-item">
+        최근 dk/rho <b>{indicatorText(run.last_dk)} / {indicatorText(run.last_rho)}</b>
+      </span>
+      <span className="run-bar-item">
+        {past ? '손절 / 한도' : '오늘 손절 / 한도'}{' '}
+        <b>
+          {stops ?? '—'} / {run.max_stops ?? '—'}
+        </b>
+      </span>
+      <span className="run-bar-item">
+        {past ? '실행 손익' : '오늘 손익'}{' '}
+        <b className={num(pnl) !== null ? toneOf(pnl as number) || undefined : undefined}>{pnlText(pnl, currencyOf(run))}</b>
+      </span>
+      <span className="run-bar-item">
+        받은 시각 <b>KRX {secondsText(run.last_krx_at)} · 호가 {secondsText(run.last_quote_at)}</b>
+      </span>
+    </div>
+  )
+}
+
 /* ── ⑤ 지금 판단 ───────────────────────────────────────── */
 
 function Decision({
   signal,
   decimals,
+  krxDecimals,
   params,
   paramsFromFile,
+  realtime,
 }: {
   signal: PyJournalRow | null
   decimals: number
+  krxDecimals: number
   params: Record<string, unknown> | null
   paramsFromFile: boolean
+  realtime: boolean
 }) {
   const indicators = signal ? Object.keys(signal).filter((key) => !SIGNAL_TAGS.has(key) && num(signal[key]) !== null) : []
   /* 밴드 셋은 위에서 아래 차례로 먼저, 나머지는 기록 차례대로. */
@@ -377,27 +505,32 @@ function Decision({
       {signal ? (
         <>
           <p className="pyrun-decide-at">
-            {shortDate(typeof signal.date === 'string' ? signal.date : null)} {clockText(signal.bar)} 봉 · {clockText(signal.clock)} 마감
+            {realtime
+              ? `${signalClock(signal)} 판단`
+              : `${shortDate(typeof signal.date === 'string' ? signal.date : null)} ${clockText(signal.bar)} 봉 · ${clockText(signal.clock)} 마감`}
           </p>
           <p className={`pyrun-decide-why ${sideClass(signal.side) ?? ''}`.trim()}>
-            {signal.side ? `${sideWord(signal.side)} 신호 · ` : ''}
-            {typeof signal.reason === 'string' && signal.reason ? signal.reason : '—'}
+            {signal.side
+              ? verdictText(signal.side, signal.reason)
+              : typeof signal.reason === 'string' && signal.reason
+                ? signal.reason
+                : '—'}
           </p>
           <dl className="pyrun-kv">
             <div>
-              <dt>종가</dt>
-              <dd>{priceText(signal.close, decimals)}</dd>
+              <dt>{realtime ? '기준가' : '종가'}</dt>
+              <dd>{priceText(signalPrice(signal), decimals)}</dd>
             </div>
             {[...bands, ...rest].map((key) => (
               <div key={key}>
                 <dt>{INDICATOR_LABEL[key] ?? key}</dt>
-                <dd>{indicatorText(signal[key])}</dd>
+                <dd>{cellText(key, signal[key], decimals, krxDecimals)}</dd>
               </div>
             ))}
           </dl>
         </>
       ) : (
-        <p className="run-why">아직 판정한 봉이 없습니다</p>
+        <p className="run-why">{realtime ? '아직 진입·청산 판단이 없습니다' : '아직 판정한 봉이 없습니다'}</p>
       )}
       <h2 className="run-card-title pyrun-kv-title">
         파라미터 <span className="pyrun-kv-note">(Params{paramsFromFile ? ' · 지금 파일의 값 — 실행 때와 다를 수 있음' : ''})</span>
@@ -443,6 +576,7 @@ function BottomTable({
   apiLog,
   apiTotal,
   decimals,
+  krxDecimals,
 }: {
   tab: PyBottomTab
   run: PyRunStatus
@@ -451,6 +585,7 @@ function BottomTable({
   apiLog: Record<string, unknown>[]
   apiTotal: number
   decimals: number
+  krxDecimals: number
 }) {
   const multiDay = useMemo(() => new Set(signals.map((row) => row.date)).size > 1, [signals])
   const indicatorKeys = useMemo(() => {
@@ -465,6 +600,8 @@ function BottomTable({
     return [...bands, ...keys.filter((key) => !bands.includes(key))]
   }, [signals])
   const paperRun = run.mode !== 'orders'
+  const realtime = isRealtime(run)
+  const currency = currencyOf(run)
 
   let note = ''
   let table: ReactNode
@@ -476,8 +613,8 @@ function BottomTable({
       <table className="data-table rows-base pyrun-table">
         <thead>
           <tr>
-            <th scope="col" className="col-text">봉</th>
-            <th scope="col">종가</th>
+            <th scope="col" className="col-text">{realtime ? '시각' : '봉'}</th>
+            <th scope="col">{realtime ? '기준가' : '종가'}</th>
             {indicatorKeys.map((key) => (
               <th scope="col" key={key}>
                 {INDICATOR_LABEL[key] ?? key}
@@ -488,21 +625,23 @@ function BottomTable({
         </thead>
         <tbody>
           {rows.map((row, at) => (
-            <tr key={`${row.date}-${row.bar}-${at}`}>
+            <tr key={`${row.date}-${row.bar ?? row.time}-${at}`}>
               <td className="col-text">
                 {multiDay && `${shortDate(typeof row.date === 'string' ? row.date : null)} `}
-                {clockText(row.bar)}
+                {signalClock(row)}
               </td>
-              <td>{priceText(row.close, decimals)}</td>
+              <td>{priceText(signalPrice(row), decimals)}</td>
               {indicatorKeys.map((key) => (
-                <td key={key}>{indicatorText(row[key])}</td>
+                <td key={key}>{cellText(key, row[key], decimals, krxDecimals)}</td>
               ))}
               <td className={`col-text pyrun-wrap ${row.side ? (sideClass(row.side) ?? '') : 'pyrun-dim'}`}>
-                {row.side ? <b>{sideWord(row.side)} 신호 · {String(row.reason ?? '')}</b> : String(row.reason ?? '—')}
+                {row.side ? <b>{verdictText(row.side, row.reason)}</b> : String(row.reason ?? '—')}
               </td>
             </tr>
           ))}
-          {rows.length === 0 && <EmptyRow span={span} text="아직 판정한 봉이 없습니다" />}
+          {rows.length === 0 && (
+            <EmptyRow span={span} text={realtime ? '아직 진입·청산 판단이 없습니다' : '아직 판정한 봉이 없습니다'} />
+          )}
         </tbody>
       </table>
     )
@@ -584,8 +723,11 @@ function BottomTable({
               <td>{priceText(row.exit, decimals)}</td>
               <td className="col-text">{String(row.reason ?? '—')}</td>
               <td>{num(row.ticks) !== null ? `${(row.ticks as number) > 0 ? '+' : ''}${row.ticks}` : '—'}</td>
-              <td className={toneOf(num(row.pnl) ?? 0) || undefined}>{wonText(row.pnl)}</td>
-              <td className={toneOf(num(row.pnl_after_fee) ?? 0) || undefined}>{wonText(row.pnl_after_fee)}</td>
+              <td className={toneOf(num(row.pnl) ?? 0) || undefined}>{pnlText(row.pnl, currency)}</td>
+              {/* 수수료 뒤 — 실시간 거래는 Engine 의 `net_usd` 로 옵니다. */}
+              <td className={toneOf(num(row.pnl_after_fee ?? row.net_usd) ?? 0) || undefined}>
+                {pnlText(row.pnl_after_fee ?? row.net_usd, currency)}
+              </td>
             </tr>
           ))}
           {rows.length === 0 && <EmptyRow span={9} text="아직 거래가 없습니다" />}

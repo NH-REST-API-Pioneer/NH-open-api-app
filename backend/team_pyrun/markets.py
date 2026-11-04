@@ -41,6 +41,7 @@ from types import ModuleType
 from typing import Any, Literal
 
 from backend.team_pyrun import api as default_api
+from backend.team_pyrun.journal import mask_unlisted
 
 #: 해외 잔고·주문내역을 따라가는 쪽 수 상한. 쪽마다 조회 한 번(재시도는 `api._query` 규칙)이라 길지 않게 둡니다.
 #: MKU 1계약 전략의 하루 주문은 수십 줄이라 한두 쪽이면 끝납니다.
@@ -56,6 +57,30 @@ OVERSEAS_ACCOUNT_KEYS = ("fee", "fut_fee", "cls_pl_amt", "ord_psb_amt")
 #: 해외 주문내역 `ord_sts` 의 한글 이름 — 해외 줄에는 국내 `ord_sts_nm` 같은 이름 칸이 없습니다.
 #: 근거: 운영자 `overseas_account.ORDER_STATUS`(주문내역 명세: 1 접수·3 확인·4 부분체결·6 전체체결·8 자동취소·9 거부).
 OVS_STATUS_NAMES = {"1": "접수", "3": "확인", "4": "부분체결", "6": "전체체결", "8": "자동취소", "9": "거부"}
+
+
+#: 해외 응답·요청을 기록(`api_log.jsonl`·journal 의 `raw`)에 남길 때 **값을 그대로 두는 칸**(소문자, `occurs1_`·
+#: `iccurs1_` 접두 없이). 나머지 칸은 이름은 남기고 값만 `***` 로 가립니다(`journal.mask_unlisted`).
+#: 까닭: 해외 계좌·주문 응답은 기록이 없어 칸 이름을 모릅니다 — 계좌 칸이 뜻밖의 이름이면 이름으로 지우는 `scrub` 를
+#: 지나 파일에 남습니다(설정엔 계좌번호가 없어 값으로 가릴 수도 없음). 그래서 **팀 코드가 실제로 읽는 칸만** 값을 남기고,
+#: 칸 이름은 다 남겨 첫 모의 날에 실제 칸 이름을 확인할 수 있게 합니다. 이름으로 지우는 `scrub` 는 그 위에 그대로.
+#: 새 해외 칸을 읽게 되면 여기에도 더하세요.
+OVS_LOG_FIELDS = frozenset({
+    # 응답 — `api.py` 해외 함수와 이 파일의 `OverseasAdapter`·`live.py` 가 읽는 칸
+    "ord_no", "ord_sts", "sym", "trd_tp", "exec_qty", "exec_pric", "ord_avg_pric", "exec_tm",   # 주문내역
+    "err_cd", "err_msg", "rejt_rsn",                                                            # 주문 답·거부
+    "opint_qty",                                                                                # 잔고 (sym·trd_tp 위)
+    "fee", "fut_fee", "cls_pl_amt", "ord_psb_amt",                                              # 예수금
+    "last_pric",                                                                                # 현재가
+    "ref_dt", "exch_tm", "open_pric", "high_pric", "low_pric", "close_pric", "cum_trd_qty",     # 1분봉
+    "prd_cd", "tick_unt", "tick_val",                                                           # 품목 세부정보
+    "nxt_key", "nrec",                                                                          # 쪽 넘기기·줄 수
+    "errorcode", "errormessage", "errormsg", "message", "msg",                                  # 공통 오류 칸
+    # 요청 — 팀 코드가 직접 채우는 칸(계좌 칸 없음). 위와 겹치는 이름은 한 번만
+    "qt_div_cd", "trd_div_cd", "glb_ord_tp_cd", "ord_qty", "ord_pric", "stop_pric", "org_ord_no",
+    "inq_div", "biz_dt", "cur_cd", "cvs_div", "exch_cd", "inq_strt_dt", "strt_tm", "inq_ed_dt", "ed_tm",
+    "req_qty", "dcnt", "cidx_yn", "sett_cd", "fut_opt_div_cd", "prd_grp_cd", "prd_nm",
+})
 
 
 @dataclass(frozen=True)
@@ -188,6 +213,11 @@ class DomesticAdapter(MarketAdapter):
         """주문 답에서 기록하는 칸 — 국내는 `msg_cd`·`msg_cntn`."""
         return {"msg_cd": res.get("msg_cd"), "msg_cntn": res.get("msg_cntn")}
 
+    @staticmethod
+    def log_row(row: Any) -> Any:
+        """기록(journal `raw`)에 남기는 주문내역 줄 — 국내는 칸 이름이 기록으로 확인돼 그대로(`scrub` 만)."""
+        return row
+
     # ---- 1분봉 실행이 부름
     def chart_minute(self, sym: str, *, req_qty: int) -> list[dict]:
         return self.api.chart_minute(sym, req_qty=req_qty)
@@ -277,6 +307,11 @@ class OverseasAdapter(MarketAdapter):
     def order_log(res: dict) -> dict:
         """주문 답에서 기록하는 칸 — 해외는 `err_cd`·`err_msg`(`msg_cd` 가 아님, 운영자 order_result)."""
         return {"err_cd": res.get("err_cd"), "err_msg": res.get("err_msg")}
+
+    @staticmethod
+    def log_row(row: Any) -> Any:
+        """기록(journal `raw`)에 남기는 주문내역 줄 — 칸은 다 남기고 `OVS_LOG_FIELDS` 밖의 값은 `***`."""
+        return None if row is None else mask_unlisted(row, OVS_LOG_FIELDS)
 
     # ---- 1분봉 실행이 부름
     def chart_minute(self, sym: str, *, req_qty: int) -> list[dict]:

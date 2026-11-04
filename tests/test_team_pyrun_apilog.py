@@ -213,7 +213,8 @@ def test_해외_주문_계열도_본문_전체가_남는다(tmp_path):
                    "overseas_deposit", "overseas_product-detail"):
         log.record({**base, "api_id": api_id, "body": {"ord_no": "7", "x": "y"}})
     for row in _rows(tmp_path / "a.jsonl"):
-        assert row["body"] == {"ord_no": "7", "x": "y"} and "summary" not in row
+        # 칸은 다 남고, 팀이 읽는 칸이 아닌 값은 가린다(해외 응답 칸 이름은 기록이 없어 이름으로는 못 거름)
+        assert row["body"] == {"ord_no": "7", "x": "***"} and "summary" not in row
     assert {"overseas_order", "overseas_deposit"} <= apilog.FULL_BODY_APIS
 
 
@@ -241,3 +242,49 @@ def test_해외_주문_응답의_사용자_IP_칸은_남지_않는다(tmp_path):
     assert "user_id" not in text and "ip_addr" not in text
     assert "hong123" not in text and "1.2.3.4" not in text
     assert _rows(tmp_path / "a.jsonl")[0]["body"]["ord_no"] == "7"
+
+
+def _ovs_call(api_id, body, request=None):
+    return {"api_id": api_id, "env": "paper", "request": request or {}, "http": 200, "ms": 1, "waited_ms": 0,
+            "reissued": False, "error": None, "code": None, "message": None, "body": body}
+
+
+def test_해외_본문은_칸을_다_남기고_허용_목록_밖의_값은_가린다(tmp_path):
+    log = ApiLog(tmp_path / "a.jsonl", "r1")
+    body = {"cust_no": "12345678", "ord_no": "7", "err_cd": "00000", "nxt_key": "",
+            "Occurs1": [{"occurs1_ord_no": "7", "occurs1_ord_sts": "6", "occurs1_exec_pric": "0.7447",
+                         "occurs1_mbr_no": "98765432", "occurs1_memo": {"inner": "55555555", "sym": "MKUX26"}},
+                        {"occurs1_ord_no": "8", "occurs1_tags": ["A", "B"]}]}
+    request = {"trd_div_cd": "0", "inq_div": "0", "nxt_key": "", "prd_cd": "", "unknown_req": "424242"}
+    log.record(_ovs_call("overseas_order-history", body, request))
+    text = (tmp_path / "a.jsonl").read_text(encoding="utf-8")
+    for secret in ("12345678", "98765432", "55555555", "424242"):
+        assert secret not in text
+    row = _rows(tmp_path / "a.jsonl")[0]
+    b = row["body"]
+    assert b["cust_no"] == "***" and b["ord_no"] == "7" and b["err_cd"] == "00000" and b["nxt_key"] == ""
+    first, second = b["Occurs1"]
+    assert first["occurs1_ord_no"] == "7" and first["occurs1_ord_sts"] == "6" and first["occurs1_exec_pric"] == "0.7447"
+    assert first["occurs1_mbr_no"] == "***"
+    assert first["occurs1_memo"] == {"inner": "***", "sym": "MKUX26"}       # 안쪽도 칸마다
+    assert second == {"occurs1_ord_no": "8", "occurs1_tags": ["***", "***"]}  # 목록 모양은 그대로
+    assert row["request"] == {"trd_div_cd": "0", "inq_div": "0", "nxt_key": "", "prd_cd": "", "unknown_req": "***"}
+
+
+def test_해외_실패_본문도_가린다(tmp_path):
+    log = ApiLog(tmp_path / "a.jsonl", "r1")
+    call = _ovs_call("overseas_price", {"errorCode": "EGW053", "errorMessage": "모의 안 됨", "acct": "11112222"},
+                     {"Iccurs1": [{"iccurs1_exch_cd": "FSGX", "iccurs1_sym": "MKUX26"}]})
+    log.record({**call, "error": "BusinessError: x", "code": "EGW053"})
+    row = _rows(tmp_path / "a.jsonl")[0]
+    assert "11112222" not in (tmp_path / "a.jsonl").read_text(encoding="utf-8")
+    assert row["body"]["errorCode"] == "EGW053" and row["body"]["errorMessage"] == "모의 안 됨"
+    assert row["request"] == {"Iccurs1": [{"iccurs1_exch_cd": "FSGX", "iccurs1_sym": "MKUX26"}]}
+
+
+def test_국내_본문은_가리지_않는다(tmp_path):
+    log = ApiLog(tmp_path / "a.jsonl", "r1")
+    body = {"ord_no": "7", "cust_no": "12345678", "Occurs1": [{"occurs1_whatever": "x"}]}
+    log.record({**_ovs_call("domestic_order", body, {"sym": "A756B000", "odd": "1"})})
+    row = _rows(tmp_path / "a.jsonl")[0]
+    assert row["body"] == body and row["request"] == {"sym": "A756B000", "odd": "1"}

@@ -70,6 +70,7 @@ ws_trader 는 KRX 연결·MKU 연결·1초 타이머가 `asyncio.gather` 로 **�
   US$2(`market.paper_fee`), 슬리피지 없음(ws_trader 종이 방식). 체결 시각은 그 행동을 낸 원문·타이머의 시각.
   Engine 의 `ref` 가 반대 호가와 다르면 기록만 하고 반대 호가로 체결합니다(전략이 체결가를 지어내지 못하게).
 - 휴장(20:35~20:50)엔 주문하지 않습니다: 진입 신호는 버리고, 청산은 들고 있다가 휴장이 끝난 첫 step 에.
+  판단 뒤 브로커 관문 조회로 늦어져 보내기 직전에 휴장이 되면 브로커가 보내지 않고(`may_send`), 같은 규칙을 따릅니다.
 - 잔고 대조(모의 계좌, 멈추지 않은 동안): 보유가 바뀌고 5초 뒤 한 번, 보유 중이면 30초마다, 결과 모름 뒤 바로. 다르면 멈춤.
 
 ## 멈춤·공백 (컨트롤러 결정 R13)
@@ -320,7 +321,7 @@ class RealtimeRun:
         # 3. 모의계좌: 시작 잔고가 0 이어야 한다 (누구의 잔고인지 모르므로 정리하지 않고 거부)
         if self.orders:
             broker = MockAccountBroker(api, self.sym, j, sleep=self.sleep, today=today,
-                                       expected=self.expected_position, halt=self.halt)
+                                       expected=self.expected_position, halt=self.halt, may_send=self._may_send)
             held = broker.position()
             if held is None:
                 raise StartRefused("시작 잔고를 확인하지 못했습니다")
@@ -623,6 +624,9 @@ class RealtimeRun:
             self.j.write("event", clock=clock, text=f"주문·확인 {until - sent_mono:.1f}초 — 그동안 받은 원문은 Engine 이 "
                                                     "pending 인 채로 넣고, 그 뒤에 결과를 알림",
                          sent_mono=round(sent_mono, 3), confirm_mono=round(until, 3))
+            if got is None and self.broker.held_back:
+                self._held_back(act, entry, clock, until)
+                return
             if got is None:
                 self._no_fill(act, entry, clock, until)
                 return
@@ -638,6 +642,18 @@ class RealtimeRun:
             fn()
         else:
             self._settle = {"until": until, "fn": fn}
+
+    def _held_back(self, act: dict, entry: bool, clock: str, until: float | None = None) -> None:
+        """브로커가 보내기 직전 휴장이 시작돼 **보내지 않음**(확실) — 판단 때 휴장이었던 것처럼 다룬다(`_act`).
+
+        진입은 버리고(Engine pending 을 푼다), 청산은 `_break_exit` 로 들고 있다가 휴장이 끝난 첫 step 에 낸다.
+        잔고 대조·거절 횟수·멈춤은 없다 — 주문이 나가지 않았으므로."""
+        if entry:
+            self.j.write("event", clock=clock, text="휴장 시작으로 주문 보류 — 진입 신호를 버림(주문 안 냄)")
+            self._later(until, lambda: setattr(self.engine, "pending", False))
+        else:
+            self._break_exit = act
+            self.j.write("event", clock=clock, text=f"휴장 시작으로 주문 보류 ({act.get('reason')}) — 휴장이 끝나면 주문")
 
     def _no_fill(self, act: dict, entry: bool, clock: str, until: float | None = None) -> None:
         """모의 계좌 fill 이 None — 호가로 기록하고 계속하지 않는다(모듈 문서 「주문」)."""
@@ -809,6 +825,11 @@ class RealtimeRun:
         if key not in self._noted:
             self._noted.add(key)
             self.j.write("event", clock=clock, text=text)
+
+    def _may_send(self) -> bool:
+        """브로커가 주문을 보내기 **바로 직전** 묻는 것 — 지금 시각이 휴장이 아닌가. 판단(`_act`) 뒤 브로커 관문의
+        조회(잔고·주문내역·재시도)로 늦어져 20:35 를 넘겨 주문이 나가지 않게."""
+        return not in_break(self.market, _hhmmss(self.now()))
 
     def _in_break(self, clock: str) -> bool:
         """휴장 중인가 — 부른 시각과 **지금** 시각 둘 다(조회로 늦어져 주문이 20:35 를 넘기지 않게)."""

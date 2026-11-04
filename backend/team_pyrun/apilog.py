@@ -8,6 +8,7 @@
 
 한 줄 칸: `at run purpose api_id env request http code message ms waited_ms reissued ok error` +
 `body`(실패·`FULL_BODY_APIS`) 또는 `summary`(그 밖의 성공). 계좌 식별정보와 키·토큰은 `journal.scrub` 로 지웁니다.
+해외(`overseas_…`) 호출의 `request`·`body` 는 그 전에 칸은 다 남기고 `markets.OVS_LOG_FIELDS` 밖의 값을 `***` 로 가립니다.
 """
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-from backend.team_pyrun.journal import _now, scrub
+from backend.team_pyrun.journal import _now, mask_unlisted, scrub
+from backend.team_pyrun.markets import OVS_LOG_FIELDS
 
 #: 성공해도 응답 본문을 통째로 남기는 API(주문·잔고·종목 정보 — 확인 근거라서).
 FULL_BODY_APIS = frozenset({
@@ -29,6 +31,9 @@ FULL_BODY_APIS = frozenset({
     "overseas_order", "overseas_order-history", "overseas_open-interest",
     "overseas_deposit", "overseas_product-detail",
 })
+
+#: 이 접두의 API 는 본문·요청을 `OVS_LOG_FIELDS` 로 가려 씁니다(국내는 칸이 기록으로 확인돼 그대로)
+OVERSEAS_PREFIX = "overseas_"
 
 _log: ContextVar["ApiLog | None"] = ContextVar("pyrun_apilog", default=None)
 _purpose: ContextVar[str | None] = ContextVar("pyrun_apilog_purpose", default=None)
@@ -123,10 +128,14 @@ class ApiLog:
         api_id = call["api_id"]
         error = _redact_error(call.get("error"))
         ok = error is None
-        body = call.get("body")
+        body, request = call.get("body"), call.get("request")
+        if str(api_id).startswith(OVERSEAS_PREFIX):
+            # 팀: 해외 응답 칸 이름은 기록이 없다 — 칸은 다 남기고 팀이 읽는 칸 밖의 값은 가린다(`markets.OVS_LOG_FIELDS`)
+            body = None if body is None else mask_unlisted(body, OVS_LOG_FIELDS)
+            request = None if request is None else mask_unlisted(request, OVS_LOG_FIELDS)
         row: dict[str, Any] = {
             "at": _now(), "run": self.run_id, "purpose": call.get("purpose"),
-            "api_id": api_id, "env": call.get("env"), "request": call.get("request"),
+            "api_id": api_id, "env": call.get("env"), "request": request,
             "http": call.get("http"), "code": call.get("code"), "message": call.get("message"),
             "ms": call.get("ms"), "waited_ms": call.get("waited_ms", 0),
             "reissued": bool(call.get("reissued")), "ok": ok, "error": error,

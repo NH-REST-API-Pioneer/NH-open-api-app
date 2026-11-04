@@ -49,6 +49,33 @@ def scrub(obj: Any) -> Any:
     return obj
 
 
+#: 허용 목록 밖의 값 대신 쓰는 글자 (`mask_unlisted`)
+MASKED = "***"
+_ROW_PREFIXES = ("occurs1_", "iccurs1_")
+
+
+def _field(key: Any) -> str:
+    """허용 목록과 견주는 칸 이름 — 소문자, 줄 접두(`occurs1_`·`iccurs1_`)를 뗀 것."""
+    name = str(key).lower()
+    for prefix in _ROW_PREFIXES:
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return name
+
+
+def mask_unlisted(obj: Any, allowed: frozenset[str], keep: bool = False) -> Any:
+    """칸(key)은 모두 남기고, 이름이 `allowed`(소문자, 줄 접두 없이)에 없는 칸의 **값**은 `"***"` 로 바꾼 사본.
+
+    dict·list 안까지 칸마다 봅니다(목록 모양은 그대로). 칸 이름이 확인되지 않은 응답(해외 계좌·주문)을 기록에 남길 때
+    — 이름으로 지우는 `scrub` 만으로는 모르는 이름의 계좌 칸이 빠지므로, 팀이 읽는 칸만 값을 남깁니다.
+    맨 위가 dict·list 가 아닌 값이면(칸 이름이 없음) 가립니다 — 본문이 없음(None)은 부르는 쪽이 넘기지 않습니다."""
+    if isinstance(obj, dict):
+        return {k: mask_unlisted(v, allowed, _field(k) in allowed) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [mask_unlisted(v, allowed, keep) for v in obj]
+    return obj if keep else MASKED
+
+
 def _now() -> str:
     """`2026-10-30T09:24:33` 꼴(한국시간, 시간대 꼬리 없음 — week02 와 같은 모양)."""
     return now_kst().isoformat(timespec="seconds").removesuffix("+09:00")

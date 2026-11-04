@@ -53,7 +53,8 @@ week02 와 다른 점
                            summary 에 `open_paper_position`). 휴장 중 정한 청산이 남았으면 그 사유를 기록(`break_exit`)
 
 휴장인지는 step 의 시각과 **지금 시각**(`now()`) 둘 다 봅니다 — 20:34:5x 에 시작한 step 이 조회로 늦어져 실제
-주문이 20:35 를 넘기지 않게(`Runner.blocked`·끝내기 정리 둘 다).
+주문이 20:35 를 넘기지 않게(`Runner.blocked`·끝내기 정리 둘 다). 판단 뒤 브로커 관문의 조회(잔고·주문내역)로 늦어지는
+몫은 브로커가 보내기 바로 직전 지금 시각을 한 번 더 봅니다(`may_send` — 걸리면 안 보내고 `held_back`, Runner 가 미룸).
 
 **장중 시작·같은 날 다시 세우기(개장마다 한 번)** — 준비 봉에서 **오늘** 진입 신호(`side`)가 난 개장(신호의
 `window`)과, 오늘 같은 NAME·종목·방식의 앞선 실행이 들어간 개장(`windows_before`, registry 가 `journal.entered_windows`
@@ -291,8 +292,9 @@ class LiveRun:
                                   f"{market.end_time[2:4]} · 휴장 "
                                   + (", ".join(f"{a[:2]}:{a[2:4]}~{b[:2]}:{b[2:4]}" for a, b in market.breaks) or "없음"))
         j.write("event", text=f"전략 {loaded.file} · sha256 {loaded.sha256[:12]} · Params {asdict(r.p)}")
-        # 2. 종목과 틱
-        sym = self.spec.sym
+        # 2. 종목과 틱 — registry 가 같은 종목 검사에 쓴 종목(`self.sym`)이 먼저. 다시 고르면 월물이 넘어가는 날
+        #    검사한 종목과 주문하는 종목이 달라질 수 있다(RealtimeRun 과 같은 규칙)
+        sym = self.sym or self.spec.sym
         if not sym:
             with purpose("종목 찾기"):
                 sym = api.nearest()
@@ -310,7 +312,8 @@ class LiveRun:
         # 3. 모의계좌: 시작 잔고가 0 이어야 한다
         if self.orders:
             broker = MockAccountBroker(api, sym, j, sleep=self.sleep, today=today,
-                                       expected=r.expected_position, halt=r.halt)
+                                       expected=r.expected_position, halt=r.halt,
+                                       may_send=self._may_send if market.breaks else None)
             held = broker.position()
             if held is None:
                 raise StartRefused("시작 잔고를 확인하지 못했습니다")
@@ -434,6 +437,12 @@ class LiveRun:
         if not self.market.breaks:      # 국내 — 휴장이 없다(시계도 부르지 않음, week02 그대로)
             return False
         return in_break(self.market, clock) or in_break(self.market, _hhmmss(self.now()))
+
+    def _may_send(self) -> bool:
+        """브로커가 주문을 보내기 **바로 직전** 묻는 것 — 지금 시각(`now()`)이 휴장이 아닌가(해외만 꽂음).
+
+        `Runner.blocked` 는 판단 때 한 번 보지만, 그 뒤 브로커 관문의 조회(잔고·주문내역·재시도)로 20:35 를 넘길 수 있다."""
+        return not in_break(self.market, _hhmmss(self.now()))
 
     def _note_break(self, key: str, clock: str, text: str) -> None:
         """휴장 중 미룬 요청 — 요청마다 휴장 하나에 한 번만 기록."""
@@ -588,10 +597,6 @@ class LiveRun:
         """보유 정리·끝 잔고·summary.json. 바뀐 끝 까닭을 돌려준다."""
         r, b, j = self.runner, self.broker, self.j
         paper_left = None
-        if r.break_exit is not None and r.pos is not None:
-            # 휴장 중 정한 청산이 주문되지 못한 채 끝남 — 그 사유를 기록에 남긴다(손절이었는지 나중에 알 수 있게)
-            j.write("event", clock=clock, text=f"휴장 중 정한 청산({r.break_exit})을 주문하지 못한 채 끝남",
-                    break_exit=r.break_exit)
         if not r.halted and r.pos is not None and self._in_break(clock):
             now_t = _hhmmss(self.now())
             span = next((f"{a[:2]}:{a[2:4]}~{z[:2]}:{z[2:4]}" for a, z in self.market.breaks
@@ -616,6 +621,11 @@ class LiveRun:
                 r.halt(f"정리 중 오류 — {error_text(e)}")
             if r.pos is not None and not r.halted:
                 r.halt(f"끝낼 때 청산되지 않음 · 보유 {r.expected_position():+d}")
+        if r.break_exit is not None and r.pos is not None:
+            # 정리를 해 본 **뒤에도** 휴장 중 정한 청산이 남았을 때만 — 사유를 기록에 남긴다(손절이었는지 나중에 알 수 있게).
+            # 미룬 중지가 휴장 뒤 정리로 체결되면 남지 않는다(summary `break_exit` 와 같은 조건)
+            j.write("event", clock=clock, text=f"휴장 중 정한 청산({r.break_exit})을 주문하지 못한 채 끝남",
+                    break_exit=r.break_exit)
         if isinstance(b, MockAccountBroker):
             held = b.position()
             got = "확인 안 됨" if held is None else f"{held:+d}"

@@ -82,6 +82,8 @@ week02 와 다른 점(그 외엔 같게 옮겼습니다):
 - 청산 재시도(`retry_after`)도 막힌 동안엔 미룹니다. `force_flat` 도 막힌 시각엔 주문하지 않습니다(실행이 「확인 필요」로 끝냄).
   막힘이 풀린 뒤 `force_flat`(정리·중지 요청)이 `break_exit` 를 가진 보유를 닫으면 사유는 「실행 종료 정리」가 아니라
   그 `break_exit`(예: 「손절」 — `on_exit(stopped=True)`, 하루 손절 수에 들어감)입니다.
+- 판단 때는 막힘 전이었는데 브로커 관문 조회로 늦어져 보내기 직전 막힘이 됐으면 브로커가 보내지 않고 `held_back` 을
+  세웁니다. 그때 진입은 대기 신호로 되돌리고, 청산은 그 사유를 `break_exit` 에 둡니다(위와 같이 풀린 첫 가격에).
 """
 from __future__ import annotations
 
@@ -507,6 +509,11 @@ class Runner:
         # on_entry 인자 대응은 주문 전에 맞춰 본다 — 틀리면 주문을 내지 않고 오류(체결 뒤 오류면 정리 주문이 또 나간다)
         entry_call = None if fn is None else _entry_args(fn, sig)
         px = self.broker.fill(e["side"], price, clock, f"진입 ({e['side']})")
+        if px is None and getattr(self.broker, "held_back", False):
+            # 팀: 보내기 직전 휴장이 시작돼 안 보냄(확실) — 신호를 들고 있다가 휴장이 끝난 첫 가격에 진입
+            self.pending = e
+            self.j.write("event", clock=clock, text="휴장 시작으로 주문 보류 — 진입 대기 신호는 휴장이 끝난 첫 가격에 진입")
+            return
         if px is None:
             held = self.broker.position()
             if held is None:
@@ -539,6 +546,12 @@ class Runner:
     def _exit(self, clock: str, ref: float, reason: str) -> None:
         side = "sell" if self.pos["side"] == "buy" else "buy"
         px = self.broker.fill(side, ref, clock, f"청산 · {reason}")
+        if px is None and getattr(self.broker, "held_back", False):
+            # 팀: 보내기 직전 휴장이 시작돼 안 보냄(확실) — 휴장 중 정한 청산처럼 그 사유로 휴장이 끝난 첫 가격에
+            if self.break_exit is None:
+                self.break_exit = reason
+            self.j.write("event", clock=clock, text=f"휴장 시작으로 주문 보류 ({reason}) — 휴장이 끝난 첫 가격에 청산")
+            return
         if px is None:
             held = self.broker.position()
             if held == 0 and not self._mine(0):

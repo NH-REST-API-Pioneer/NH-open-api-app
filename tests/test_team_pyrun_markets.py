@@ -430,3 +430,69 @@ def test_해외_예수금_기록은_USD_칸_그대로(tmp_path):
     assert snap["fee"] == 4.0 and set(snap) == set(markets.OVERSEAS_ACCOUNT_KEYS)
     rec = lines(tmp_path / "j.jsonl")[-1]
     assert rec["kind"] == "account" and "cust_acnt_no" not in rec
+
+
+# ---------------------------------------------------------------- 최종 검토 고침 (I1·M1·M3)
+def test_해외_주문내역_줄은_기록에서_허용_목록_밖의_값을_가린다(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "9"
+    b = ovs_broker(tmp_path, fake)
+    fake.history.append({"ord_no": "0000000001", "ord_sts": "9", "cust_no": "12345678",
+                         "Occurs2": [{"mbr_no": "98765432", "sym": MKU}]})
+    fake.fill = False                                       # 가짜가 줄을 넣지 않게 — 위 줄만 보인다
+    assert b.fill("buy", 0.7447, "101500", "진입 · 시험") is None
+    text = (tmp_path / "j.jsonl").read_text(encoding="utf-8")
+    assert "12345678" not in text and "98765432" not in text
+    raw = [r for r in lines(tmp_path / "j.jsonl") if r.get("raw")][-1]["raw"]
+    assert raw["cust_no"] == "***" and raw["ord_no"] == "0000000001" and raw["ord_sts"] == "9"
+    assert raw["Occurs2"] == [{"mbr_no": "***", "sym": MKU}]
+
+
+def test_국내_어댑터는_기록용_줄을_바꾸지_않는다():
+    row = {"ord_no": "1", "cust_no": "12345678"}
+    assert adapter(DOMESTIC, FakeApi()).log_row(row) == row
+    assert adapter(OVERSEAS, FakeOvsApi()).log_row(row) == {"ord_no": "1", "cust_no": "***"}
+
+
+def test_같은_주문의_줄이_여럿이면_체결_줄을_본다(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "6"
+    b = ovs_broker(tmp_path, fake)
+    real_hist = fake.ovs_order_history_page
+
+    def two_rows(nxt_key=""):
+        got, key = real_hist(nxt_key)
+        out = []
+        for r in got:                                       # 접수 줄이 먼저, 체결 줄이 둘째
+            out += [{**r, "ord_sts": "1", "exec_pric": "0"}, r]
+        return out, key
+
+    fake.ovs_order_history_page = two_rows
+    px = b.fill("buy", 0.7447, "101500", "진입 · 시험")
+    assert px == pytest.approx(0.7448) and b.unresolved is None and b.blind is None
+
+
+def test_unresolved_다시_볼_때도_같은_주문의_체결_줄을_본다(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "1"
+    b = ovs_broker(tmp_path, fake)
+    assert b.fill("buy", 0.7447, "101500", "진입 · 시험") is None and b.unresolved == "0000000001"
+    filled = {**fake.history[0], "ord_sts": "6"}
+    fake.history.append(filled)                             # 접수 줄(1) 다음에 체결 줄(6)
+    fake.held = 1
+    assert b.fill("buy", 0.7447, "101600", "진입 · 시험") is None
+    assert b.unresolved is None and b.landed == 1           # 체결로 읽고 잔고 증거로 풀었다
+
+
+def test_보내기_직전_may_send_가_거짓이면_아무것도_안_보내고_표시도_없다(tmp_path):
+    fake = FakeOvsApi()
+    b = ovs_broker(tmp_path, fake)
+    b.may_send = lambda: False
+    assert b.fill("buy", 0.7447, "101500", "진입 · 시험") is None
+    assert fake.orders == [] and fake.count("ovs_market_order") == 0
+    assert b.held_back and not b.sent and b.blind is None and b.unresolved is None
+    assert not b.unknown and not b.had_unknown and not b.needs_check
+    assert any("주문 보류" in r.get("text", "") for r in lines(tmp_path / "j.jsonl"))
+    b.may_send = lambda: True                               # 다음 fill 은 보통대로, 표시도 지운다
+    assert b.fill("buy", 0.7447, "101600", "진입 · 시험") is not None
+    assert not b.held_back and len(fake.orders) == 1

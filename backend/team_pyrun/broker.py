@@ -24,10 +24,13 @@
 3. **잔고 관문**: 잔고(`position`)가 실행기가 아는 주문 전 보유(`expected()`)와 정확히 같아야 보냄. 못 읽어도 안 냄.
    앞선 주문이 사실은 접수돼 있었다면 여기서 드러나고, 실행기는 None 을 받아 잔고를 따릅니다
    (청산 재시도인데 잔고가 0 이면 주문 없이 청산으로 기록).
+4. **보내기 직전** `may_send()`(실행이 꽂음 — 해외: 지금 시각이 휴장이 아닌가)가 거짓이면 보내지 않고 `held_back`.
+   위 관문들의 조회로 늦어져 판단 때는 휴장 전이던 주문이 휴장에 나가지 않게. 결과 모름 표시는 남기지 않습니다.
 
 fill 한 번이 남기는 것 — 실행기가 None 을 받았을 때 잔고를 **이 실행의 것으로 따라도 되는지** 판단하는 데 씁니다.
 
 - `sent`: 이 fill 에서 `market_order` 를 실제로 불렀는가(관문에 걸려 안 보냈으면 False).
+- `held_back`: 이 fill 이 `may_send` 에 걸려 보내지 않았는가 — 실행기는 이때 잔고를 보지 않고 결정을 미룹니다.
 - `explains(held)`: 잔고 held 가 이 실행의 결과 모름 주문으로 설명되는가 — `blind`·`unresolved` 의 체결 뒤 보유이거나,
   이 fill 에서 그 표시가 잔고 증거로 풀렸을 때(`landed`). 알려진 거절(업무 거부·8·9)이나 관문에 걸린 주문은
   아무 잔고도 설명하지 않는다 — 그때 다른 잔고는 남의 주문이다.
@@ -80,7 +83,8 @@ class MockAccountBroker:
 
     def __init__(self, api_module: ModuleType | Any, sym: str, journal: Journal, exec_cnd: str = "1",
                  sleep: Callable[[float], None] = time.sleep, *, today: str | None = None,
-                 expected: Callable[[], int] | None = None, halt: Callable[[str], None] | None = None):
+                 expected: Callable[[], int] | None = None, halt: Callable[[str], None] | None = None,
+                 may_send: Callable[[], bool] | None = None):
         self.api, self.sym, self.j, self.exec_cnd = as_adapter(api_module), sym, journal, exec_cnd
         self.sleep = sleep
         self.today = today or now_kst().strftime("%Y%m%d")
@@ -102,6 +106,11 @@ class MockAccountBroker:
         #: 실행이 꽂는 갈고리 — 실행기가 아는 보유(주문 전)와 멈춤. 없으면 잔고 관문을 건너뛴다(단독 시험용)
         self.expected: Callable[[], int] | None = expected
         self.halt: Callable[[str], None] | None = halt
+        #: 보내기 **바로 직전** 한 번 더 묻는 갈고리(해외: 지금 시각이 휴장이 아닌가). 거짓이면 보내지 않는다 — 관문의
+        #: 조회(잔고·주문내역·재시도)로 늦어져 20:34:58 의 판단이 20:35 를 넘겨 나가지 않게. 없으면 늘 보냄
+        self.may_send: Callable[[], bool] | None = may_send
+        #: 직전 fill 이 `may_send` 에 걸려 **보내지 않았음** — 깨끗한 「안 보냄」(결과 모름 표시 없음). 실행기가 읽고 미룬다
+        self.held_back = False
 
     # ---- 계좌 조회
     def account(self, clock: str = "", why: str = "") -> dict | None:
@@ -139,6 +148,16 @@ class MockAccountBroker:
             return None
 
     # ---- 주문
+    def _row_of(self, mine: list[dict]) -> dict:
+        """한 주문번호의 주문내역 줄들 중 볼 줄 — 끝난 줄(전체체결·거부·취소)이 있으면 그것, 없으면 첫 줄.
+
+        같은 주문이 접수·체결 줄로 여럿 올 수 있어(쪽·순서도 모름) 첫 줄만 보면 체결을 놓칠 수 있다."""
+        done = (self.api.filled, *self.api.rejected)
+        for row in mine:
+            if str(row.get("ord_sts", "")).strip() in done:
+                return row
+        return mine[0]
+
     def _mark_unknown(self) -> None:
         self.unknown = True
         self.had_unknown = True
@@ -214,11 +233,12 @@ class MockAccountBroker:
                 self._mark_unknown()
                 self._halt(f"결과를 모르는 주문 {no} 을 주문내역에서 찾지 못함 — 새 주문 안 냄")
                 return True
-            sts = str(mine[0].get("ord_sts", "")).strip()
+            row = self._row_of(mine)
+            sts = str(row.get("ord_sts", "")).strip()
             if sts in self.api.rejected:
                 self.unresolved = None
                 self.j.write("event", clock=clock, ord_no=no,
-                             text=f"앞선 주문 {self.api.status_name(mine[0])} 확인 — 체결 안 됨")
+                             text=f"앞선 주문 {self.api.status_name(row)} 확인 — 체결 안 됨")
                 return False
             if sts == self.api.filled:
                 return self._filled_unresolved(no, clock)
@@ -278,10 +298,11 @@ class MockAccountBroker:
         self.last_fill_fee = None
         self.unknown = False
         self.sent = False
+        self.held_back = False
         self.landed = None
         px = self._fill(side, ref_price, clock, why)
-        if px is None:
-            self.needs_check = True
+        if px is None and not self.held_back:
+            self.needs_check = True     # 보류(안 보냄이 확실)는 대조할 것이 없다
         return px
 
     def _fill(self, side: str, ref_price: float, clock: str, why: str) -> float | None:
@@ -292,6 +313,11 @@ class MockAccountBroker:
         if not self._balance_gate(clock):
             return None
         pre = self.expected() if self.expected is not None else None
+        if self.may_send is not None and not self.may_send():
+            # 관문 조회로 늦어져 보낼 수 없는 시각(휴장)이 됐다 — 보내지 않았음이 확실하다. 결과 모름 표시 없음
+            self.held_back = True
+            self.j.write("event", clock=clock, side=side, text=f"주문 보류 · {why} — 보내기 직전 휴장 시작(보내지 않음)")
+            return None
         try:
             with purpose("진입" if why.startswith("진입") else "청산"):
                 self.sent = True
@@ -361,7 +387,7 @@ class MockAccountBroker:
             mine = [r for r in hist if str(r.get("ord_no", "")).strip().lstrip("0") == key]
             if not mine:
                 continue
-            last = mine[0]
+            last = self._row_of(mine)
             sts = str(last.get("ord_sts", "")).strip()
             if sts == self.api.filled:
                 # 체결가 칸은 시장마다 다름 — 국내 avg_exec_pric(0 이면 exec_pric, week02 10/29), 해외 exec_pric(0 이면 ord_avg_pric)
@@ -379,11 +405,11 @@ class MockAccountBroker:
                 return px
             if sts in self.api.rejected:
                 self.j.write("event", clock=clock, ord_no=ord_no, text=f"주문 {self.api.status_name(last)}",
-                             reject=self.api.reject_reason(last), raw=last)
+                             reject=self.api.reject_reason(last), raw=self.api.log_row(last))
                 return None
         self._mark_unknown()
         self.unresolved, self.unresolved_side, self.unresolved_checks = ord_no, side, 0
         self.unresolved_pre, self.unresolved_post = pre, self._post(pre, side)
         self.j.write("event", clock=clock, ord_no=ord_no, text="15초 안에 전체체결 확인 안 됨 — 잔고로 확인",
-                     raw=last)
+                     raw=self.api.log_row(last))
         return None

@@ -891,3 +891,65 @@ def test_status_는_실시간_칸을_가진다(tmp_path):
 
 def test_모듈은_기본_구독_만들기를_가진다():
     assert callable(realtime.default_feed_factory)
+
+
+# ---------------------------------------------------------------- 최종 검토 고침 (M1) — 보내기 직전 휴장
+class 느린잔고(FakeLive):
+    """잔고 조회가 오래 걸려, 켜 두면(`jump`) 돌아올 때 시계가 그 시각으로 넘어가 있는 가짜 — 브로커 관문 안에서."""
+
+    def __init__(self):
+        super().__init__()
+        self.jump = None
+
+    def ovs_open_interest_page(self, nxt_key=""):
+        got = super().ovs_open_interest_page(nxt_key)
+        if self.jump is not None:
+            self.jump()
+        return got
+
+
+def _late_day(run):
+    """휴장 근처까지 도는 실행으로 — 진입·끝 시각을 밤으로 늦춘다."""
+    run.engine.p.entry_end = "235000"
+    run.engine.p.flatten_at = "235000"
+    run.end_at = "235500"
+
+
+def test_진입_판단_뒤_관문_조회로_휴장이_되면_주문하지_않고_신호를_버린다(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path, fake=느린잔고())
+    _late_day(run)
+    clock.to("203456")
+    run.handle(fb(clock, 0.7499, 0.7501))
+    clock.advance(1)
+    run.handle(ka(clock, 1400.0))
+    fake.jump = lambda: clock.to("203500")
+    clock.advance(1)
+    run.handle(ka(clock, 1400.6))                       # 20:34:58 진입 판단 → 관문 잔고 조회 뒤 20:35
+    fake.jump = None
+    run.timers()
+    assert orders_of(fake) == [] and run.halted is None and run.pos is None
+    assert run.engine.pending is False
+    assert any("주문 보류" in t for t in texts(out))
+    b = run.broker
+    assert b.blind is None and b.unresolved is None and not b.had_unknown
+
+
+def test_청산_판단_뒤_관문_조회로_휴장이_되면_휴장이_끝나고_청산(tmp_path):
+    run, fake, feed, clock, out = started(tmp_path, fake=느린잔고())
+    _late_day(run)
+    enter_sell(run, clock)
+    run.engine._exit = lambda now, hh: None             # 전략 청산은 끄고 정리 요청으로 청산
+    clock.to("203440")
+    run.step(clock.now())                               # 잔고 대조를 미리
+    assert len(orders_of(fake)) == 1
+    run.request_flatten()
+    fake.jump = lambda: clock.to("203500")
+    clock.to("203458")
+    run.step(clock.now())
+    fake.jump = None
+    assert len(orders_of(fake)) == 1 and run.pos is not None and run.halted is None
+    assert any("주문 보류" in t for t in texts(out))
+    clock.to("205000")
+    run.step(clock.now())
+    run.timers()
+    assert [c[2] for c in orders_of(fake)] == ["sell", "buy"] and run.pos is None

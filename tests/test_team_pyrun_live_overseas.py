@@ -893,3 +893,84 @@ def test_리플레이_명령줄은_시장을_csv_종목과_전략_틱으로(tmp_
     bad = tmp_path / f"bars_1m_A756B000_{TODAY}.csv"
     bad.write_text("\n".join(rows) + "\n", encoding="utf-8")
     assert replay.main([str(folder / "fakemku.py"), TODAY, str(bad)]) == 2
+
+
+# ---------------------------------------------------------------- 최종 검토 고침 (I2·M1·M2)
+def test_미룬_중지가_휴장_뒤_청산되면_주문하지_못했다는_줄이_없다(tmp_path):
+    run, fake, out, clock = entered_buy(tmp_path)
+    fake.last = "0.7470"
+    go(run, clock, "204000")                                          # 휴장 중 손절 판단
+    run.request_stop()
+    go(run, clock, "204001")
+    go(run, clock, "205000")                                          # 미룬 중지 → 정리 주문 체결
+    assert run.state == "끝" and [o[1] for o in fake.orders] == ["buy", "sell"]
+    assert not any("주문하지 못한 채 끝남" in x for x in texts(out))
+    assert "break_exit" not in read_json(out / "summary.json")
+
+
+def test_미룬_중지의_청산이_안_되어_보유가_남으면_그_줄이_남는다(tmp_path):
+    from backend.nh_api.errors import BusinessError
+    run, fake, out, clock = entered_buy(tmp_path)
+    fake.last = "0.7470"
+    go(run, clock, "204000")
+    run.request_stop()
+    go(run, clock, "204001")
+    fake.fill = False
+    fake.order_error = BusinessError("overseas_order", "E1", "거부", {})
+    go(run, clock, "205000")                                          # 정리 주문이 거부됨 — 보유가 남는다
+    assert run.state == "끝" and run.runner.pos is not None
+    ev = [r for r in journal(out) if "주문하지 못한 채 끝남" in r.get("text", "")]
+    assert ev and ev[0]["break_exit"] == "손절"
+    assert read_json(out / "summary.json")["break_exit"] == "손절"
+
+
+class SlowBalance(FakeLive):
+    """잔고 조회가 오래 걸려, 켜 두면(`after`) 돌아올 때 시계가 그 시각으로 넘어가 있는 가짜 — 브로커 관문 안에서."""
+
+    after: str | None = None
+
+    def ovs_open_interest_page(self, nxt_key=""):
+        got = super().ovs_open_interest_page(nxt_key)
+        if self.after is not None:
+            self.clock["now"] = at(self.after)
+        return got
+
+
+def test_청산_판단_뒤_관문_조회로_휴장이_되면_주문하지_않고_휴장_뒤에_청산(tmp_path):
+    run, fake, out, clock = entered_buy(tmp_path, fake=SlowBalance())
+    go(run, clock, "203440")                                          # 잔고 대조를 미리 — 20:34:58 에는 대조 안 함
+    fake.last, fake.after = "0.7470", "203500"
+    go(run, clock, "203458")                                          # 손절 판단은 휴장 전, 관문 잔고 조회 뒤엔 휴장
+    assert len(fake.orders) == 1 and run.runner.pos is not None
+    assert run.runner.break_exit == "손절" and not run.runner.halted
+    assert any("주문 보류" in x for x in texts(out))
+    b = run.broker
+    assert b.blind is None and b.unresolved is None and not b.had_unknown
+    fake.after = None
+    go(run, clock, "205000")
+    assert [o[1] for o in fake.orders] == ["buy", "sell"] and run.runner.trades[-1]["reason"] == "손절"
+    assert not any(in_break(OVERSEAS, c) for c in fake.order_clocks)
+
+
+def test_진입_뒤_관문_조회로_휴장이_되면_신호를_들고_휴장_뒤에_진입(tmp_path):
+    fake = SlowBalance()
+    run, fake, out, clock = make_ovs(tmp_path, fake=fake)
+    run.prepare()
+    run.runner.strat.script = {"203300": ("런던", "buy")}
+    fake.chart = [ovs_bar("203300")]
+    fake.after = "203500"
+    go(run, clock, "203404")
+    assert fake.orders == [] and run.runner.pending is not None and run.runner.pos is None
+    assert not run.runner.halted
+    fake.after = None
+    go(run, clock, "205000")
+    assert [o[1] for o in fake.orders] == ["buy"] and run.runner.pos["entry_time"] == "205000"
+    assert not any(in_break(OVERSEAS, c) for c in fake.order_clocks)
+
+
+def test_registry_가_정한_종목을_prepare_가_다시_고르지_않는다(tmp_path):
+    run, fake, out, clock = make_ovs(tmp_path)
+    run.sym = "MKUZ26"                                                # registry 가 같은 종목 검사에 쓴 종목
+    run.prepare()
+    assert run.sym == "MKUZ26" and "mku_master_rows" not in names(fake)
+    assert ("ovs_chart_minute", "MKUZ26", live.WARMUP_BARS) in fake.calls

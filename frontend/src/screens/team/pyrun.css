@@ -383,3 +383,26 @@
 .run-add .control.pyrun-sym-input[readonly] {
   cursor: pointer;
 }
+
+/* 팀: 매일 자동 시작 — 폼의 체크 칸과 왼쪽 열 카드. */
+.pyrun-daily {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pyrun-schedules .run-row {
+  align-items: flex-start;
+}
+.pyrun-schedules .run-row-body {
+  cursor: default;
+}
+.pyrun-schedules .run-sub.is-error {
+  color: var(--error);
+  white-space: normal;
+}
+.pyrun-schedule-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}

@@ -246,3 +246,8 @@ def _파이썬_전략_실행은_임시_자리로(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(registry_lib, "_registry", registry_lib.Registry(
         자리 / "pyruns", 자리 / "strategies", start_thread=False, api_module=_파이썬_전략_api_막힘(),
         sleep=lambda _초: None))
+    # 팀: 매일 자동 시작도 임시 자리로 — 앱을 켜는(lifespan) 시험이 사용자 홈에 예약 파일을 쓰거나
+    # 진짜 예약으로 실행을 세우지 않게. 실행 관리는 위의 임시 `Registry`.
+    from backend.team_pyrun import autostart as autostart_lib
+    monkeypatch.setattr(autostart_lib, "_schedules", autostart_lib.Schedules(
+        자리 / "pyrun_schedules.json", registry_lib._registry))

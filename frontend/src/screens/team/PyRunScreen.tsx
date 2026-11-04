@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Modal } from '../../app/Modal'
-import { usePyRun, usePyRuns, usePyStrategies, type PyRunStatus } from '../../data/pyrun'
-import { PyAddForm, PyRunsCard, PyStrategyCard } from './PyRunSide'
+import { usePyRun, usePyRuns, usePySchedules, usePyStrategies, type PyRunStatus } from '../../data/pyrun'
+import { PyAddForm, PyRunsCard, PySchedulesCard, PyStrategyCard } from './PyRunSide'
 import { PyRunMain } from './PyRunMain'
 import './pyrun.css'
 
@@ -21,6 +21,7 @@ let lastShown: string | null = null
 export function PyRunScreen() {
   const strategies = usePyStrategies()
   const { runs: polled, why: runsWhy } = usePyRuns()
+  const schedules = usePySchedules()
   const [picked, setPicked] = useState<string | null>(lastShown)
   /* 방금 세운 실행. 다음 목록 폴링이 그 실행을 담기 전까지 목록 앞에 끼워 둡니다 — 안 그러면 그 사이
      `shownId` 가 가장 최근 실행으로 떨어져 앞 실행이 잠깐 보이고 폴링됩니다. 목록에 오면 버립니다. */
@@ -57,6 +58,12 @@ export function PyRunScreen() {
                 setAdd({ seed: file ?? null })
               }}
             />
+            <PySchedulesCard
+              items={schedules.items}
+              why={schedules.why}
+              onChanged={schedules.refresh}
+              onWhy={schedules.setNote}
+            />
             <PyRunsCard runs={runs} why={runsWhy} shownId={shownId} onShow={show} />
           </div>
         </aside>
@@ -88,11 +95,15 @@ export function PyRunScreen() {
             onAsk={() => setAsking(true)}
             onBack={() => setAsking(false)}
             onCancel={() => setAdd(null)}
-            onStarted={(run) => {
+            onStarted={(run, scheduled, scheduleWhy) => {
               setAsking(false)
               setAdd(null)
               setStarted(run)
               show(run.id)
+              if (scheduled) {
+                schedules.refresh()
+                schedules.setNote(scheduleWhy ? `실행은 섰지만 자동 시작을 만들지 못했습니다 — ${scheduleWhy}` : null)
+              }
             }}
           />
         </Modal>

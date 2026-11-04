@@ -3,17 +3,22 @@ import { Modal } from '../../app/Modal'
 import {
   ORDERS_CONFIRM_TEXT,
   PY_FINISHED,
+  createSchedule,
   currencyOf,
   dateDigits,
+  deleteSchedule,
   deleteStrategy,
   downloadUrl,
   isRealtime,
   loadConvention,
   modeLabel,
   pnlText,
+  resumeSchedule,
+  scheduleTimeText,
   startRun,
   uploadStrategy,
   type PyRunStatus,
+  type PySchedule,
   type PyStrategies,
   type PyStrategyFile,
 } from '../../data/pyrun'
@@ -473,9 +478,87 @@ export function PyRunsCard({
   )
 }
 
+/* ── 매일 자동 시작 ─────────────────────────────────────── */
+
+/** 자동 시작 목록. 없으면(그리고 알릴 까닭도 없으면) 카드를 그리지 않습니다. */
+export function PySchedulesCard({
+  items,
+  why,
+  onChanged,
+  onWhy,
+}: {
+  items: PySchedule[] | null
+  why: string | null
+  onChanged: () => void
+  onWhy: (why: string | null) => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+  if (!why && (items === null || items.length === 0)) return null
+
+  async function act(id: string, run: () => Promise<{ ok: boolean; why?: string }>) {
+    if (busy) return
+    setBusy(id)
+    const got = await run()
+    setBusy(null)
+    onWhy(got.ok ? null : (got.why ?? '요청이 실패했습니다'))
+    onChanged()
+  }
+
+  return (
+    <div className="card run-runs pyrun-schedules">
+      <div className="run-runs-head">
+        <h2 className="run-card-title">매일 자동 시작</h2>
+      </div>
+      {why && <p className="run-store-why">{why}</p>}
+      <div className="run-list">
+        {items?.map((one) => (
+          <div className="run-row" key={one.id}>
+            <div className="run-row-body">
+              <span className="run-name">
+                <span className="run-name-text">{one.file}</span>
+                <ModeBadge mode={one.mode} />
+              </span>
+              {one.blocked ? (
+                <span className="run-sub is-error">멈춤 — {one.blocked}</span>
+              ) : (
+                <span className="run-sub">다음 시작 {scheduleTimeText(one.next_start) || '—'}</span>
+              )}
+              {one.last_result && <span className="run-sub">{one.last_result}</span>}
+            </div>
+            <span className="pyrun-schedule-acts">
+              {one.blocked && (
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  aria-disabled={busy !== null || undefined}
+                  onClick={() => void act(one.id, () => resumeSchedule(one.id))}
+                >
+                  다시 켜기
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-quiet"
+                aria-disabled={busy !== null || undefined}
+                onClick={() => void act(one.id, () => deleteSchedule(one.id))}
+              >
+                끄기
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /* ── + 실행 세우기 ────────────────────────────────────── */
 
 type StartMode = 'orders' | 'paper'
+
+const DAILY_TEXT =
+  '다음 장 날부터 장 시작 5분 전(MKU 08:20 · 국내 08:55)에 같은 파일·방식으로 새 실행을 세웁니다. 종목은 그날의 최근월물입니다. ' +
+  '앞선 실행이 「확인 필요」·「오류」로 끝나면 세우지 않고 멈춰 둡니다.'
 
 /** 실행 세우기 폼. `orders` 는 확인 얼굴을 한 번 지납니다. 거부 문장은 서버가 준 그대로 섭니다. */
 export function PyAddForm({
@@ -494,7 +577,8 @@ export function PyAddForm({
   onAsk: () => void
   onBack: () => void
   onCancel: () => void
-  onStarted: (run: PyRunStatus) => void
+  /** `scheduleWhy` = 「매일 자동 시작」을 골랐는데 예약을 못 만든 까닭(실행은 이미 섰음). 골랐다면 `scheduled` 가 참. */
+  onStarted: (run: PyRunStatus, scheduled: boolean, scheduleWhy: string | null) => void
 }) {
   const usable = files.filter((one) => !one.error)
   const [chosen, setFile] = useState<string>(
@@ -506,6 +590,8 @@ export function PyAddForm({
   const [sym, setSym] = useState('')
   /** 실시간 전략의 신호 종목(KRX). 빈 글 = 국내 최근월물. */
   const [signalSym, setSignalSym] = useState('')
+  /** 매일 자동 시작 — 지금 세운 실행 뒤로 장이 열리는 날마다 같은 파일·방식으로(그날의 최근월물). */
+  const [daily, setDaily] = useState(false)
   const [sending, setSending] = useState(false)
   const [why, setWhy] = useState<string | null>(null)
   // 확인 얼굴의 종목 글이 마스터를 읽으므로, 마스터가 도착하면 다시 그립니다.
@@ -522,9 +608,13 @@ export function PyAddForm({
     setWhy(null)
     /* 실시간 전략만 `signal_sym` 을 보냅니다 — 1분봉 전략에 주면 서버가 409 로 거절합니다. */
     const got = await startRun(file, mode, sym, realtime ? signalSym : undefined)
-    setSending(false)
-    if (got.ok) onStarted(got.data)
-    else {
+    if (got.ok) {
+      /* 실행은 섰습니다. 예약이 거부돼도 실행은 그대로 두고 까닭만 알립니다. */
+      const made = daily ? await createSchedule(file, mode, got.data.id) : null
+      setSending(false)
+      onStarted(got.data, daily, made && !made.ok ? made.why : null)
+    } else {
+      setSending(false)
       setWhy(got.why)
       onBack()
     }
@@ -554,6 +644,12 @@ export function PyAddForm({
             <dt>{realtime ? '주문 종목(MKU)' : '종목'}</dt>
             <dd>{symConfirmText(sym, orderMarket)}</dd>
           </div>
+          {daily && (
+            <div className="run-confirm-row">
+              <dt>매일 자동 시작</dt>
+              <dd>{DAILY_TEXT}</dd>
+            </div>
+          )}
         </dl>
         <p className="run-approve">{ORDERS_CONFIRM_TEXT}</p>
         <div className="run-add-acts">
@@ -616,6 +712,11 @@ export function PyAddForm({
       ) : (
         <PySymbolPicker sym={sym} onChange={setSym} market={orderMarket} />
       )}
+      <label className="run-add-row pyrun-daily">
+        <input type="checkbox" checked={daily} onChange={(e) => setDaily(e.target.checked)} />
+        <span>매일 자동 시작</span>
+      </label>
+      {daily && <p className="run-hint">{DAILY_TEXT}</p>}
       <div className="run-add-acts">
         <button type="button" className="btn btn-quiet" aria-disabled={sending || undefined} onClick={() => !sending && onCancel()}>
           그만두기

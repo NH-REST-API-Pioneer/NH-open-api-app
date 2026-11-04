@@ -415,6 +415,48 @@ export function flattenRun(id: string): Promise<PyResult<void>> {
 
 export const downloadUrl = (id: string) => `/api/team/pyrun/runs/${id}/download`
 
+/* ── 매일 자동 시작 (`backend/team_pyrun/autostart.py`) ─────────────── */
+
+/** 예약 하나 = (전략 파일, 방식). 장이 열리는 날마다 `at`(장 시작 5분 전)에 그날의 최근월물로 새 실행을 세웁니다.
+ *  `blocked` 가 있으면 앞선 실행이 「확인 필요」·「오류」로 끝났거나 앱이 세우던 중에 꺼진 것 — 「다시 켜기」 전까지 안 세웁니다. */
+export interface PySchedule {
+  id: string
+  file: string
+  mode: 'orders' | 'paper'
+  market: 'domestic' | 'overseas'
+  at: string
+  blocked: string | null
+  last_run_id: string | null
+  last_result: string | null
+  next_start: string | null
+}
+
+export async function loadSchedules(signal?: AbortSignal): Promise<PyResult<PySchedule[]>> {
+  const got = await call<{ schedules: PySchedule[] }>('/schedules', undefined, signal)
+  return got.ok ? { ok: true, data: got.data.schedules } : got
+}
+
+/** 자동 시작 만들기. `runId` = 방금 세운 실행 — 그날은 그 실행으로 치고 다음 장 날부터 세웁니다. 거부(409)는 서버 문장 그대로. */
+export function createSchedule(file: string, mode: 'orders' | 'paper', runId?: string | null): Promise<PyResult<PySchedule>> {
+  return post<PySchedule>('/schedules', runId ? { file, mode, run_id: runId } : { file, mode })
+}
+
+export function deleteSchedule(id: string): Promise<PyResult<void>> {
+  return call<void>(`/schedules/${enc(id)}`, { method: 'DELETE' })
+}
+
+/** 막힌 자동 시작을 다시 켭니다(계좌·기록을 확인한 뒤). */
+export function resumeSchedule(id: string): Promise<PyResult<PySchedule>> {
+  return post<PySchedule>(`/schedules/${enc(id)}/resume`)
+}
+
+/** `2026-11-05T08:20:00` → `11/05 08:20`. */
+export function scheduleTimeText(iso: string | null): string {
+  if (!iso) return ''
+  const m = /^\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso)
+  return m ? `${m[1]}/${m[2]} ${m[3]}:${m[4]}` : iso
+}
+
 /* ── 화면이 쓰는 훅 ─────────────────────────────────────── */
 
 /** `POLL_MS` 마다 `tick` 을 부릅니다. 앞 요청이 끝나기 전에는 다음을 보내지 않고, 화면을
@@ -454,6 +496,37 @@ export function usePyRuns() {
   }, [])
   usePolling(tick)
   return { runs, why }
+}
+
+const SCHEDULE_POLL_MS = 10_000
+
+/** 매일 자동 시작 목록(10초마다, 그리고 `refresh()` 때). 「다음 시작」·「막힘」이 서버에서 바뀌므로 다시 묻습니다. */
+export function usePySchedules() {
+  const [items, setItems] = useState<PySchedule[] | null>(null)
+  const [why, setWhy] = useState<string | null>(null)
+  const [nonce, setNonce] = useState(0)
+  useEffect(() => {
+    const control = new AbortController()
+    let timer = 0
+    const loop = async () => {
+      const got = await loadSchedules(control.signal)
+      if (control.signal.aborted) return
+      if (got.ok) {
+        setItems(got.data)
+        setWhy(null)
+      } else setWhy(got.why)
+      timer = window.setTimeout(() => void loop(), SCHEDULE_POLL_MS)
+    }
+    void loop()
+    return () => {
+      control.abort()
+      window.clearTimeout(timer)
+    }
+  }, [nonce])
+  const refresh = useCallback(() => setNonce((n) => n + 1), [])
+  /** 화면이 단 알림(만들기·끄기·다시 켜기 거부) — 폴링이 지우지 않습니다. 다음 조작이 성공하면 비웁니다. */
+  const [note, setNote] = useState<string | null>(null)
+  return { items, why: note ?? why, refresh, setNote }
 }
 
 /** 전략 파일 목록. 처음 한 번과 「폴더 다시 읽기」 때 받고, 올리기·지우기 응답으로도 바뀝니다. */

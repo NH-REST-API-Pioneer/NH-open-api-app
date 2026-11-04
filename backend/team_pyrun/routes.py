@@ -10,9 +10,11 @@
     GET  /runs/{id}/bars                         차트용 `{"kind": "minute"|"realtime", "bars": […], "marks": […]}`
     POST /runs/{id}/stop · /flatten              204 (요청만 하고 바로 돌아온다)
     GET  /runs/{id}/download                     결과 zip(`journal` `summary` `api_log` 만 — `run.json` 은 넣지 않는다)
+    GET  /schedules · POST /schedules            매일 자동 시작 목록 / 만들기 `{file, mode, run_id?}`(거부는 409) — `autostart.py`
+    DELETE /schedules/{id} · POST /schedules/{id}/resume   지우기 204 / 막힌 예약 다시 켜기 (모르는 id 는 404)
 
 없는 실행·이상한 id 는 404. `stop`·`flatten` 은 **이 앱에서 세운 실행**에만 된다(이전 실행 폴더는 409).
-앱을 켜고 끌 때 하는 일(호출 관찰자 꽂기·남은 실행 닫기·모두 중지)도 여기서 만든 함수를 `main.py` 의 `lifespan` 이 부른다.
+앱을 켜고 끌 때 하는 일(호출 관찰자 꽂기·남은 실행 닫기 뒤 자동 시작 루프 띄우기·자동 시작 멈춘 뒤 모두 중지)도 여기서 만든 함수를 `main.py` 의 `lifespan` 이 부른다.
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ from pydantic import BaseModel, ConfigDict
 from backend.nh_api import client as nh_client
 from backend.team_hosts import LOCAL_HOSTS, public_hosts
 from backend.team_pyrun import apilog, rawfeed, strategy_files
+from backend.team_pyrun.autostart import ScheduleError, schedules
 from backend.team_pyrun.journal import Journal
 from backend.team_pyrun.live import RunSpec, StartRefused
 from backend.team_pyrun.loader import scan_all
@@ -413,6 +416,47 @@ def flatten_run(run_id: str) -> Response:
     return Response(status_code=204)
 
 
+# ---------------------------------------------------------------- 매일 자동 시작
+class ScheduleBody(BaseModel):
+    """자동 시작 만들기. `run_id` = 지금 막 세운 실행(그날은 그 실행으로 치고, 다음 날 그 끝을 본다). 모르는 칸은 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str
+    mode: str
+    run_id: str | None = None
+
+
+@router.get("/schedules")
+def list_schedules() -> dict[str, Any]:
+    return {"schedules": schedules().list()}
+
+
+@router.post("/schedules", status_code=201, dependencies=[Depends(require_json)])
+def create_schedule(body: ScheduleBody) -> dict[str, Any]:
+    try:
+        return schedules().create(body.file, body.mode, body.run_id)
+    except ScheduleError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
+
+
+@router.delete("/schedules/{schedule_id}", status_code=204)
+def delete_schedule(schedule_id: str) -> Response:
+    try:
+        schedules().delete(schedule_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"그 자동 시작을 찾지 못했습니다: {schedule_id}") from None
+    return Response(status_code=204)
+
+
+@router.post("/schedules/{schedule_id}/resume")
+def resume_schedule(schedule_id: str) -> dict[str, Any]:
+    try:
+        return schedules().resume(schedule_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"그 자동 시작을 찾지 못했습니다: {schedule_id}") from None
+
+
 # ---------------------------------------------------------------- 앱을 켜고 끌 때 (main.py lifespan 이 부른다)
 async def _recover() -> None:
     """남은 실행 폴더를 닫는다(스레드에서). 실패는 기록만 하고 앱은 계속 뜬다."""
@@ -422,6 +466,11 @@ async def _recover() -> None:
             logger.info("끝나지 않고 남은 파이썬 전략 실행을 닫았습니다: %s", ", ".join(closed))
     except Exception:
         logger.exception("파이썬 전략 실행 복구에 실패했습니다 — 앱은 그대로 뜹니다")
+    try:
+        # 남은 실행을 닫은 **뒤에** 띄운다 — 자동 시작이 앞선 실행의 끝(「재시작 · 확인 필요」 포함)을 보고 판단하게
+        await asyncio.to_thread(lambda: schedules().start_loop())
+    except Exception:
+        logger.exception("파이썬 전략 자동 시작을 띄우지 못했습니다 — 손으로 시작은 됩니다")
 
 
 def pyrun_startup() -> asyncio.Task:
@@ -436,6 +485,11 @@ async def pyrun_shutdown(recover_task: asyncio.Task | None) -> None:
     if recover_task is not None and not recover_task.done():
         recover_task.cancel()
         await asyncio.gather(recover_task, return_exceptions=True)
+    try:
+        # 자동 시작을 먼저 멈춘다 — 끄는 동안 새 실행을 세우지 않게
+        await asyncio.to_thread(lambda: schedules().stop_loop())
+    except Exception:
+        logger.exception("파이썬 전략 자동 시작을 멈추지 못했습니다")
     try:
         try:
             pending = await asyncio.to_thread(lambda: registry().stop_all())

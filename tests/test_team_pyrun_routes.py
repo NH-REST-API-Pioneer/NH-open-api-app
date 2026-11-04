@@ -945,3 +945,17 @@ def test_도는_실시간_실행의_차트도_실시간_모양(rt_reg):
 
 def test_1분봉_차트는_kind_minute(client):
     assert client.get(f"{BASE}/runs/{FINISHED}/bars").json()["kind"] == "minute"
+
+
+@pytest.mark.parametrize("extra", [{"signalSym": "A756C000"}, {"symbol": "MKUZ26"}, {"Sym": "MKUZ26"}])
+def test_시작_본문의_모르는_칸은_422_이고_실행을_세우지_않는다(rt_reg, extra):
+    """종목 칸 이름을 잘못 쓰면 조용히 최근월물로 시작하지 않는다 — 본문은 아는 칸만 받는다."""
+    r = TestClient(app).post(f"{BASE}/runs", json={"file": "strategy_rt_fake.py", "mode": "paper", **extra})
+    assert r.status_code == 422
+    assert rt_reg.list() == [] and rt_reg.feeds == [] and not rt_reg.root.exists()
+    assert rt_reg.fake.calls == [] and rt_reg.fake.dom.calls == []
+
+
+def test_화면이_보내는_본문_file_mode_sym_은_그대로_받는다(rt_reg):
+    r = TestClient(app).post(f"{BASE}/runs", json={"file": "fakemku.py", "mode": "paper", "sym": None})
+    assert r.status_code == 201 and r.json()["kind"] == "minute"

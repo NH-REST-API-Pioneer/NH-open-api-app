@@ -232,6 +232,7 @@ class Registry:
     @staticmethod
     def _realtime_end(loaded: Loaded, market: Market) -> str:
         """실시간 실행의 끝 시각(HHMMSS) — 실행과 같은 규칙(`realtime._end_at`, 전략 기본 Params 의 flatten_at + 5분)."""
+        # 폴더를 만들기 전에 거르는 미리 보기일 뿐 — 실제 Params 로 하는 확정 검사는 `RealtimeRun.prepare()` 의 끝 시각 검사다
         try:
             params = loaded.params_cls()
         except Exception:           # 기본 Params 를 못 만들면 실행 생성에서 거부된다 — 여기선 시장 끝 시각으로

@@ -28,7 +28,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from backend.nh_api import client as nh_client
 from backend.team_hosts import LOCAL_HOSTS, public_hosts
@@ -139,7 +139,10 @@ class StartBody(BaseModel):
     """시작 요청. `mode` 는 일부러 문자열로 받는다 — 이상한 값은 422 가 아니라 거부 문장(409)으로 알린다.
 
     `sym` 은 주문하는 종목, `signal_sym` 은 실시간 전략이 시세로만 보는 KRX 종목(빈칸·생략 = 국내 최근월물, 1분봉은 비움).
-    종목 글자·시장 검사는 registry 가 한다(거부는 409)."""
+    종목 글자·시장 검사는 registry 가 한다(거부는 409). 모르는 칸은 422 — 칸 이름을 잘못 쓴 종목(`symbol`·`signalSym`)이
+    조용히 버려져 최근월물로 시작하지 않게."""
+
+    model_config = ConfigDict(extra="forbid")
 
     file: str
     mode: str

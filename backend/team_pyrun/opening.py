@@ -44,10 +44,13 @@ def is_open(judge: Judge, market: str, sym: str, now: datetime) -> bool:
         return False
 
 
-def order_open(judge: Judge, market: str, sym: str, now: datetime) -> bool:
-    if not is_open(judge, market, sym, now):
-        return False
+def order_window_open(market: str, now: datetime) -> bool:
+    """주문 창 — 국내는 한국시간 09:00(`markets.DOMESTIC.session_start`) 부터, 해외는 항상."""
     return market != "domestic" or to_kst(now).strftime("%H%M%S") >= markets.DOMESTIC.session_start
+
+
+def order_open(judge: Judge, market: str, sym: str, now: datetime) -> bool:
+    return is_open(judge, market, sym, now) and order_window_open(market, now)
 
 
 def known(judge: Judge, market: str, sym: str, now: datetime) -> bool:

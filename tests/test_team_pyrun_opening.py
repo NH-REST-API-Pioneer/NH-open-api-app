@@ -59,3 +59,13 @@ def test_span_text_break_and_closed():
 
 def test_default_day_end_domestic_none():
     assert opening.default_day_end("domestic", "A75X", at(10, 0)) is None
+
+
+def test_order_window_open():
+    from datetime import timezone
+    assert not opening.order_window_open("domestic", at(8, 59, 59))
+    assert opening.order_window_open("domestic", at(9, 0))
+    assert opening.order_window_open("overseas", at(3, 0))
+    utc = datetime(2026, 11, 9, 0, 0, tzinfo=timezone.utc)    # = 09:00 KST
+    assert opening.order_window_open("domestic", utc)
+    assert not opening.order_window_open("domestic", datetime(2026, 11, 8, 23, 59, tzinfo=timezone.utc))

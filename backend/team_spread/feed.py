@@ -64,9 +64,7 @@ class Feed(Protocol):
 def order_open(feed: Feed, leg: Leg, now: datetime) -> bool:
     """그 다리로 지금 주문할 수 있나 — 장 열림(`feed.is_open`)이고, 국내 다리는 모의계좌 주문이 되는 09:00
     (`markets.DOMESTIC.session_start`) 부터. ctx 의 주문 검사·`ctx.market_open`·계좌 장부의 보내기 직전 관문·앱 정리가 이것을 쓴다."""
-    if not feed.is_open(leg, now):
-        return False
-    return leg.market != "domestic" or to_kst(now).strftime("%H%M%S") >= markets.DOMESTIC.session_start
+    return feed.is_open(leg, now) and opening.order_window_open(leg.market, now)
 
 
 def _default_sleep(seconds: float, stop: threading.Event) -> None:

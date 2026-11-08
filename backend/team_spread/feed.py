@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from backend.sessions.hours import now_kst, to_kst
-from backend.team_pyrun import markets
+from backend.team_pyrun import markets, opening
 from backend.team_pyrun.api import num
 from backend.team_pyrun.broker import error_text
 from backend.team_spread.bars import Minute, align
@@ -40,8 +40,8 @@ WAIT_RUNNING = "진행 중"
 
 #: 거래 창인 세션 상태(`backend.sessions.judge`) — 이 밖은 전부 닫힘으로 본다.
 #: 국내는 주간(`day`)만: 팀의 국내 `chart_minute` 는 주간 봉만 받아(`nght_tp "1"`) 야간에 열린 다리를 기다리면 봉이 영영 안 온다(v1).
-DOMESTIC_OPEN_STATES = frozenset({"day"})
-OVERSEAS_OPEN_STATES = frozenset({"open", "open-2", "next-day"})
+DOMESTIC_OPEN_STATES = opening.DOMESTIC_OPEN_STATES     # 팀: 판정은 team_pyrun.opening 하나 (이름은 그대로 내보냄)
+OVERSEAS_OPEN_STATES = opening.OVERSEAS_OPEN_STATES
 
 
 @dataclass(frozen=True)
@@ -74,8 +74,7 @@ def _default_sleep(seconds: float, stop: threading.Event) -> None:
 
 
 def _default_judge(market: str, sym: str, now: datetime) -> dict[str, Any]:
-    from backend.sessions.sessions_routes import judged     # 늦게 가져옴 — 시험은 가짜를 넣는다
-    return judged(market, sym, now)
+    return opening.default_judge(market, sym, now)
 
 
 def _default_adapter(leg: Leg):
@@ -116,11 +115,7 @@ class LiveFeed:
         return self._adapters[leg.name]
 
     def is_open(self, leg: Leg, now: datetime) -> bool:
-        try:
-            states = DOMESTIC_OPEN_STATES if leg.market == "domestic" else OVERSEAS_OPEN_STATES
-            return str(self._judge(leg.market, leg.sym, now).get("state")) in states
-        except Exception:       # 판정을 못 하면 닫힘 — 모르는 채로 거래하지 않는다
-            return False
+        return opening.is_open(self._judge, leg.market, leg.sym, now)
 
     def _aligned(self, legs: list[Leg], count: int) -> list[Minute]:
         return align({leg.name: self._adapter(leg).chart_minute(leg.sym, req_qty=count) for leg in legs})

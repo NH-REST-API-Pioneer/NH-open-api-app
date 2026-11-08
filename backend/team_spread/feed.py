@@ -33,7 +33,9 @@ WAIT_CLOSED = "장 쉼"
 WAIT_RUNNING = "진행 중"
 
 #: 거래 창인 세션 상태(`backend.sessions.judge`) — 이 밖은 전부 닫힘으로 본다.
-OPEN_STATES = frozenset({"day", "night", "open", "open-2", "next-day"})
+#: 국내는 주간(`day`)만: 팀의 국내 `chart_minute` 는 주간 봉만 받아(`nght_tp "1"`) 야간에 열린 다리를 기다리면 봉이 영영 안 온다(v1).
+DOMESTIC_OPEN_STATES = frozenset({"day"})
+OVERSEAS_OPEN_STATES = frozenset({"open", "open-2", "next-day"})
 
 
 @dataclass(frozen=True)
@@ -77,10 +79,16 @@ class LiveFeed:
                  sleep: Callable[[float, threading.Event], None] = _default_sleep,
                  adapter_of: Callable[[Leg], Any] = _default_adapter,
                  judge: Callable[[str, str, datetime], dict[str, Any]] = _default_judge,
-                 on_wait: Callable[[str, list[str]], None] | None = None):
+                 on_wait: Callable[[str, list[str]], None] | None = None,
+                 on_gap: Callable[[str, str, str], None] | None = None,
+                 on_error: Callable[[str], None] | None = None):
         self._now, self._sleep, self._adapter_of, self._judge = now, sleep, adapter_of, judge
         self._on_wait = on_wait or (lambda state, closed: None)
+        self._on_gap = on_gap or (lambda first, last, cause: None)
+        self._on_error = on_error or (lambda text: None)
         self._adapters: dict[str, Any] = {}
+        self._last_delivered: datetime | None = None   # 돌려준(또는 공백으로 선언한) 마지막 봉의 시작 시각
+        self._last_error = ""
 
     def now(self) -> datetime:
         return self._now()
@@ -95,7 +103,8 @@ class LiveFeed:
 
     def is_open(self, leg: Leg, now: datetime) -> bool:
         try:
-            return str(self._judge(leg.market, leg.sym, now).get("state")) in OPEN_STATES
+            states = DOMESTIC_OPEN_STATES if leg.market == "domestic" else OVERSEAS_OPEN_STATES
+            return str(self._judge(leg.market, leg.sym, now).get("state")) in states
         except Exception:       # 판정을 못 하면 닫힘 — 모르는 채로 거래하지 않는다
             return False
 
@@ -112,12 +121,19 @@ class LiveFeed:
     def _closed_legs(self, legs: list[Leg], now: datetime) -> list[str]:
         return [leg.name for leg in legs if not self.is_open(leg, now)]
 
-    def next_minute(self, legs: list[Leg], stop: threading.Event) -> Minute | None:
-        """다음에 끝나는 분의 맞춘 1분봉. `stop` 이 서면 None.
+    def _gap(self, first: datetime, last: datetime, cause: str) -> None:
+        """건너뛴 분을 눈에 보이게 알린다 — 조용히 버리는 분은 없다."""
+        self._on_gap(first.strftime("%Y%m%d %H%M%S"), last.strftime("%Y%m%d %H%M%S"), cause)
 
-        부른 시점에 이미 끝난 봉은 돌려주지 않고 그다음 분을 기다린다. 한 다리라도 장이 쉬면 `on_wait("장 쉼", 쉬는
-        다리)` 를 한 번 부르고 열릴 때까지 기다리며, 열리면 `on_wait("진행 중", [])` 를 부르고 그다음 온전한 분부터 다시 센다."""
-        last = _closed_bar_start(self._now())        # 이 봉까지는 이미 지난 것
+    def next_minute(self, legs: list[Leg], stop: threading.Event) -> Minute | None:
+        """끝난 분의 맞춘 1분봉을 **빠짐없이 순서대로** 하나씩. `stop` 이 서면 None.
+
+        처음 부르면 다음에 끝나는 분부터, 이후엔 마지막으로 돌려준 분 바로 뒤의 가장 오래된 끝난 분을 차트에서 따라잡아
+        돌려준다(부르는 쪽이 느려도, 장이 쉬었다 열려도 분을 건너뛰지 않음). 분을 넘기는 건 돌려줄 때와 공백을 밝힐 때(`on_gap`)뿐이다.
+        한 다리라도 장이 쉬면 `on_wait("장 쉼", 쉬는 다리)` 를 한 번 부르고 열릴 때까지 기다리며, 열리면 `on_wait("진행 중", [])`.
+        조회 실패는 `on_error` 로 알리고 다음 초에 다시 한다."""
+        if self._last_delivered is None:
+            self._last_delivered = _closed_bar_start(self._now())     # 이 봉까지는 이미 지난 것
         waiting = False
         while not stop.is_set():
             now = self._now()
@@ -131,20 +147,37 @@ class LiveFeed:
             if waiting:
                 waiting = False
                 self._on_wait(WAIT_RUNNING, [])
-                last = _closed_bar_start(now)
             target = _closed_bar_start(now)
-            if target <= last:
+            pending = self._last_delivered + timedelta(minutes=1)
+            if pending > target:
                 self._sleep(POLL_SECONDS, stop)
                 continue
-            key = (target.strftime("%Y%m%d"), target.strftime("%H%M%S"))
-            if (now - target).total_seconds() > 60 + GIVE_UP_SECONDS:
-                last = target          # 그 분의 봉이 끝내 안 왔다 — 건너뛰고 다음 분을 기다린다
-                continue
+            count = LIVE_BARS + int((target - self._last_delivered).total_seconds() // 60)
+            found: list[tuple[datetime, Minute]] = []
             try:
-                found = next((m for m in self._aligned(legs, LIVE_BARS) if (m.date, m.time) == key), None)
-            except Exception:           # 연결·응답 문제로 멈추지 않게 — 다음 초에 다시
-                found = None
-            if found is not None:
-                return found
+                for m in self._aligned(legs, count):
+                    at = datetime.strptime(m.date + m.time, "%Y%m%d%H%M%S").replace(tzinfo=now.tzinfo)
+                    if self._last_delivered < at <= target:
+                        found.append((at, m))
+                self._last_error = ""
+            except Exception as e:      # 연결·응답 문제로 멈추지 않게 — 알리고 다음 초에 다시
+                text = f"{type(e).__name__}: {e}"
+                if text != self._last_error:
+                    self._last_error = text
+                    self._on_error(text)
+            if found:
+                at, minute = min(found, key=lambda x: x[0])
+                if at > pending:
+                    self._gap(pending, at - timedelta(minutes=1), "차트에 봉 없음")
+                self._last_delivered = at
+                return minute
+            # 봉이 안 온다 — 80초가 지난 분까지는 공백으로 밝히고 넘긴다(끝난 지 얼마 안 된 분은 더 기다림)
+            stale = (now - timedelta(seconds=GIVE_UP_SECONDS + 60, microseconds=1)).replace(second=0, microsecond=0)
+            end = min(stale, target)
+            if end >= pending:
+                cause = "봉이 오지 않음" + (f" — 마지막 조회 오류 {self._last_error}" if self._last_error else "")
+                self._gap(pending, end, cause)
+                self._last_delivered = end
+                continue
             self._sleep(POLL_SECONDS, stop)
         return None

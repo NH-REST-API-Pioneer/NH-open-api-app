@@ -83,8 +83,8 @@ def test_한_다리에_봉이_없으면_채워서_돌려준다():
 
 def test_한_다리가_장_쉼이면_열릴_때까지_기다린다():
     clock = Clock(at(9, 0, 30))
-    ad = {"ho": FakeAdapter([row("090100", 10.0), row("090200", 11.0)]),
-          "rb": FakeAdapter([row("090100", 20.0), row("090200", 21.0)])}
+    ad = {"ho": FakeAdapter([row("090000", 10.0), row("090100", 11.0)]),
+          "rb": FakeAdapter([row("090000", 20.0), row("090100", 21.0)])}
 
     def judge(market, sym, now):
         closed = sym == "RBZ26" and now < at(9, 1, 30)
@@ -94,7 +94,7 @@ def test_한_다리가_장_쉼이면_열릴_때까지_기다린다():
     got = make(clock, ad, judge, lambda s, names: waits.append((s, list(names)))).next_minute(
         [HO, RB], threading.Event())
     assert waits == [("장 쉼", ["rb"]), ("진행 중", [])]
-    assert got.time == "090100" or got.time == "090200"
+    assert got.time == "090000"
     assert clock.t >= at(9, 1, 30)
     assert all(m.legs[n].filled is False for m in [got] for n in ("ho", "rb"))
 
@@ -142,7 +142,7 @@ def test_세션_판정이_unknown_이면_닫힘():
     for state in ("unknown", "closed", "break", "pre-open", "closing-auction"):
         feed = make(clock, {}, lambda m, s, now, st=state: {"state": st})
         assert feed.is_open(HO, clock.t) is False
-    for state in ("day", "night", "open", "open-2", "next-day"):
+    for state in ("open", "open-2", "next-day"):
         feed = make(clock, {}, lambda m, s, now, st=state: {"state": st})
         assert feed.is_open(HO, clock.t) is True
 
@@ -167,3 +167,61 @@ def test_quote_는_현재가_호가를_읽는다():
     ad = {"ho": FakeAdapter([], p)}
     q = make(Clock(at(9, 2, 0)), ad, open_judge).quote(HO)
     assert (q.last, q.bid, q.ask, q.at) == (10.5, 10.4, 10.6, at(9, 2, 0))
+
+
+def test_domestic_다리는_주간만_열림():
+    d = leg("fx", "A756B000")
+    for state, want in (("day", True), ("night", False), ("open", False), ("closed", False)):
+        feed = make(Clock(at(9, 0, 0)), {}, lambda m, s, now, st=state: {"state": st})
+        assert feed.is_open(d, at(9, 0, 0)) is want
+    feed = make(Clock(at(9, 0, 0)), {}, lambda m, s, now: {"state": "day"})
+    assert feed.is_open(HO, at(9, 0, 0)) is False       # 해외 다리는 day 가 아니다
+
+
+def _rows(n):
+    return [row(f"09{m:02d}00", 10.0 + m) for m in range(n - 1, -1, -1)]     # 최신 먼저
+
+
+def test_느린_호출자는_놓친_분을_순서대로_따라잡는다():
+    clock = Clock(at(9, 0, 30))
+    ad = {"ho": FakeAdapter(_rows(4)), "rb": FakeAdapter(_rows(4))}
+    feed = make(clock, ad, open_judge)
+    stop = threading.Event()
+    assert feed.next_minute([HO, RB], stop).time == "090000"
+    clock.t = at(9, 4, 10)                               # 3분 동안 부르지 않았다
+    got = [feed.next_minute([HO, RB], stop).time for _ in range(3)]
+    assert got == ["090100", "090200", "090300"]         # 빠짐·중복 없이 순서대로
+
+
+def test_조회_실패는_알리고_계속_시도하다가_공백으로_밝힌다():
+    clock = Clock(at(9, 0, 30))
+    errors, gaps = [], []
+    stop = threading.Event()
+
+    class Broken(FakeAdapter):
+        def chart_minute(self, sym, *, req_qty):
+            raise ConnectionError("끊김")
+
+    def sleep(seconds, st):
+        clock.t += timedelta(seconds=seconds)
+        if gaps:
+            st.set()
+
+    feed = LiveFeed(now=clock.now, sleep=sleep, adapter_of=lambda leg: Broken([]), judge=open_judge,
+                    on_gap=lambda a, b, c: gaps.append((a, b, c)), on_error=errors.append)
+    assert feed.next_minute([HO, RB], stop) is None
+    assert errors == ["ConnectionError: 끊김"]
+    assert gaps[0][0] == "20261109 090000" and "끊김" in gaps[0][2]
+
+
+def test_중간_분에_봉이_없으면_공백을_알린다():
+    clock = Clock(at(9, 0, 30))
+    gaps = []
+    rows_ = [row("090300", 13.0), row("090000", 10.0)]
+    feed = LiveFeed(now=clock.now, sleep=clock.sleep, judge=open_judge,
+                    adapter_of=lambda leg: FakeAdapter(rows_), on_gap=lambda a, b, c: gaps.append((a, b, c)))
+    stop = threading.Event()
+    assert feed.next_minute([HO, RB], stop).time == "090000"
+    clock.t = at(9, 4, 10)
+    assert feed.next_minute([HO, RB], stop).time == "090300"
+    assert gaps == [("20261109 090100", "20261109 090200", "차트에 봉 없음")]

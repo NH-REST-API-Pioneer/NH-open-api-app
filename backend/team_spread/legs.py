@@ -17,7 +17,15 @@ from datetime import date
 from typing import Any, Literal
 
 #: 국내 품목 뿌리 → 품목 세부정보의 줄 이름. 대응을 기록으로 확인한 것만 둔다(나머지는 추측하지 않고 거절).
-_DOMESTIC_DETAIL_NAMES = {"A75": "미국달러선물(USD)"}
+#: 기록 `domestic_product-detail`(2026-09-09)·마스터(2026-11-04)로 「계약 크기 × 틱 = 틱 가치」 가 맞은 것 — 설계 4.1 표.
+#: 파이썬 전략 탭(`team_pyrun.products.domestic_roots`)도 이 순서대로 화면에 내려준다.
+_DOMESTIC_DETAIL_NAMES = {
+    "A01": "코스피200선물", "A05": "미니 코스피200선물", "A06": "코스닥150선물", "A08": "KRX300선물",
+    "A04": "코스피200변동성지수선물(VKOSPI)",
+    "A65": "3년국채선물(KTB)", "A66": "5년국채선물(5KTB)", "A67": "10년국채선물(10KTB)", "A70": "30년국채선물(30KTB)",
+    "A75": "미국달러선물(USD)", "A76": "엔선물(JPY)", "A77": "유로선물(EUR)", "A78": "위안선물(CNH)",
+    "AAG": "코스닥 글로벌 지수", "AAL": "KRX반도체 섹터지수선물",
+}
 _SPEC_RE = re.compile(r"^[A-Za-z0-9]+$")
 
 
@@ -130,7 +138,12 @@ def _overseas(name: str, row: dict, details: list[dict]) -> Leg:
 def _domestic(name: str, row: dict, details: list[dict]) -> Leg:
     root = _dom_root(row)
     detail_name = _DOMESTIC_DETAIL_NAMES.get(root)
-    detail = next((d for d in details if detail_name and _s(d, "dtl_cd_ko_nm") == detail_name), None)
+    if detail_name is None:
+        if _s(row, "kospi_key") == "STKFBASE":
+            raise LegError("주식선물은 틱이 주가에 따라 바뀌어 받지 않습니다")
+        label = " ".join([root, *_s(row, "name_kor").split()[:1]])
+        raise LegError(f"이 국내 품목({label})은 틱 확인 표에 없습니다")
+    detail = next((d for d in details if _s(d, "dtl_cd_ko_nm") == detail_name), None)
     if detail is None:
         raise LegError("이 국내 품목의 틱을 찾지 못했습니다")
     tick, detail_value, size = _num(detail.get("cd_val_inf_1")), _num(detail.get("tick_val")), _num(row.get("ctrt_size"))

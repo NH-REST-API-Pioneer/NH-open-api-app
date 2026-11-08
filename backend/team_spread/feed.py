@@ -28,6 +28,8 @@ MINUTE_DELAY_SECONDS = 3    # 분이 바뀌고 이만큼 뒤에 막 끝난 봉�
 LIVE_BARS = 10              # 장중 조회 봉 개수
 GIVE_UP_SECONDS = 20        # 막 끝난 봉이 이 시간 지나도록 안 오면 그 분을 건너뜀
 POLL_SECONDS = 1.0
+#: 한 번에 요청하는 봉 수의 상한 — 팀이 이미 쓰는 가장 큰 요청(`live.WARMUP_BARS` 준비 봉)과 같다. 열린 세션 하나 안의 따라잡기엔 충분하다.
+CHART_MAX_BARS = 1500
 
 WAIT_CLOSED = "장 쉼"
 WAIT_RUNNING = "진행 중"
@@ -125,12 +127,20 @@ class LiveFeed:
         """건너뛴 분을 눈에 보이게 알린다 — 조용히 버리는 분은 없다."""
         self._on_gap(first.strftime("%Y%m%d %H%M%S"), last.strftime("%Y%m%d %H%M%S"), cause)
 
+    def _minute_open(self, legs: list[Leg], start: datetime) -> bool:
+        """그 분(시작 `start`)이 끝나는 순간에 모든 다리가 열려 있었나 — 15:44 봉은 15:45 에 닫혀도 온전한 봉이다."""
+        end = start + timedelta(seconds=59)
+        return all(self.is_open(leg, end) for leg in legs)
+
     def next_minute(self, legs: list[Leg], stop: threading.Event) -> Minute | None:
         """끝난 분의 맞춘 1분봉을 **빠짐없이 순서대로** 하나씩. `stop` 이 서면 None.
 
         처음 부르면 다음에 끝나는 분부터, 이후엔 마지막으로 돌려준 분 바로 뒤의 가장 오래된 끝난 분을 차트에서 따라잡아
-        돌려준다(부르는 쪽이 느려도, 장이 쉬었다 열려도 분을 건너뛰지 않음). 분을 넘기는 건 돌려줄 때와 공백을 밝힐 때(`on_gap`)뿐이다.
-        한 다리라도 장이 쉬면 `on_wait("장 쉼", 쉬는 다리)` 를 한 번 부르고 열릴 때까지 기다리며, 열리면 `on_wait("진행 중", [])`.
+        돌려준다(부르는 쪽이 느려도 분을 건너뛰지 않음). 분을 넘기는 건 돌려줄 때와 공백을 밝힐 때(`on_gap`)뿐이다.
+
+        장 쉼: 모든 다리가 열려 있던 분은 지금 한 다리가 닫혔어도 돌려준다(닫히는 순간의 마지막 분). 더 돌려줄 분이
+        없고 한 다리라도 닫혀 있으면 `on_wait("장 쉼", 쉬는 다리)` 를 한 번 부르고 기다린다. 열리면 `on_wait("진행 중", [])`
+        를 부르고, 쉬던 구간 전체를 `on_gap(.., "장 쉼")` 한 번으로 밝힌 뒤 열린 뒤의 첫 분부터 돌려준다(쉬기 전 봉은 다시 주지 않음).
         조회 실패는 `on_error` 로 알리고 다음 초에 다시 한다."""
         if self._last_delivered is None:
             self._last_delivered = _closed_bar_start(self._now())     # 이 봉까지는 이미 지난 것
@@ -138,21 +148,30 @@ class LiveFeed:
         while not stop.is_set():
             now = self._now()
             closed = self._closed_legs(legs, now)
-            if closed:
-                if not waiting:
-                    waiting = True
-                    self._on_wait(WAIT_CLOSED, closed)
-                self._sleep(POLL_SECONDS, stop)
-                continue
-            if waiting:
+            if waiting and not closed:
                 waiting = False
                 self._on_wait(WAIT_RUNNING, [])
             target = _closed_bar_start(now)
             pending = self._last_delivered + timedelta(minutes=1)
-            if pending > target:
+            deliverable = pending <= target and self._minute_open(legs, pending)
+            if not deliverable:
+                if closed and pending > target and self._minute_open(legs, pending):
+                    pass        # 닫히기 직전 마지막 분이 아직 확정 전 — 그 봉을 돌려준 뒤에 쉼으로 들어간다
+                elif closed:
+                    if not waiting:
+                        waiting = True
+                        self._on_wait(WAIT_CLOSED, closed)
+                elif pending <= target:
+                    # 쉬는 구간이 끝났다 — 쉬던 마지막 분을 찾아 한 번에 공백으로 밝히고 그 뒤부터 센다
+                    end = target
+                    while end > pending and self._minute_open(legs, end):
+                        end -= timedelta(minutes=1)
+                    self._gap(pending, end, "장 쉼")
+                    self._last_delivered = end
+                    continue
                 self._sleep(POLL_SECONDS, stop)
                 continue
-            count = LIVE_BARS + int((target - self._last_delivered).total_seconds() // 60)
+            count = min(CHART_MAX_BARS, LIVE_BARS + int((target - self._last_delivered).total_seconds() // 60))
             found: list[tuple[datetime, Minute]] = []
             try:
                 for m in self._aligned(legs, count):

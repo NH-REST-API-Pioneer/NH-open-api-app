@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timedelta
 
 from backend.sessions.hours import KST
-from backend.team_spread.feed import LiveFeed
+from backend.team_spread.feed import CHART_MAX_BARS, LiveFeed
 from backend.team_spread.legs import Leg
 
 
@@ -91,10 +91,13 @@ def test_한_다리가_장_쉼이면_열릴_때까지_기다린다():
         return {"state": "closed" if closed else "open"}
 
     waits = []
-    got = make(clock, ad, judge, lambda s, names: waits.append((s, list(names)))).next_minute(
-        [HO, RB], threading.Event())
+    feed = make(clock, ad, judge, lambda s, names: waits.append((s, list(names))))
+    gaps = []
+    feed._on_gap = lambda a, b, c: gaps.append((a, b, c))
+    got = feed.next_minute([HO, RB], threading.Event())
     assert waits == [("장 쉼", ["rb"]), ("진행 중", [])]
-    assert got.time == "090000"
+    assert got.time == "090100"                        # 090000 분은 rb 가 닫힌 채 끝났다 — 쉰 구간
+    assert gaps == [("20261109 090000", "20261109 090000", "장 쉼")]
     assert clock.t >= at(9, 1, 30)
     assert all(m.legs[n].filled is False for m in [got] for n in ("ho", "rb"))
 
@@ -225,3 +228,44 @@ def test_중간_분에_봉이_없으면_공백을_알린다():
     clock.t = at(9, 4, 10)
     assert feed.next_minute([HO, RB], stop).time == "090300"
     assert gaps == [("20261109 090100", "20261109 090200", "차트에 봉 없음")]
+
+
+def test_닫히기_직전_마지막_분도_돌려준다():
+    d = leg("fx", "A756B000")
+    clock = Clock(at(15, 44, 30))
+    ad = {"fx": FakeAdapter([row("154400", 10.0), row("154300", 9.0)])}
+    waits = []
+    judge = lambda m, s, now: {"state": "day" if now < at(15, 45, 0) else "closed"}     # noqa: E731
+    feed = make(clock, ad, judge, lambda s, n: waits.append((s, n)))
+    got = feed.next_minute([d], threading.Event())
+    assert got.time == "154400" and clock.t == at(15, 45, 3)       # 15:45:03 에 이미 닫혔어도 15:44 봉은 온전
+    assert waits == []
+
+
+def test_주말_뒤_열리면_쉰_구간을_한_번_밝히고_열린_뒤_첫_분부터():
+    d = leg("fx", "A756B000")
+    clock = Clock(at(15, 44, 30))                                  # 2026-11-09 월요일을 금요일처럼 쓴다
+    reopen = datetime(2026, 11, 14 + 2, 9, 0, 0, tzinfo=KST)       # 다음 월요일 09:00 (16일)
+    calls = []
+
+    class Ad(FakeAdapter):
+        def chart_minute(self, sym, *, req_qty):
+            calls.append(req_qty)
+            return [row("090100", 12.0, "20261116"), row("090000", 11.0, "20261116"),
+                    row("154400", 10.0, "20261109")]
+
+    def judge(m, s, now):
+        return {"state": "day" if (now < at(15, 45, 0) or now >= reopen) else "closed"}
+
+    waits, gaps = [], []
+    feed = LiveFeed(now=clock.now, sleep=lambda sec, st: setattr(clock, "t", clock.t + timedelta(seconds=sec * 600)),
+                    adapter_of=lambda leg: Ad([]), judge=judge,
+                    on_wait=lambda s, n: waits.append(s), on_gap=lambda a, b, c: gaps.append((a, b, c)))
+    stop = threading.Event()
+    assert feed.next_minute([d], stop).time == "154400"
+    got = feed.next_minute([d], stop)
+    assert (got.date, got.time) == ("20261116", "090000")          # 쉬기 전 봉(금요일 15:44)은 다시 주지 않는다
+    assert waits == ["장 쉼", "진행 중"]
+    assert [g[2] for g in gaps] == ["장 쉼"]
+    assert gaps[0][0] == "20261109 154500"
+    assert max(calls) <= CHART_MAX_BARS

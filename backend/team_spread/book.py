@@ -12,6 +12,8 @@
   장부와 같으면 `OrderRejected`(짝 주문이 앞 다리를 되돌릴 수 있게)
 - 계좌 주문은 시세 없이도 나간다(시장가) — 기준가는 반대 호가 → 마지막 체결가 → 직전 기준가 → 마지막 봉 종가 순.
 - 수수료는 (시장, 통화)마다 예수금 fee 누적 하나를 모든 다리가 나눠 쓰며, 자물쇠 안에서 차례로 차이를 낸다.
+  예수금(하루 누적)의 날짜는 주문 순간 `now()` 의 한국 날짜를 따르고, 날이 바뀌면 그날 누적을 다시 읽어 심는다(판정 R18 —
+  실행은 날을 넘겨 돈다. 시작 날로 묶어 두면 다음 날 체결의 fee 차이가 0·낡은 값이 된다).
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ from datetime import datetime
 from types import ModuleType
 from typing import Any
 
-from backend.sessions.hours import now_kst
+from backend.sessions.hours import now_kst, to_kst
 from backend.team_pyrun import api as default_api
 from backend.team_pyrun.broker import MockAccountBroker, error_text
 from backend.team_pyrun.journal import Journal
@@ -125,6 +127,7 @@ class AccountBook(_BookBase):
         self._sleep = sleep
         self._brokers: dict[tuple[str, str], MockAccountBroker] = {}
         self._fees: dict[tuple[str, str], float | None] = {}     # (시장, 통화) → 예수금 fee 누적 (다리들이 나눠 씀)
+        self._fee_day: dict[tuple[str, str], str] = {}           # (시장, 통화) → 그 누적을 읽은 예수금 날짜
         self._last_ref: dict[str, float] = {}                    # 다리 이름 → 마지막으로 쓴 (양의) 기준가
         self._legj: dict[tuple[str, str], _LegJournal] = {}
 
@@ -142,18 +145,25 @@ class AccountBook(_BookBase):
             kw: dict[str, Any] = {} if self._sleep is None else {"sleep": self._sleep}
             self._legj[key] = _LegJournal(self._journal, leg)
             self._brokers[key] = MockAccountBroker(
-                adapter, leg.sym, self._legj[key], today=self._today, expected=lambda n=leg.name: self._pos.get(n, 0),
+                adapter, leg.sym, self._legj[key], today=self._today or self._day(),
+                expected=lambda n=leg.name: self._pos.get(n, 0),
                 halt=lambda r, lg=leg: self.halt(f"{self._tag(lg)} {r}"),
                 may_send=lambda lg=leg: self._feed.is_open(lg, self._feed.now()), **kw)
             self._seed_fee(leg)
         return self._brokers[key]
 
+    def _day(self) -> str:
+        """예수금 날짜 — 지금(`now()`)의 한국 날짜."""
+        return to_kst(self._now()).strftime("%Y%m%d")
+
     def _seed_fee(self, leg: Leg) -> None:
-        """live.py 의 account_start 처럼 시작 fee 를 심는다 — (시장, 통화)마다 한 번. 못 읽으면 None 그대로(다음에 다시)."""
+        """live.py 의 account_start 처럼 시작 fee 를 심는다 — (시장, 통화)·예수금 날짜마다 한 번. 못 읽으면 None(다음에 다시)."""
         fk = self._fee_key(leg)
-        if self._fees.get(fk) is None:
-            snap = self._brokers[(leg.name, leg.sym)].account()
+        b = self._brokers[(leg.name, leg.sym)]
+        if self._fees.get(fk) is None or self._fee_day.get(fk) != b.today:
+            snap = b.account()
             self._fees[fk] = snap["fee"] if snap else None
+            self._fee_day[fk] = b.today
 
     @staticmethod
     def _fee_key(leg: Leg) -> tuple[str, str]:
@@ -189,11 +199,10 @@ class AccountBook(_BookBase):
             lj = self._legj[(leg.name, leg.sym)]
             lj.price_read = None
             fk = self._fee_key(leg)
-            if self._fees.get(fk) is not None:
-                b.last_fee = self._fees[fk]         # 다른 다리가 올린 fee 까지 포함한 누적에서 차이를 낸다
             side = "buy" if qty > 0 else "sell"
             clock = _clock(self._now())
             try:
+                self._fee_today(b, leg, fk)
                 px = b.fill(side, ref if ref is not None else 0.0, clock, why, qty=abs(qty))
             except Exception as e:      # 브로커 안의 뜻밖의 오류 — 주문이 나갔는지 모른다
                 self._stop(f"{self._tag(leg)} 주문 처리 중 오류 — 결과 모름 ({error_text(e)})", e)
@@ -210,6 +219,16 @@ class AccountBook(_BookBase):
                                     price_known=known, text=f"체결 {self._tag(leg)} {qty:+d} · {why}")
                 return Fill(leg.name, qty, px, b.last_fill_fee, known)
             return self._no_fill(leg, b, qty, ref, clock, why)
+
+    def _fee_today(self, b: MockAccountBroker, leg: Leg, fk: tuple[str, str]) -> None:
+        """주문 전 — 예수금 날짜를 오늘로, 날이 바뀌었으면 그날 누적을 다시 심고(판정 R18), 다른 다리가 올린 fee 까지 포함한
+        그날 누적에서 차이를 내게 브로커에 넣는다(모르면 None — 이 체결 수수료도 모름)."""
+        day = self._day()
+        if b.today != day or self._fee_day.get(fk) != day:
+            b.today = day
+            self._journal.write("event", leg=leg.name, sym=leg.sym, text=f"예수금 날짜 {day} — 수수료 누적을 그날 값으로 다시 읽음")
+            self._seed_fee(leg)
+        b.last_fee = self._fees.get(fk)
 
     def _no_fill(self, leg: Leg, b: MockAccountBroker, qty: int, ref: float | None, clock: str, why: str) -> Fill:
         """브로커가 `None` — 위 모듈 설명의 규칙으로 읽는다(`realtime._no_fill` 과 같게 `open_unknowns()` 로 가른다)."""

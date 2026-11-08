@@ -87,6 +87,11 @@ def _redact_error(text: Any) -> Any:
     return text[:ERROR_MAX]
 
 
+def redact(text: Any) -> Any:
+    """`_redact_error` 의 공개 이름 — 다른 팀 모듈(스프레드 시세 오류·공백 까닭)이 기록 전에 토큰·키 값을 가릴 때."""
+    return _redact_error(text)
+
+
 def _bar_time(row: Any) -> str:
     if not isinstance(row, dict):
         return ""

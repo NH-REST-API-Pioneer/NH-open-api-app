@@ -217,6 +217,27 @@ def test_조회_실패는_알리고_계속_시도하다가_공백으로_밝힌�
     assert gaps[0][0] == "20261109 090000" and "끊김" in gaps[0][2]
 
 
+def test_조회_오류_문구의_토큰은_가려서_알린다():
+    clock = Clock(at(9, 0, 30))
+    errors, gaps = [], []
+    stop = threading.Event()
+
+    class Leaky(FakeAdapter):
+        def chart_minute(self, sym, *, req_qty):
+            raise PermissionError("인증 실패 Bearer TOKEN123 {'access_token': 'SECRET9'}")
+
+    def sleep(seconds, st):
+        clock.t += timedelta(seconds=seconds)
+        if gaps:
+            st.set()
+
+    feed = LiveFeed(now=clock.now, sleep=sleep, adapter_of=lambda leg: Leaky([]), judge=open_judge,
+                    on_gap=lambda a, b, c: gaps.append((a, b, c)), on_error=errors.append)
+    feed.next_minute([HO, RB], stop)
+    said = " ".join(errors + [g[2] for g in gaps])
+    assert errors and gaps and "Bearer ***" in said and "TOKEN123" not in said and "SECRET9" not in said
+
+
 def test_중간_분에_봉이_없으면_공백을_알린다():
     clock = Clock(at(9, 0, 30))
     gaps = []

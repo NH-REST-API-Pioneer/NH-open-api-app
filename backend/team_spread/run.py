@@ -17,14 +17,16 @@
     「정리 대기」 — 짝을 그대로 들고 모두 열릴 때까지. 거부된 다리는 열린 다리를 마저 정리한 뒤 10초 뒤 다시,
     3번(처음 + 다시 2번, 파이썬 전략 실시간과 같음) 안 되면 멈춤. 결과를 모르면 장부가 멈춘다.
   - 종이·재생: 계좌가 없어 장이 쉬어도 기다리지 않고 지금 시세로 장부만 0 (앱 종료 때도 — 이어받을 계좌 보유가 없음).
-- 앱 종료(`shutdown=True`): 실행기를 기다리지 않고 모의 계좌 보유를 정리하지 않는다(정리 대기 중이었어도).
-  보유가 남으면 끝 까닭 「앱 종료 · 보유 남음 — 이어받기로 다시」 — 다시 켤 때 registry `recover` 가 확인 필요로 닫는다.
+- 앱 종료(`shutdown=True`): 실행기를 기다리지 않고 모의 계좌 보유를 정리하지 않는다(정리 대기 중이었어도, 정리 전 대조
+  중에 와도 첫 정리 주문 전에 멈춤). 보유가 남으면 끝 까닭 「앱 종료 · 보유 남음 — 이어받기로 다시」.
+- 끝난 run.json·summary.json 의 `holding_left`(다리 → 남은 보유)·`inheritable`(모의 계좌가 보유를 남기고 끝남 — 앱 종료·멈춤·
+  오류·정리 거부) 가 기계용 표시다(판정 R21). registry 는 이것으로 「이어받기」를 보이고, 끝 까닭 글은 사람용이다.
+  끝내기 자체가 실패해도 장부를 멈추고 요약·이 칸을 남긴다(보유를 든 채 표시 없이 「끝」이 되지 않게).
 - 끝 확인은 `reconcile(strict=True)` — 잔고를 못 읽으면 깨끗하게 끝났다고 하지 않는다.
 
-손익 — 체결(`Fill`)로 다리마다 평균가 방식: 줄이는 체결의 (체결가 − 평균가) × 수량 × `point_value`, 수수료는 따로.
-날(거래일 = 한국시간 07:00 경계, 운영자 `sessions.service` 의 갈이 시각과 같음 — 해외 밤 장 자정 뒤 체결은 그 장이 연 날)과
-실행 전체를 통화별로 `{pnl, fee, net, fills}`. 체결가를 모르는(`price_known` False) 체결이 들어간 손익은 `estimated: true`,
-수수료를 모르는 체결은 `fee_unknown` 개수. 이어받은 보유는 이어받은 평균가가 시작 값(평균가가 없으면 그 손익은 추정).
+손익은 `pnl.Ledger`(거래일 07:00 경계·통화별·체결가 모름은 추정), 다리 찾기는 `start`(registry 도 같은 함수).
+이어받기 값은 prepare 가 한 번 고른다(판정 R20): `{"from", "ended_reason", "legs": {다리: {"qty", "avg_price"}}}`.
+시세 공급의 조회 오류·공백 까닭은 기록 전에 토큰·키 값을 가린다(`apilog.redact`).
 
 기록: `run.json`(머리 칸 + 다리 + 상태), `journal.jsonl`(장부·ctx 의 `fill`·`order`·`event`·`log`·`roll` + 여기의 `leg`·`gap`),
 `api_log.jsonl`(실행기·감시·정리 스레드마다 `bind`), `summary.json`. 모두 쓰는 순간 `scrub`.
@@ -39,16 +41,15 @@ import traceback
 from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal
 
 from backend.nh_api import runtime
-from backend.overseas_futureoption.overseas_hours import PRODUCT_GROUPS
 from backend.sessions.hours import now_kst, to_kst
 from backend.team_pyrun import api as default_api
-from backend.team_pyrun.apilog import ApiLog, bind, purpose
+from backend.team_pyrun.apilog import ApiLog, bind, purpose, redact
 from backend.team_pyrun.broker import error_text
 from backend.team_pyrun.journal import Journal, write_summary
 from backend.team_pyrun.live import StartRefused, write_run_json
@@ -56,16 +57,14 @@ from backend.team_spread.book import AccountBook, PaperBook
 from backend.team_spread.ctx import DEFAULT_MAX_QTY, Ctx, Halted, OrderRejected
 from backend.team_spread.feed import WAIT_CLOSED, Feed, LiveFeed
 from backend.team_spread.legs import Leg, LegError, master_rows, next_month, resolve
+from backend.team_spread.pnl import Ledger, trading_date
 from backend.team_spread.runner_files import LoadedRunner
+from backend.team_spread.start import Sources, check_ticks, leg_specs, load_sources, resolve_legs
 
 DEFAULT_ORDERS_PER_MIN = 10
 MAX_FLATTEN_REJECTS = 3             # 정리 주문이 결과를 아는 거부로 이만큼(처음 + 다시 2번) 안 되면 멈춤
 SHUTDOWN_HOLDING = "앱 종료 · 보유 남음 — 이어받기로 다시"
-DAY_STARTS = timedelta(hours=7)     # 거래일 경계 07:00 (운영자 `sessions.service.REFRESH_AT`)
 LOGS_TAIL = 20
-#: 해외 품목 세부정보는 그룹마다 따로 묻는다(판정 R4) — 팀이 쓰는 통화(FG2)·에너지(FG6)를 먼저, 다 찾으면 멈춘다
-FIRST_GROUPS = ("FG2", "FG6")
-DETAIL_MAX_PAGES = 10
 FINISHED = ("끝", "오류")
 
 
@@ -91,173 +90,13 @@ class Timing:
     poll: float = 1.0       # 상태 살핌·정리 대기 간격
 
 
-def trading_date(at: datetime) -> str:
-    """거래일(YYYYMMDD) — 한국시간 07:00 경계."""
-    return (to_kst(at) - DAY_STARTS).strftime("%Y%m%d")
-
-
 def _iso(at: datetime) -> str:
     return to_kst(at).replace(tzinfo=None).isoformat(timespec="seconds")
-
-
-def _s(row: dict | None, key: str) -> str:
-    return str((row or {}).get(key, "")).strip()
 
 
 def _where(e: BaseException) -> list[str]:
     """예외 자리(파일:줄 함수)만 — 값·문구는 남기지 않는다."""
     return [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in traceback.extract_tb(e.__traceback__)[-6:]]
-
-
-# ---------------------------------------------------------------- 다리 찾기 (registry 도 쓴다)
-@dataclass(frozen=True)
-class Sources:
-    """다리 찾기에 쓴 마스터 줄과 품목 세부정보 — 월물 교체 때 다시 쓴다."""
-
-    overseas_rows: list[dict]
-    domestic_rows: list[dict]
-    overseas_details: list[dict]
-    domestic_details: list[dict]
-
-    def kw(self) -> dict[str, list[dict]]:
-        return {"overseas_rows": self.overseas_rows, "domestic_rows": self.domestic_rows,
-                "overseas_details": self.overseas_details, "domestic_details": self.domestic_details}
-
-
-def leg_specs(loaded: LoadedRunner, syms: dict[str, str] | None) -> dict[str, str]:
-    """다리 → 표기. `syms` 가 실행기에 없는 다리를 말하면 `StartRefused`."""
-    extra = sorted(set(syms or {}) - set(loaded.legs))
-    if extra:
-        raise StartRefused(f"실행기에 없는 다리입니다: {', '.join(extra)}")
-    return {name: (syms or {}).get(name) or spec for name, spec in loaded.legs.items()}
-
-
-def overseas_details(products: set[str], api_module: Any) -> list[dict]:
-    """해외 품목 세부정보 — 필요한 품목이 다 나올 때까지 그룹을 차례로, 그룹마다 `nxt_key` 쪽을 따라."""
-    got: list[dict] = []
-    left = set(products)
-    for group in sorted(PRODUCT_GROUPS, key=lambda g: g not in FIRST_GROUPS):
-        key, used = "", set()
-        for _ in range(DETAIL_MAX_PAGES):
-            rows, key = api_module.ovs_product_detail_page(group, key)
-            got += rows
-            left -= {_s(r, "prd_cd") for r in rows}
-            if not key or key in used:
-                break
-            used.add(key)
-        if not left:
-            break
-    return got
-
-
-def load_sources(specs: dict[str, str], *, api_module: Any, master: Callable[[], tuple[list, list]]) -> Sources:
-    """마스터(파일)와 필요한 품목 세부정보(조회). 해외 표기가 없으면 해외 세부정보를, 국내가 없으면 국내를 묻지 않는다."""
-    ovs, dom = master()
-    wanted = set(specs.values())
-    products = {_s(r, "comd") for r in ovs if _s(r, "code") in wanted or _s(r, "comd") in wanted}
-    known = {_s(r, "code") for r in ovs} | {_s(r, "comd") for r in ovs}
-    with purpose("품목 세부정보"):
-        ovs_details = overseas_details(products, api_module) if products else []
-        dom_details = api_module.product_detail() if wanted - known else []
-    return Sources(ovs, dom, ovs_details, dom_details)
-
-
-def check_ticks(legs: dict[str, Leg], details: list[dict]) -> None:
-    """해외 다리의 틱·틱 가치(마스터)를 품목 세부정보(`tick_unt`·`tick_val`)와 맞춰 본다 — 다르면 `StartRefused`.
-    국내는 `resolve` 가 세부정보 틱으로 이미 맞춰 본다."""
-    for leg in legs.values():
-        if leg.market != "overseas":
-            continue
-        row = next((d for d in details if _s(d, "prd_cd") == leg.product), None)
-        tick, value = default_api.num(_s(row, "tick_unt")), default_api.num(_s(row, "tick_val"))
-        if not tick or not value:
-            raise StartRefused(f"{leg.name}({leg.sym}) 의 틱을 품목 세부정보에서 읽지 못했습니다")
-        if not (math.isclose(tick, leg.tick, rel_tol=1e-9) and math.isclose(value, leg.tick_value, rel_tol=1e-9)):
-            raise StartRefused(f"{leg.name}({leg.sym}) 틱·틱가치가 마스터({leg.tick:g}·{leg.tick_value:g})와 "
-                               f"품목 세부정보({tick:g}·{value:g})가 다릅니다")
-
-
-def resolve_legs(specs: dict[str, str], sources: Sources, *, today: str) -> dict[str, Leg]:
-    """표기 → `Leg`, 틱 확인, 두 다리가 같은 종목이면 거부(잔고 관문이 한 계좌 보유를 나눠 볼 수 없음)."""
-    legs: dict[str, Leg] = {}
-    for name, spec in specs.items():
-        try:
-            legs[name] = resolve(name, spec, **sources.kw(), today=today)
-        except LegError as e:
-            raise StartRefused(f"다리 {name}: {e}") from e
-    check_ticks(legs, sources.overseas_details)
-    syms = [leg.sym for leg in legs.values()]
-    if len(set(syms)) != len(syms):
-        raise StartRefused(f"두 다리가 같은 종목입니다: {', '.join(syms)}")
-    return legs
-
-
-# ---------------------------------------------------------------- 손익
-def _zero() -> dict[str, Any]:
-    return {"pnl": 0.0, "fee": 0.0, "fills": 0}
-
-
-class _Ledger:
-    """체결로 센 손익(모듈 설명). 여러 스레드가 부르므로 잠근다."""
-
-    def __init__(self, inherited: dict[str, dict] | None):
-        self._lock = threading.Lock()
-        #: 다리 → [보유, 평균가 | None, 평균가가 추정인가]
-        self.pos: dict[str, list] = {}
-        for name, v in (inherited or {}).items():
-            avg = v.get("avg_price")
-            if int(v.get("qty") or 0):
-                self.pos[name] = [int(v["qty"]), None if avg is None else float(avg), avg is None]
-        self.days: dict[str, dict[str, dict]] = {}
-        self.total: dict[str, dict] = {}
-
-    def add(self, leg: Leg, qty: int, price: float | None, fee: float | None, known: bool, day: str) -> None:
-        with self._lock:
-            held, avg, est = self.pos.get(leg.name, [0, None, False])
-            unknown = not known or price is None
-            pnl, flagged, after = 0.0, False, held + qty
-            if held and (held > 0) != (qty > 0):          # 줄이는(뒤집는) 체결
-                closed = min(abs(held), abs(qty))
-                flagged = unknown or est or avg is None
-                if avg is not None and price is not None:
-                    pnl = (price - avg) * closed * (1 if held > 0 else -1) * leg.point_value
-                if after == 0:
-                    avg, est = None, False
-                elif (after > 0) != (held > 0):           # 뒤집힘 — 남은 몫은 이 체결가
-                    avg, est = price, unknown
-            else:                                          # 늘리는 체결
-                avg = None if price is None or (held and avg is None) else \
-                    ((avg or 0.0) * abs(held) + price * abs(qty)) / abs(after)
-                est = est or unknown
-            self.pos[leg.name] = [after, avg, est]
-            fee = None if fee is not None and fee < 0 else fee     # 예수금 하루 누적이 날을 넘겨 줄면 모르는 값
-            for b in (self.days.setdefault(day, {}).setdefault(leg.currency, _zero()),
-                      self.total.setdefault(leg.currency, _zero())):
-                b["pnl"] += pnl
-                b["fills"] += 1
-                if fee is None:
-                    b["fee_unknown"] = b.get("fee_unknown", 0) + 1
-                else:
-                    b["fee"] += fee
-                if flagged:
-                    b["estimated"] = True
-
-    @staticmethod
-    def _out(b: dict) -> dict:
-        out = {"pnl": round(b["pnl"], 2), "fee": round(b["fee"], 2), "net": round(b["pnl"] - b["fee"], 2),
-               "fills": b["fills"]}
-        out.update({k: b[k] for k in ("fee_unknown", "estimated") if k in b})
-        return out
-
-    def snapshot(self) -> tuple[dict, dict]:
-        with self._lock:
-            days = {d: {c: self._out(b) for c, b in cur.items()} for d, cur in sorted(self.days.items())}
-            return days, {c: self._out(b) for c, b in self.total.items()}
-
-    def avg(self, name: str) -> float | None:
-        with self._lock:
-            got = self.pos.get(name)
-            return None if not got or not got[0] or got[1] is None else round(got[1], 10)
 
 
 # ---------------------------------------------------------------- 대리 (ctx 가 보는 장부·시세, 기록)
@@ -366,8 +205,12 @@ class SpreadRun:
         self._api, self._master, self._active_env, self._roll_guard = api_module, master, active_env, roll_guard
         self.kind = "spread"
         self.orders = spec.mode == "orders"
-        #: 이어받은 시작 보유 {다리: {qty, avg_price}} — registry(Task 8)가 확인 순간 다시 읽은 잔고로 채운다
-        self.inherited = copy.deepcopy(inherited) if inherited else None
+        #: 이어받기(판정 R20) — registry(Task 8)가 확인 순간 다시 읽은 잔고로 채워 넘긴 값. prepare 가 한 번 고른 뒤
+        #: `{"from": 앞선 실행 id, "ended_reason": 글, "legs": {다리: {"qty": int, "avg_price": float | None}}}` 만 남는다
+        #: (ctx.inherited·run.json·summary 가 같은 꼴). 고르기 전엔 None
+        self._inherited_raw = copy.deepcopy(inherited) if inherited else None
+        self.inherited: dict | None = None
+        self.inherited_from: str | None = spec.inherit_from
         self.handed_to: str | None = None      # 이 실행을 이어받은 새 실행 id (registry 가 씀)
         self.folder.mkdir(parents=True, exist_ok=True)
         self.j = _RunJournal(self.folder / "journal.jsonl")
@@ -383,7 +226,7 @@ class SpreadRun:
         self._flattened = False                 # 앱이 정리 주문(종이 정리)을 냈다
         self.max_qty: dict[str, int] = {}
         self.orders_per_min = DEFAULT_ORDERS_PER_MIN
-        self.ledger = _Ledger(None)            # 이어받은 보유는 prepare 가 값을 검사한 뒤 심는다
+        self.ledger = Ledger(None)            # 이어받은 보유는 prepare 가 값을 검사한 뒤 심는다
         self.state = "준비"
         self.started_at: str | None = None
         self.ended_at: str | None = None
@@ -424,12 +267,12 @@ class SpreadRun:
             raise StartRefused(f"모르는 방식입니다: {spec.mode!r}")
         if self.orders and self._active_env() != "paper":
             raise StartRefused("모의투자 환경에서만 모의 계좌 실행을 세울 수 있습니다")
-        if (spec.inherit_from or self.inherited) and not self.orders:
+        if (spec.inherit_from or self._inherited_raw) and not self.orders:
             raise StartRefused("이어받기는 모의 계좌 실행만 됩니다")
         specs = leg_specs(loaded, spec.syms)
         self._limits(specs)
-        start = self._start_positions(specs)
-        self.ledger = _Ledger(self.inherited)
+        start = self._inherit(specs)
+        self.ledger = Ledger(self.inherited["legs"] if self.inherited else None)
         where = "리플레이 · 서버 접속 없음" if spec.mode == "replay" else "서버 paper"
         j.write("event", text=f"{where} · 주문 {'모의계좌' if self.orders else '종이'} · 스프레드")
         j.write("event", text=f"실행기 {loaded.file} · sha256 {loaded.sha256[:12]} · 다리 {specs} · "
@@ -449,7 +292,7 @@ class SpreadRun:
                     raise StartRefused(f"시작 잔고를 확인하지 못했습니다 — {e}") from e
             for name, leg in self.legs.items():
                 want, got = start.get(name, 0), held[name]
-                if got != want and spec.inherit_from:
+                if got != want and self.inherited:
                     raise StartRefused(f"이어받을 잔고가 바뀌었습니다 — {name}({leg.sym}) 기대 {want:+d} · 계좌 {got:+d}. "
                                        "다시 확인하세요")
                 if got != want:
@@ -458,7 +301,7 @@ class SpreadRun:
         else:
             book = PaperBook(self.feed, j, positions=start)
         if self.inherited:
-            j.write("event", text=f"이어받음 ← {spec.inherit_from}", inherited=self.inherited)
+            j.write("event", text=f"이어받음 ← {self.inherited_from}", inherited=self.inherited)
         self.book = book
         self._rec = _Recorder(book, self._record)
         self.ctx = Ctx(self.legs, self.feed, self._rec, j, max_qty=self.max_qty, orders_per_min=self.orders_per_min,
@@ -479,18 +322,31 @@ class SpreadRun:
             raise StartRefused(f"분당 주문 수는 양의 정수여야 합니다: {per!r}")
         self.orders_per_min = per
 
-    def _start_positions(self, specs: dict[str, str]) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for name, v in (self.inherited or {}).items():
+    def _inherit(self, specs: dict[str, str]) -> dict[str, int]:
+        """이어받기 값을 한 번 고르고(판정 R20 꼴, 다른 칸은 버림) 시작 보유(0 아닌 다리)를 돌려준다. 이어받기가 아니면 {}."""
+        raw, frm = self._inherited_raw, self.spec.inherit_from
+        if raw is None and frm is None:
+            return {}
+        if not isinstance(raw, dict):
+            raise StartRefused("이어받을 보유가 없습니다 — 앞선 실행의 잔고를 다시 확인하세요")
+        frm = frm or raw.get("from")
+        if not frm or raw.get("from") not in (None, frm):
+            raise StartRefused(f"이어받을 실행이 맞지 않습니다: {raw.get('from')!r} ≠ {frm!r}")
+        legs = raw.get("legs")
+        if not isinstance(legs, dict) or not legs:
+            raise StartRefused(f"이어받을 다리가 없습니다: {legs!r}")
+        out: dict[str, dict] = {}
+        for name, v in legs.items():
             qty = v.get("qty") if isinstance(v, dict) else None
             avg = v.get("avg_price") if isinstance(v, dict) else None
             bad_avg = avg is not None and (isinstance(avg, bool) or not isinstance(avg, (int, float))
                                            or not math.isfinite(avg) or avg <= 0)
             if name not in specs or isinstance(qty, bool) or not isinstance(qty, int) or bad_avg:
                 raise StartRefused(f"이어받을 보유가 맞지 않습니다: {name} {v!r}")
-            if qty:
-                out[name] = qty
-        return out
+            out[name] = {"qty": qty, "avg_price": None if avg is None else float(avg)}
+        self.inherited = {"from": frm, "ended_reason": str(raw.get("ended_reason") or ""), "legs": out}
+        self.inherited_from = frm
+        return {n: v["qty"] for n, v in out.items() if v["qty"]}
 
     def _refuse(self, msg: str) -> None:
         self.j.write("event", text=f"시작 거부 · {msg}")
@@ -531,7 +387,7 @@ class SpreadRun:
     def _wait_runner(self) -> str:
         """실행기가 돌려주거나 중지가 올 때까지. 중지면 실행기를 `stop_wait` 기다린다(앱 종료면 안 기다림). 끝 까닭을 돌려준다."""
         while not self._runner_done.wait(self.timing.poll):
-            self._set_state(self.state)         # 장부가 멈췄으면 「확인 필요」로
+            self._refresh_state()               # 장부가 멈췄으면 「확인 필요」로
             if self._stop_requested:
                 break
         if not self._runner_done.is_set() and not self._shutdown:
@@ -565,7 +421,7 @@ class SpreadRun:
                     continue
                 if bad:
                     self.j.write("event", text=f"확인 필요 — 계좌 잔고가 장부와 달라 주문을 멈춤 ({bad})")
-                    self._set_state(self.state)
+                    self._refresh_state()
 
     # ------------------------------------------------------------ 끝
     def finish(self, reason: str) -> None:
@@ -578,9 +434,18 @@ class SpreadRun:
                 try:
                     if self._prepared:
                         reason = self._wrap_up(reason)
-                except Exception as e:      # 끝내기가 실패해도 상태는 끝으로
-                    self.j.write("event", text="끝내기 처리 실패", error=error_text(e))
-                    reason = f"{reason} · 끝내기 처리 실패 ({error_text(e)})"
+                except Exception as e:      # 끝내기가 실패해도 — 멈춤 표시·요약·남은 보유를 남기고 끝으로 (판정 R22d)
+                    why = f"끝내기 처리 실패 ({error_text(e)})"
+                    self.j.write("event", text=why, where=_where(e))
+                    self._stop.set()
+                    if self.book is not None:
+                        self.book.halt(why)
+                    halted = self.book.halted if self.book is not None else why
+                    reason = f"{reason} · 정리 안 함 — 확인 필요: {halted}" + ("" if halted == why else f" · {why}")
+                    try:
+                        self._write_summary(reason)
+                    except Exception as e2:
+                        self.j.write("event", text="요약 쓰기 실패", error=error_text(e2))
                 finally:
                     self._finished = True
                     self._watch_stop.set()
@@ -659,6 +524,8 @@ class SpreadRun:
             if due:
                 if book.reconcile(strict=True) is not None:       # 정리 주문 전 — 이미 청산됐는데 또 내지 않게
                     break
+                if self._shutdown:      # 대조하는 동안 앱 종료 — 첫 정리 주문 전에 멈춘다(다리 사이에선 멈추지 않음: 반쪽 짝)
+                    return
                 for name in due:
                     leg = self.legs[name]
                     try:
@@ -698,11 +565,12 @@ class SpreadRun:
                        "sha256": self.loaded.sha256},
             "legs": [{**asdict(leg), **self._leg_now(leg)} for leg in self.legs.values()],
             "days": days, "total": total, "ended_reason": reason,
-            "inherited_from": self.spec.inherit_from, "inherited": self.inherited, "handed_to": self.handed_to,
+            "inherited_from": self.inherited_from, "inherited": self.inherited, "handed_to": self.handed_to,
             "max_qty": self.max_qty, "orders_per_min": self.orders_per_min, "api": self.apilog.stats(),
         }
         if self.book is not None and self.book.halted is not None:
             data["halted"] = self.book.halted
+        data.update(self._end_marks())
         write_summary(self.folder, data)
 
     # ------------------------------------------------------------ 요청·알림 (다른 스레드에서)
@@ -724,10 +592,10 @@ class SpreadRun:
             self._set_state("장 쉼" if state == WAIT_CLOSED else "진행 중")
 
     def _on_gap(self, first: str, last: str, cause: str) -> None:
-        self.j.write("gap", first=first, last=last, cause=cause)
+        self.j.write("gap", first=first, last=last, cause=redact(cause))       # 까닭에 조회 오류 글이 실린다
 
     def _on_feed_error(self, text: str) -> None:
-        self.j.write("event", text=f"시세 조회 실패 · {text}")
+        self.j.write("event", text=f"시세 조회 실패 · {redact(text)}")        # 인증 오류 글엔 토큰이 실릴 수 있다
 
     def _record(self, leg: Leg, qty: int, price: float | None, fee: float | None, known: bool) -> None:
         self.ledger.add(leg, qty, price, fee, known, trading_date(self.now()))
@@ -745,8 +613,13 @@ class SpreadRun:
             raise OrderRejected(f"월물 교체 안 됨 — {e}") from e
         if any(leg.sym == new.sym for n, leg in self.legs.items() if n != name):
             raise OrderRejected(f"월물 교체 안 됨 — {new.sym} 은 다른 다리의 종목")
-        if self._roll_guard is not None:
-            self._roll_guard(new.sym)       # 다른 모의 계좌 실행이 그 종목을 주문 중이면 거부 (registry)
+        if self._roll_guard is not None:    # 다른 모의 계좌 실행이 그 종목을 주문 중이면 거부 (registry)
+            try:
+                self._roll_guard(new.sym)
+            except OrderRejected:
+                raise
+            except Exception as e:      # registry 의 StartRefused 등 — 실행기에겐 늘 OrderRejected
+                raise OrderRejected(f"월물 교체 안 됨 — {new.sym}: {e}") from e
         if self.orders:
             with self.book.lock, purpose("월물 교체"):
                 self.book.set_leg(new)
@@ -807,9 +680,14 @@ class SpreadRun:
                       **self._leg_now(leg)} for leg in self.legs.values()],
             "pnl_today": days.get(trading_date(self.now()), {}), "pnl_total": total,
             "waiting_for": list(self._waiting),
-            "inherited_from": self.spec.inherit_from, "handed_to": self.handed_to,
+            "inherited_from": self.inherited_from, "handed_to": self.handed_to,
             "logs_tail": list(self.j.logs),
         }
+
+    def _refresh_state(self) -> None:
+        """지금 상태를 다시 본다(장부 멈춤 → 「확인 필요」). 상태 읽기도 자물쇠 안에서 — 다른 스레드의 「장 쉼」을 덮지 않게."""
+        with self._state_lock:
+            self._set_state(self.state)
 
     def _set_state(self, state: str) -> None:
         """끝난 실행은 그대로, 장부가 멈췄으면 「확인 필요」."""
@@ -828,9 +706,18 @@ class SpreadRun:
                 **self._head(), "sha256": self.loaded.sha256, "kind": self.kind,
                 "legs": [asdict(leg) for leg in self.legs.values()],
                 "max_qty": self.max_qty, "orders_per_min": self.orders_per_min,
-                "inherited_from": self.spec.inherit_from, "inherited": self.inherited, "handed_to": self.handed_to,
+                "inherited_from": self.inherited_from, "inherited": self.inherited, "handed_to": self.handed_to,
                 "waiting_for": list(self._waiting),
             }
             if self.book is not None and self.book.halted is not None:
                 data["halted"] = self.book.halted
+            if self._finished:
+                data.update(self._end_marks())
             write_run_json(self.folder, data)
+
+    def _end_marks(self) -> dict[str, Any]:
+        """끝난 실행의 기계용 칸(판정 R21) — registry(Task 8)는 끝 까닭 글이 아니라 이것을 본다.
+        `holding_left` = 끝날 때 장부에 남은 보유, `inheritable` = 모의 계좌 실행이 보유를 남기고 끝남
+        (앱 종료·멈춤·오류·정리 거부 — 「이어받기」로 다시 세울 수 있다)."""
+        left = self._held()
+        return {"holding_left": left, "inheritable": self.orders and bool(left)}

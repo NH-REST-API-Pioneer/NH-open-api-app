@@ -21,6 +21,7 @@ from typing import Any, Protocol
 from backend.sessions.hours import now_kst
 from backend.team_pyrun import markets
 from backend.team_pyrun.api import num
+from backend.team_pyrun.broker import error_text
 from backend.team_spread.bars import Minute, align
 from backend.team_spread.legs import Leg
 
@@ -181,7 +182,7 @@ class LiveFeed:
                         found.append((at, m))
                 self._last_error = ""
             except Exception as e:      # 연결·응답 문제로 멈추지 않게 — 알리고 다음 초에 다시
-                text = f"{type(e).__name__}: {e}"
+                text = error_text(e)    # 팀: 인증 오류 문구엔 토큰이 실릴 수 있다 — 가리고(300자) 알린다(공백 까닭에도 이 글)
                 if text != self._last_error:
                     self._last_error = text
                     self._on_error(text)

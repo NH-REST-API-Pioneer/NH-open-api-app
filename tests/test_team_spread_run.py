@@ -6,7 +6,7 @@
 import json
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,14 +15,9 @@ from backend.nh_api.errors import BusinessError
 from backend.team_pyrun.live import StartRefused
 from backend.team_spread.ctx import Halted, OrderRejected
 from backend.team_spread.feed import WAIT_CLOSED, WAIT_RUNNING, Quote
-from backend.team_spread.run import (
-    MAX_FLATTEN_REJECTS,
-    SHUTDOWN_HOLDING,
-    SpreadRun,
-    SpreadSpec,
-    Timing,
-    trading_date,
-)
+from backend.team_spread.pnl import TRADING_DAY_STARTS, trading_date
+from backend.team_spread.run import MAX_FLATTEN_REJECTS, SHUTDOWN_HOLDING, SpreadRun, SpreadSpec, Timing
+from backend.team_spread.start import Sources, leg_specs, load_sources, resolve_legs
 from backend.team_spread.runner_files import LoadedRunner
 from tests.test_team_pyrun_markets import FakeOvsApi
 
@@ -69,7 +64,8 @@ class FakeFeed:
 
 
 class Api(FakeOvsApi):
-    """여러 종목의 가짜 해외 api — 종목마다 잔고(`pos`), 종목마다 남은 거부 수(`reject`), 체결가 칸 비우기(`blank_price`)."""
+    """여러 종목의 가짜 해외 api — 종목마다 잔고(`pos`), 종목마다 남은 거부 수(`reject`), 체결가 칸 비우기(`blank_price`),
+    날마다 쌓이는 예수금 수수료(`day` = 체결이 쌓이는 날, 예수금은 물은 `biz_dt` 의 누적), 잔고 조회 때 한 번 부르는 `hook`."""
 
     def __init__(self):
         super().__init__()
@@ -79,9 +75,19 @@ class Api(FakeOvsApi):
         self.blank_price = False
         self.order_times: list[float] = []
         self.groups = {"FG2": [DETAIL["MKU"]], "FG6": [DETAIL["HO"], DETAIL["RB"]]}
+        self.day = "20261109"
+        self.fee_by_day: dict[str, float] = {}
+        self.hook = None
+
+    def ovs_deposit(self, cur_cd="USD", *, biz_dt=""):
+        self.calls.append(("ovs_deposit", cur_cd, biz_dt))
+        return {"fee": f"{self.fee_by_day.get(biz_dt, 0.0):018.2f}", "cls_pl_amt": "0", "ord_psb_amt": "50000"}
 
     def ovs_open_interest_page(self, nxt_key=""):
         self.calls.append(("ovs_open_interest_page", nxt_key))
+        hook, self.hook = self.hook, None
+        if hook is not None:
+            hook()
         return [{"sym": s, "trd_tp": "1" if q > 0 else "2", "opint_qty": str(abs(q))}
                 for s, q in self.pos.items() if q], ""
 
@@ -94,6 +100,7 @@ class Api(FakeOvsApi):
         no = f"{len(self.orders):010d}"
         self.pos[sym] = self.pos.get(sym, 0) + (qty if side == "buy" else -qty)
         self.fee += 2.0
+        self.fee_by_day[self.day] = self.fee_by_day.get(self.day, 0.0) + 2.0
         px = "0" if self.blank_price else f"{float(self.last) + (0.0001 if side == 'buy' else -0.0001):.4f}"
         self.history.insert(0, {"ord_no": no, "sym": sym, "ord_sts": "6", "trd_tp": "1" if side == "buy" else "2",
                                 "exec_qty": str(qty), "exec_pric": px, "ord_avg_pric": px,
@@ -109,7 +116,8 @@ class Api(FakeOvsApi):
         return [dict(r) for r in ROWS["domestic_details"]]
 
 
-def build(tmp_path, run_fn, *, mode="orders", legs=None, api=None, timing=FAST, clock=None, box=None, **spec_kw):
+def build(tmp_path, run_fn, *, mode="orders", legs=None, api=None, timing=FAST, clock=None, box=None, roll_guard=None,
+          **spec_kw):
     api = api if api is not None else Api()
     clock = clock or Clock(NOW)
     box = box if box is not None else {}
@@ -125,7 +133,7 @@ def build(tmp_path, run_fn, *, mode="orders", legs=None, api=None, timing=FAST, 
     run = SpreadRun(f"20261109_S_{mode}", tmp_path / "run", loaded, spec, api_module=api, now=clock,
                     sleep=lambda s: None, feed_factory=factory,
                     master=lambda: (ROWS["overseas_rows"], ROWS["domestic_rows"]),
-                    active_env=lambda: "paper", inherited=inherited, timing=timing)
+                    active_env=lambda: "paper", inherited=inherited, roll_guard=roll_guard, timing=timing)
     return run, box["feed"], api
 
 
@@ -176,6 +184,7 @@ def test_기다림과_다시_시도는_약속_값():
 
 
 def test_거래일은_한국시간_07시_경계():
+    assert TRADING_DAY_STARTS == timedelta(hours=7)
     assert trading_date(datetime(2026, 11, 10, 2, 0)) == "20261109"     # 밤 장 자정 뒤
     assert trading_date(datetime(2026, 11, 10, 7, 0)) == "20261110"
     assert trading_date(datetime(2026, 11, 9, 23, 59)) == "20261109"
@@ -189,6 +198,7 @@ def test_실행기가_돌려주면_끝_보유는_앱이_정리(tmp_path):
     assert api.orders == PAIR_ORDERS + FLATTEN_ORDERS and api.pos == FLAT
     head = saved(run)
     assert head["state"] == "끝" and head["kind"] == "spread"
+    assert head["holding_left"] == {} and head["inheritable"] is False
     assert [(x["name"], x["sym"]) for x in head["legs"]] == [("ho", "HOZ26"), ("rb", "RBZ26")]
     summary = saved(run, "summary.json")
     assert summary["ended_reason"] == run.ended_reason and summary["total"]["USD"]["fills"] == 4
@@ -333,6 +343,8 @@ def test_RF5_앱_종료는_정리하지_않고_실행기도_기다리지_않는�
         assert run.state == "끝" and run.ended_reason == SHUTDOWN_HOLDING
         assert api.orders == PAIR_ORDERS and api.pos == {"HOZ26": 1, "RBZ26": -1}
         assert saved(run, "summary.json")["ended_reason"] == SHUTDOWN_HOLDING
+        head = saved(run)
+        assert head["holding_left"] == {"ho": 1, "rb": -1} and head["inheritable"] is True
     finally:
         release.set()
 
@@ -411,6 +423,7 @@ def test_보유_중_주기_대조가_다르면_멈춤_그리고_정리하지_않
     assert "잔고 불일치" in run.book.halted and "rb(RBZ26)" in run.book.halted
     assert api.orders == PAIR_ORDERS
     assert "정리 안 함 — 확인 필요" in run.ended_reason and saved(run)["halted"] == run.book.halted
+    assert saved(run)["holding_left"] == {"ho": 1, "rb": -1} and saved(run)["inheritable"] is True
 
 
 def test_멈추면_상태는_확인_필요(tmp_path):
@@ -505,6 +518,7 @@ def test_다리를_못_찾으면_시작_거부_run_json_남김(tmp_path):
         run.prepare()
     head = saved(run)
     assert head["state"] == "끝" and head["ended_reason"].startswith("시작 거부: ") and api.orders == []
+    assert head["holding_left"] == {} and head["inheritable"] is False
 
 
 def test_틱이_품목_세부정보와_다르면_시작_거부(tmp_path):
@@ -540,30 +554,46 @@ def test_해외_품목_세부정보는_필요한_그룹만_묻는다(tmp_path):
     assert asked[:2] == ["FG2", "FG6"] and "product_detail" not in [c[0] for c in api.calls]
 
 
-# ---------------------------------------------------------------- 이어받기
+# ---------------------------------------------------------------- 이어받기 (R20 꼴)
+INHERITED = {"from": "20261106_S_orders", "ended_reason": SHUTDOWN_HOLDING,
+             "legs": {"ho": {"qty": 1, "avg_price": 4.3}, "rb": {"qty": -1, "avg_price": 4.5}}}
+
+
 def test_이어받기는_그_잔고로_시작하고_이어받은_평균가로_손익(tmp_path):
     api = Api()
     api.pos.update({"HOZ26": 1, "RBZ26": -1})
-    inherited = {"ho": {"qty": 1, "avg_price": 4.3}, "rb": {"qty": -1, "avg_price": 4.5}}
+    given = {**INHERITED, "extra": 1, "legs": {"ho": {**INHERITED["legs"]["ho"], "note": "x"}, "rb": INHERITED["legs"]["rb"]}}
     box = {}
 
     def run_fn(ctx):
         box["inh"], box["pos"] = ctx.inherited, (ctx.position("ho"), ctx.position("rb"))
-    run, feed, api = build(tmp_path, run_fn, api=api, inherited=inherited, inherit_from="20261106_S_orders")
+    run, feed, api = build(tmp_path, run_fn, api=api, inherited=given, inherit_from="20261106_S_orders")
     start(run).join(5)
-    assert box == {"inh": inherited, "pos": (1, -1)}
+    assert box == {"inh": INHERITED, "pos": (1, -1)}          # 다른 칸은 버리고 한 꼴로
     assert api.orders == FLATTEN_ORDERS and api.pos == FLAT
     s = saved(run, "summary.json")
-    assert s["inherited_from"] == "20261106_S_orders" and s["inherited"] == inherited
+    assert s["inherited_from"] == "20261106_S_orders" and s["inherited"] == INHERITED
     assert s["total"]["USD"]["pnl"] == pytest.approx((4.3999 - 4.3) * 42000 + (4.5 - 4.4001) * 42000)
-    assert saved(run)["inherited_from"] == "20261106_S_orders" and run.status()["inherited_from"] == "20261106_S_orders"
+    assert saved(run)["inherited"] == INHERITED and saved(run)["inherited_from"] == "20261106_S_orders"
+    assert run.status()["inherited_from"] == "20261106_S_orders"
+
+
+def test_이어받기의_from_은_spec_에서_채우고_다르면_거부(tmp_path):
+    api = Api()
+    api.pos.update({"HOZ26": 1, "RBZ26": -1})
+    given = {k: v for k, v in INHERITED.items() if k != "from"}
+    run, feed, api = build(tmp_path, lambda ctx: None, api=api, inherited=given, inherit_from="20261106_S_orders")
+    run.prepare()
+    assert run.ctx.inherited["from"] == "20261106_S_orders"
+    run2, _, _ = build(tmp_path / "b", lambda ctx: None, api=api, inherited=INHERITED, inherit_from="다른_실행")
+    with pytest.raises(StartRefused, match="이어받을 실행"):
+        run2.prepare()
 
 
 def test_이어받을_잔고가_바뀌었으면_시작_거부(tmp_path):
     api = Api()
     api.pos.update({"HOZ26": 1})
-    inherited = {"ho": {"qty": 1, "avg_price": 4.3}, "rb": {"qty": -1, "avg_price": 4.5}}
-    run, feed, api = build(tmp_path, lambda ctx: None, api=api, inherited=inherited, inherit_from="x")
+    run, feed, api = build(tmp_path, lambda ctx: None, api=api, inherited=INHERITED, inherit_from="20261106_S_orders")
     with pytest.raises(StartRefused, match="이어받을 잔고가 바뀌었습니다"):
         run.prepare()
     assert api.orders == []
@@ -572,8 +602,8 @@ def test_이어받을_잔고가_바뀌었으면_시작_거부(tmp_path):
 def test_이어받을_평균가가_수가_아니면_시작_거부(tmp_path):
     api = Api()
     api.pos.update({"HOZ26": 1})
-    run, feed, api = build(tmp_path, lambda ctx: None, api=api, inherited={"ho": {"qty": 1, "avg_price": "4.3"}},
-                           inherit_from="x")
+    bad = {**INHERITED, "legs": {"ho": {"qty": 1, "avg_price": "4.3"}}}
+    run, feed, api = build(tmp_path, lambda ctx: None, api=api, inherited=bad, inherit_from="20261106_S_orders")
     with pytest.raises(StartRefused, match="이어받을 보유가 맞지 않습니다"):
         run.prepare()
 
@@ -639,3 +669,92 @@ def test_log_값은_logs_tail_에(tmp_path):
     start(run).join(5)
     tail = run.status()["logs_tail"]
     assert [(r["name"], r["value"]) for r in tail] == [("z", 2.5)]
+
+
+# ---------------------------------------------------------------- 고침 1회차
+def test_시세_오류와_공백_까닭은_토큰을_가려_기록(tmp_path):
+    run, feed, api = build(tmp_path, lambda ctx: None, mode="paper")
+    feed.on_error("PermissionError: Bearer TOKEN123 access_token=SECRET9")
+    feed.on_gap("20261109 101500", "20261109 101600", "봉이 오지 않음 — 마지막 조회 오류 {'app_secret': 'SECRET9'} Bearer TOKEN123")
+    text = (run.folder / "journal.jsonl").read_text("utf-8")
+    assert "TOKEN123" not in text and "SECRET9" not in text and "Bearer ***" in text
+
+
+def test_R15_종이는_앱_종료에도_장부를_0_으로(tmp_path):
+    entered = threading.Event()
+    run, feed, api = build(tmp_path, pair_and_wait(entered), mode="paper")
+    t = start(run)
+    assert entered.wait(5)
+    run.request_stop(shutdown=True)
+    t.join(5)
+    assert run.state == "끝" and run.ended_reason == "앱 종료 · 보유 정리" and api.orders == []
+    assert all(x["position"] == 0 for x in run.status()["legs"])
+    head = saved(run)
+    assert head["holding_left"] == {} and head["inheritable"] is False
+
+
+def test_R18_날을_넘긴_체결의_수수료는_그날_예수금으로(tmp_path):
+    api, clock = Api(), Clock(NOW)
+
+    def run_fn(ctx):
+        ctx.target({"ho": 1, "rb": -1})
+        clock.t, api.day = datetime(2026, 11, 10, 10, 0), "20261110"     # 다음 날 — 정리 체결은 이날 예수금에 쌓인다
+    run, feed, api = build(tmp_path, run_fn, api=api, clock=clock)
+    start(run).join(5)
+    days = saved(run, "summary.json")["days"]
+    assert days["20261109"]["USD"]["fee"] == pytest.approx(4.0) and days["20261110"]["USD"]["fee"] == pytest.approx(4.0)
+    assert "fee_unknown" not in days["20261110"]["USD"]
+    assert ("ovs_deposit", "USD", "20261110") in api.calls
+
+
+def test_R22a_정리_전_대조_중_앱_종료가_오면_첫_정리_주문도_안_냄(tmp_path):
+    api, box = Api(), {}
+
+    def run_fn(ctx):
+        ctx.target({"ho": 1, "rb": -1})
+        api.hook = lambda: box["run"].request_stop(shutdown=True)       # 다음 잔고 조회 = 정리 전 대조
+    run, feed, api = build(tmp_path, run_fn, api=api)
+    box["run"] = run
+    start(run).join(5)
+    assert api.orders == PAIR_ORDERS and run.ended_reason == SHUTDOWN_HOLDING
+    assert saved(run)["inheritable"] is True
+
+
+def test_R22c_roll_guard_의_거부는_실행기에_OrderRejected(tmp_path):
+    box = {}
+
+    def guard(sym):
+        raise StartRefused(f"같은 종목 {sym} 의 모의 계좌 실행이 이미 있습니다")
+
+    def run_fn(ctx):
+        try:
+            ctx.roll("ho")
+        except OrderRejected as e:
+            box["err"] = str(e)
+    run, feed, api = build(tmp_path, run_fn, roll_guard=guard)
+    start(run).join(5)
+    assert "HOF27" in box["err"] and run.state == "끝" and run.order_syms() == {"HOZ26", "RBZ26"}
+
+
+def test_R22d_끝내기가_실패해도_멈춤_표시_요약_남은_보유를_남긴다(tmp_path):
+    run, feed, api = build(tmp_path, lambda ctx: ctx.target({"ho": 1, "rb": -1}))
+
+    def boom():
+        raise RuntimeError("뜻밖")
+    run._flatten_orders = boom
+    start(run).join(5)
+    assert run.state == "끝" and "끝내기 처리 실패" in run.ended_reason and "확인 필요" in run.ended_reason
+    assert "끝내기 처리 실패" in run.book.halted
+    head, s = saved(run), saved(run, "summary.json")
+    assert head["holding_left"] == {"ho": 1, "rb": -1} and head["inheritable"] is True and head["halted"]
+    assert s["halted"] == run.book.halted and s["holding_left"] == {"ho": 1, "rb": -1}
+
+
+def test_다리_찾기_함수는_실행_밖에서도_쓴다(tmp_path):
+    loaded = LoadedRunner("s.py", "S", "스프레드", "ab" * 32, {"ho": "HO", "rb": "RB"}, None, lambda ctx: None)
+    specs = leg_specs(loaded, {"ho": "HOF27"})
+    src = load_sources(specs, api_module=Api(), master=lambda: (ROWS["overseas_rows"], ROWS["domestic_rows"]))
+    legs = resolve_legs(specs, src, today="20261109")
+    assert isinstance(src, Sources) and {n: x.sym for n, x in legs.items()} == {"ho": "HOF27", "rb": "RBZ26"}
+    with pytest.raises(StartRefused, match="실행기에 없는 다리"):
+        leg_specs(loaded, {"zz": "HO"})

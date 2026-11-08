@@ -54,6 +54,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -112,7 +113,12 @@ class Registry:
     def __init__(self, root: Path, strategies: Path, *, now: Callable[[], datetime] = now_kst,
                  active_env: Callable[[], str | None] = runtime.active_environment, start_thread: bool = True,
                  api_module: ModuleType | Any = default_api, sleep: Callable[[float], None] = time.sleep,
-                 feed_factory: Callable[..., Any] = default_feed_factory):
+                 feed_factory: Callable[..., Any] = default_feed_factory,
+                 other_busy: Callable[[str], str | None] | None = None, cross_lock: Any = None):
+        # 팀: 스프레드 탭과 「같은 종목 모의 계좌 실행은 하나」를 통틀어 지키는 갈고리 — 없으면 동작은 그대로.
+        #   other_busy(sym) = 다른 쪽이 그 종목을 주문 중이면 거부 글, 아니면 None (다른 쪽 잠금은 잡지 않는다)
+        #   cross_lock = 두 쪽이 검사+등록을 한 줄로 서게 하는 공용 잠금 (자기 잠금 → 공용 잠금 순서)
+        self._other_busy, self._cross = other_busy, cross_lock or contextlib.nullcontext()
         self.root, self.strategies = Path(root), Path(strategies)
         self._now, self._active_env, self._start_thread = now, active_env, start_thread
         self._api, self._sleep = api_module, sleep
@@ -185,9 +191,11 @@ class Registry:
         if sym is None:     # 종목을 모르면 같은 종목 검사·손절 이어받기를 할 수 없다 — 열어 두고 가지 않는다
             raise StartRefused("최근월물을 알 수 없습니다 — 잠시 뒤 다시 시작하세요")
         today = now.strftime("%Y%m%d")
-        with self._lock:
+        with self._lock, self._cross:
             if self._closing:                           # 준비 조회 중에 앱을 끄기 시작했다 — 등록하지 않는다
                 raise StartRefused(self.CLOSING)
+            if spec.mode == "orders" and self._other_busy is not None and (msg := self._other_busy(sym)):  # 팀:
+                raise StartRefused(msg)
             if spec.mode == "orders" and sym is not None:
                 for other in self._runs.values():
                     # 키 = 주문하는 종목 (실행기 종류와 무관 — 실시간 실행도 같은 이름 `order_sym` 을 가진다)
@@ -322,6 +330,14 @@ class Registry:
             raise KeyError(run_id)
         return run
 
+    def busy_sym(self, sym: str) -> str | None:
+        """그 종목을 주문 중인 모의 계좌 실행의 id(없으면 None) — 스프레드 탭이 묻는다. 잠그지 않는다(스냅샷만 읽음)."""
+        for other in list(self._runs.values()):
+            if (other.spec.mode == "orders" and other.state in BUSY_STATES
+                    and getattr(other, "order_sym", other.sym) == sym):
+                return other.run_id
+        return None
+
     def _alive(self, run_id: str) -> bool:
         thread = self._threads.get(run_id)
         return thread is not None and thread.is_alive()
@@ -442,5 +458,26 @@ def registry() -> Registry:
     global _registry
     with _registry_lock:
         if _registry is None:
-            _registry = Registry(storage.state_dir() / "pyruns", strategies_dir())
+            _registry = Registry(storage.state_dir() / "pyruns", strategies_dir(),
+                                 other_busy=_spread_busy, cross_lock=CROSS_LOCK)
         return _registry
+
+
+#: 파이썬 전략·스프레드 두 레지스트리가 「같은 종목 하나」 검사와 등록을 한 줄로 서게 하는 공용 잠금
+CROSS_LOCK = threading.RLock()
+
+
+def peek_registry() -> Registry | None:
+    """이미 만들어졌으면 그것(만들지 않음) — 스프레드 쪽이 묻는 데 쓴다."""
+    return _registry
+
+
+def _spread_busy(sym: str) -> str | None:
+    """스프레드 탭이 그 종목을 주문 중이면 거부 글. 늦게 불러오고(순환 import 피함) 스프레드 레지스트리를 새로 만들지 않는다."""
+    from backend.team_spread import registry as spread
+
+    other = spread.peek_registry()
+    run_id = other.busy_sym(sym) if other is not None else None
+    if run_id is None:
+        return None
+    return f"같은 종목 {sym} 의 스프레드 모의 계좌 실행이 이미 있습니다 ({run_id}) — 끝낸 뒤에 시작하세요"

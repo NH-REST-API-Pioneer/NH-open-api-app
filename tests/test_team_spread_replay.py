@@ -4,6 +4,7 @@
 """
 import csv
 import json
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -213,3 +214,89 @@ def test_legs_from_master_needs_currency_and_only_overseas():
         rp.parse_legs(["h=h.csv"], {"h": "HO"}, from_master=True, master=master)
     with pytest.raises(rp.ReplayError, match="직접"):
         rp.parse_legs(["d=d.csv:KRW"], {"d": "A75"}, from_master=True, master=master)
+
+
+# ---------------------------------------------------------------- 수정 1차: 세션 경계 체결가
+def _two_day(tmp: Path) -> dict[str, Path]:
+    """첫날 09:00~09:09 / 다음날 09:00~ — 첫날 마지막 분 종가 100.0, 다음날 시가 110.0."""
+    def rows(base):
+        out = []
+        for day in (0, 1):
+            for i in range(10):
+                t = T0 + timedelta(days=day, minutes=i)
+                c = 100.0 if day == 0 else 110.0
+                out.append((t, c, c))
+        return out
+    paths = {}
+    for name, base in (("A", 100.0), ("B", 50.0)):
+        p = tmp / f"{name.lower()}2.csv"
+        with p.open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["ref_dt", "exch_tm", "open_pric", "high_pric", "low_pric", "close_pric", "cum_trd_qty"])
+            for t, o, c in rows(base):
+                k = 1 if name == "A" else 0.5
+                w.writerow([t.strftime("%Y%m%d"), t.strftime("%H%M%S"), o * k, o * k, o * k, c * k, 1])
+        paths[name] = p
+    return paths
+
+
+ONCE = '''\
+LEGS = {"A": "A75", "B": "MKU"}
+
+
+def run(ctx):
+    n = 0
+    while ctx.running():
+        m = ctx.next_minute(["A", "B"])
+        if m is None:
+            break
+        n += 1
+        if m.time == "090900" and m.date == "20261109":       # 첫날 마지막 분에 짝
+            ctx.target({"A": 1, "B": -1})
+'''
+
+
+def test_fill_on_last_bar_of_a_day_does_not_take_next_morning_open(tmp_path):
+    (tmp_path / "o.py").write_text(ONCE, encoding="utf-8")
+    ld = load_runner(tmp_path, "o.py")
+    out = tmp_path / "out"
+    rp.replay(ld, _two_day(tmp_path), LEGS, out)
+    f = fills(out)
+    # 다음 분(= 다음날 09:00) 시가 110 이 아니라 그 분 종가 100 ± 1틱
+    assert f[0]["leg"] == "A" and f[0]["price"] == pytest.approx(100.0 + 0.1)
+    assert f[1]["leg"] == "B" and f[1]["price"] == pytest.approx(50.0 - 0.0001)
+
+
+def test_fill_does_not_use_carried_price_of_a_closed_leg(tmp_path):
+    from backend.team_spread.bars import LegBar, Minute
+    real = LegBar(10.0, 10.0, 10.0, 10.0, 1, False)
+    carried = LegBar(99.0, 99.0, 99.0, 99.0, 0, True)
+    ms = [Minute("20261109", "090000", {"A": real, "B": real}), Minute("20261109", "090100", {"A": real, "B": carried})]
+    feed = rp.ReplayFeed(ms)
+    feed.next_minute([A, B], threading.Event())
+    assert feed.fill_price(B, 1) == pytest.approx(10.0 + 0.0001)      # 99 가 아니라 지금 종가
+    assert feed.fill_price(A, 1) == pytest.approx(10.0 + 0.1)
+
+
+# ---------------------------------------------------------------- 수정 1차: 나쁜 csv
+@pytest.mark.parametrize("content,match", [
+    ("ref_dt,exch_tm,open_pric,high_pric,low_pric,close_pric\n20261109,090000,1,1,1,abc\n", r"b\.csv.*2.*close_pric"),
+    ("ref_dt,exch_tm,open_pric,high_pric,low_pric,close_pric\n20261109,,1,1,1,1\n", r"b\.csv.*2.*exch_tm"),
+    ("ref_dt,exch_tm,open_pric,high_pric,low_pric,close_pric\n20261109,090000,1,1,1,nan\n", r"b\.csv.*2"),
+])
+def test_bad_csv_rows_become_replay_error(tmp_path, loaded, content, match):
+    csvs = make_csvs(tmp_path)
+    csvs["B"] = tmp_path / "b.csv"
+    csvs["B"].write_text(content, encoding="utf-8")
+    with pytest.raises(rp.ReplayError, match=match):
+        rp.replay(loaded, csvs, LEGS, tmp_path / "o")
+
+
+def test_non_utf8_csv_and_cli_give_message_not_traceback(tmp_path, state, capsys):
+    (tmp_path / "r.py").write_text(RUNNER, encoding="utf-8")
+    csvs = make_csvs(tmp_path)
+    bad = tmp_path / "bad.csv"
+    bad.write_bytes(b"ref_dt,exch_tm\n\xff\xfe\x00\n")
+    argv = [str(tmp_path / "r.py"), f"A={csvs['A']}:0.1:1000:KRW", f"B={bad}:0.0001:2.5:USD"]
+    assert rp.main(argv) == 2
+    assert "bad.csv" in capsys.readouterr().err

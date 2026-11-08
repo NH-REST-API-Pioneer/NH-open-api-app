@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import sys
 import threading
 from collections.abc import Callable
@@ -55,12 +56,33 @@ class _NoApi:
 
 def read_rows(path: Path) -> list[dict]:
     """csv 의 차트 칸 줄(파이썬 전략 재생과 같은 칸). 칸이 모자라면 `ReplayError`."""
-    with Path(path).open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        missing = [c for c in CSV_COLUMNS if c not in (reader.fieldnames or [])]
-        if missing:
-            raise ReplayError(f"{path} 에 칸이 없습니다: {', '.join(missing)}")
-        return list(reader)
+    path = Path(path)
+    try:
+        with path.open(encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            missing = [c for c in CSV_COLUMNS if c not in (reader.fieldnames or [])]
+            if missing:
+                raise ReplayError(f"{path} 에 칸이 없습니다: {', '.join(missing)}")
+            rows = list(reader)
+    except (UnicodeDecodeError, csv.Error) as e:
+        raise ReplayError(f"{path} 를 읽지 못했습니다 — UTF-8 csv 가 아닙니다 ({e})") from e
+    for n, row in enumerate(rows, start=2):        # 머리줄이 1번째 줄
+        for col in ("ref_dt", "exch_tm"):
+            val = (row.get(col) or "").strip()
+            if not (val.isdigit() and len(val) == (8 if col == "ref_dt" else 6)):
+                raise ReplayError(f"{path} {n}번째 줄 {col} 이(가) 맞지 않습니다: {row.get(col)!r}")
+        for col in CSV_COLUMNS[2:]:
+            try:
+                v = float(row[col])
+            except (TypeError, ValueError, KeyError):
+                raise ReplayError(f"{path} {n}번째 줄 {col} 이(가) 수가 아닙니다: {row.get(col)!r}") from None
+            if not math.isfinite(v):
+                raise ReplayError(f"{path} {n}번째 줄 {col} 이(가) 수가 아닙니다: {row.get(col)!r}")
+        try:
+            datetime.strptime(row["ref_dt"].strip() + row["exch_tm"].strip(), "%Y%m%d%H%M%S")
+        except ValueError:
+            raise ReplayError(f"{path} {n}번째 줄 시각이 맞지 않습니다: {row['ref_dt']} {row['exch_tm']}") from None
+    return rows
 
 
 def _at(m: Minute) -> datetime:
@@ -132,7 +154,14 @@ class ReplayFeed:
     def fill_price(self, leg: Leg, qty: int) -> float:
         """주문 체결가 — 다음 분 시가 ± 슬리피지(마지막 분 뒤엔 마지막 종가 ± 슬리피지)."""
         nxt = self._i + 1
-        base = self._m[nxt].legs[leg.name].open if 0 <= nxt < len(self._m) else self._cur().legs[leg.name].close
+        cur = self._cur()
+        base = cur.legs[leg.name].close
+        if 0 <= nxt < len(self._m):
+            nm = self._m[nxt]
+            # 다음 분이 바로 이어진 같은 날의 진짜 봉일 때만 그 시가 — 장 쉼·날 바뀜·채운 봉이면 지금 종가(밤새 틈은 손익에 넣지 않는다)
+            contiguous = nm.date == cur.date and _at(nm) - _at(cur) <= timedelta(minutes=1)
+            if contiguous and not nm.legs[leg.name].filled:
+                base = nm.legs[leg.name].open
         slip = market_of_leg(leg).paper_slip_ticks * leg.tick
         return base + slip if qty > 0 else base - slip
 

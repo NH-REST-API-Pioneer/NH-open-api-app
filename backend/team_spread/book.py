@@ -7,9 +7,11 @@
 `AccountBook` 은 다리마다 `MockAccountBroker` 를 하나씩 둔다(그 다리 시장 어댑터·거래소 코드·종목). 브로커가 `None` 을 돌려주면
 `live.py`·`realtime.py` 와 같은 규칙으로 읽는다(`broker.py` 모듈 설명).
 - 보내기 직전 휴장(`held_back`) → 안 보냄이 확실 → `OrderRejected`
-- 결과 모름(`unknown`·`open_unknowns`) → 그 다리 잔고를 본다. `explains(잔고)` 면 잔고를 따라 `Fill`(가격은 기준가), 아니면 멈춤 + `Halted`
-- 안 보냈는데 알려진 거절도 아님(잔고 관문에 걸림 등) → 잔고가 기대와 다르거나 못 읽은 것 → 멈춤 + `Halted`
-- 보냈고 서버가 거부·취소를 확인함 → `OrderRejected`
+- 결과 모름(`open_unknowns()` 가 있음) → 그 다리 잔고를 본다. `explains(잔고)` 면 잔고를 따라 `Fill`(가격은 기준가), 아니면 멈춤 + `Halted`
+- 그 밖(서버 거부·취소, 잔고 관문에 걸려 안 보냄 등) → 그 다리 잔고를 다시 읽는다. 읽지 못하거나 장부와 다르면 멈춤 + `Halted`,
+  장부와 같으면 `OrderRejected`(짝 주문이 앞 다리를 되돌릴 수 있게)
+- 계좌 주문은 시세 없이도 나간다(시장가) — 기준가는 반대 호가 → 마지막 체결가 → 직전 기준가 → 마지막 봉 종가 순.
+- 수수료는 (시장, 통화)마다 예수금 fee 누적 하나를 모든 다리가 나눠 쓰며, 자물쇠 안에서 차례로 차이를 낸다.
 """
 from __future__ import annotations
 
@@ -73,6 +75,9 @@ class _BookBase:
         slip = market_of_leg(leg).paper_slip_ticks * leg.tick
         return float(q.last) + (slip if buy else -slip), False
 
+    def _tag(self, leg: Leg) -> str:
+        return f"{leg.name}({leg.sym})"
+
     def _check(self, qty: int) -> None:
         if self._halted is not None:
             raise Halted(self._halted)
@@ -105,6 +110,8 @@ class AccountBook(_BookBase):
         self._api, self._today, self._now = api_module, today, now
         self._sleep = sleep
         self._brokers: dict[tuple[str, str], MockAccountBroker] = {}
+        self._fees: dict[tuple[str, str], float | None] = {}     # (시장, 통화) → 예수금 fee 누적 (다리들이 나눠 씀)
+        self._last_ref: dict[str, float] = {}                    # 다리 이름 → 마지막으로 쓴 기준가
 
     def set_leg(self, leg: Leg) -> None:
         """월물 교체 등으로 다리가 바뀜 — 이후 주문·대조는 새 종목으로."""
@@ -120,56 +127,94 @@ class AccountBook(_BookBase):
             kw: dict[str, Any] = {} if self._sleep is None else {"sleep": self._sleep}
             self._brokers[key] = MockAccountBroker(
                 adapter, leg.sym, self._journal, today=self._today, expected=lambda n=leg.name: self._pos.get(n, 0),
-                halt=self.halt, **kw)
+                halt=lambda r, lg=leg: self.halt(f"{self._tag(lg)} {r}"),
+                may_send=lambda lg=leg: self._feed.is_open(lg, self._feed.now()), **kw)
+            self._seed_fee(leg)
         return self._brokers[key]
+
+    def _seed_fee(self, leg: Leg) -> None:
+        """live.py 의 account_start 처럼 시작 fee 를 심는다 — (시장, 통화)마다 한 번. 못 읽으면 None 그대로(다음에 다시)."""
+        fk = self._fee_key(leg)
+        if self._fees.get(fk) is None:
+            snap = self._brokers[(leg.name, leg.sym)].account()
+            self._fees[fk] = snap["fee"] if snap else None
+
+    @staticmethod
+    def _fee_key(leg: Leg) -> tuple[str, str]:
+        return (leg.market, leg.currency)
+
+    def _ref_price(self, leg: Leg, qty: int) -> float:
+        """계좌 주문의 기준가 — 시세를 못 받아도 거절하지 않는다(시장가라 값이 필요 없고, 되돌리기가 막히면 한 다리만 남는다)."""
+        try:
+            px, _ = self._opposite(leg, qty)
+        except Exception:
+            px = self._last_ref.get(leg.name)
+            if px is None:
+                try:
+                    bars = self._feed.history([leg], 1)
+                    px = float(bars[-1].legs[leg.name].close) if bars else None
+                except Exception:
+                    px = None
+            if px is None:
+                px = 0.0
+                self._journal.write("event", leg=leg.name, sym=leg.sym, text="기준가를 알 수 없어 0 으로 보냄 — 시장가라 체결가는 주문내역에서")
+        self._last_ref[leg.name] = px
+        return px
 
     # ── 주문 ────────────────────────────────────────────────
     def order(self, leg: Leg, qty: int, why: str) -> Fill:
         with self.lock:
             self._check(qty)
-            ref, _ = self._opposite(leg, qty)
+            ref = self._ref_price(leg, qty)
             b = self._broker(leg)
+            fk = self._fee_key(leg)
+            if self._fees.get(fk) is not None:
+                b.last_fee = self._fees[fk]         # 다른 다리가 올린 fee 까지 포함한 누적에서 차이를 낸다
             side = "buy" if qty > 0 else "sell"
             clock = _clock(self._now())
             try:
                 px = b.fill(side, ref, clock, why, qty=abs(qty))
             except Exception as e:      # 브로커 안의 뜻밖의 오류 — 주문이 나갔는지 모른다
-                self.halt(f"{leg.name} 주문 처리 중 오류 — 결과 모름 ({error_text(e)})")
-                raise Halted(self._halted) from e
+                self._stop(f"{self._tag(leg)} 주문 처리 중 오류 — 결과 모름 ({error_text(e)})", e)
+            if b.last_fee is not None:
+                self._fees[fk] = b.last_fee
             if px is not None:
-                fee = b.last_fill_fee
                 self._pos[leg.name] = self.position(leg) + qty
-                return Fill(leg.name, qty, px, fee)
+                self._journal.write("event", clock=clock, leg=leg.name, sym=leg.sym, qty=qty, price=px, fee=b.last_fill_fee,
+                                    text=f"체결 {self._tag(leg)} {qty:+d} · {why}")
+                return Fill(leg.name, qty, px, b.last_fill_fee)
             return self._no_fill(leg, b, qty, ref, clock, why)
 
     def _no_fill(self, leg: Leg, b: MockAccountBroker, qty: int, ref: float, clock: str, why: str) -> Fill:
-        """브로커가 `None` — 위 모듈 설명의 규칙으로 읽는다."""
+        """브로커가 `None` — 위 모듈 설명의 규칙으로 읽는다(`realtime._no_fill` 과 같게 `open_unknowns()` 로 가른다)."""
+        tag = self._tag(leg)
         if self._halted is not None:        # 브로커가 스스로 멈춤(일부 체결 가능 등)
             raise Halted(self._halted)
         if b.held_back:
-            raise OrderRejected(f"{leg.name} 주문 보류 — 보내기 직전 휴장 시작 (보내지 않음)")
-        unknown = b.unknown or b.open_unknowns() is not None
-        if not unknown:
-            if b.sent:
-                b.needs_check = False
-                raise OrderRejected(f"{leg.name} 주문 거부됨 · {why}")
-            self._stop(f"{leg.name} 주문 전 잔고 관문에 걸림 — 잔고가 기대와 다르거나 읽지 못함")
+            raise OrderRejected(f"{tag} 주문 보류 — 보내기 직전 장이 닫힘 (보내지 않음)")
         held = b.position()
         pre = self.position(leg)
+        if b.open_unknowns() is None:
+            b.unknown = b.needs_check = False
+            if held is None:
+                self._stop(f"{tag} 주문 뒤 잔고를 읽지 못함")
+            if held != pre:
+                self._stop(f"{tag} 잔고 불일치 · 기대 {pre:+d} · 계좌 {held:+d}")
+            raise OrderRejected(f"{tag} 주문 안 됨 · {why}")
         if held is None:
-            self._stop(f"{leg.name} 결과를 모르는 주문 뒤 잔고를 읽지 못함")
+            self._stop(f"{tag} 결과를 모르는 주문 뒤 잔고를 읽지 못함")
         moved = held - pre
         if not b.explains(held) or moved == 0 or (moved > 0) != (qty > 0) or abs(moved) > abs(qty):
-            self._stop(f"{leg.name} 결과를 모르는 주문 — 잔고 {held:+d} (기대 {pre:+d}) 가 그 주문으로 설명되지 않음")
+            self._stop(f"{tag} 결과를 모르는 주문 — 잔고 {held:+d} (기대 {pre:+d}) 가 그 주문으로 설명되지 않음")
         b.unknown = b.needs_check = False
         self._pos[leg.name] = held
-        self._journal.write("event", clock=clock, leg=leg.name, qty=moved, price=ref,
-                            text=f"결과를 모르던 주문이 잔고({held:+d})에 반영됨 — 잔고를 따름, 체결가는 기준가 {ref}")
+        self._journal.write("fill", clock=clock, leg=leg.name, sym=leg.sym, qty=moved, price=ref, fee=b.last_fill_fee,
+                            source="balance", text=f"결과를 모르던 주문이 잔고({held:+d})에 반영됨 — {tag} 잔고를 따름, 체결가는 기준가 {ref}")
         return Fill(leg.name, moved, ref, b.last_fill_fee)
 
-    def _stop(self, reason: str) -> None:
+    def _stop(self, reason: str, cause: BaseException | None = None) -> None:
         self.halt(reason)
-        raise Halted(self._halted)
+        raise Halted(self._halted) from cause
 
     # ── 잔고 ────────────────────────────────────────────────
     def balances(self) -> dict[str, int]:
@@ -183,19 +228,26 @@ class AccountBook(_BookBase):
                 got[name] = held
             return got
 
-    def reconcile(self) -> str | None:
-        """계좌 잔고와 장부 보유를 대조 — 다르면 멈추고 까닭을 돌려준다. 같거나 못 읽으면 None(못 읽음은 기록만)."""
+    def reconcile(self, *, strict: bool = False) -> str | None:
+        """계좌 잔고와 장부 보유를 대조 — 다르면 멈추고 까닭을 돌려준다. 같으면 None.
+
+        못 읽은 다리가 있으면: 주기 대조(기본)는 기록만 하고 넘어가고, `strict=True`(끝 확인)는 「확인 못 함」으로 멈춘다 —
+        끝 확인이 잔고를 못 읽고도 깨끗하게 끝났다고 하지 않게."""
         with self.lock:
             if self._halted is not None:
                 return self._halted
             for name, leg in self._legs.items():
                 held = self._broker(leg).position()
                 if held is None:
-                    self._journal.write("event", text=f"{name} 잔고 대조 못 함 — 읽지 못함")
+                    if strict:
+                        reason = f"잔고 확인 못 함 · {self._tag(leg)} 계좌 잔고를 읽지 못함"
+                        self.halt(reason)
+                        return reason
+                    self._journal.write("event", text=f"{self._tag(leg)} 잔고 대조 못 함 — 읽지 못함")
                     continue
                 exp = self.position(leg)
                 if held != exp:
-                    reason = f"잔고 불일치 · {name} 기대 {exp:+d} · 계좌 {held:+d}"
+                    reason = f"잔고 불일치 · {self._tag(leg)} 기대 {exp:+d} · 계좌 {held:+d}"
                     self.halt(reason)
                     return reason
             return None

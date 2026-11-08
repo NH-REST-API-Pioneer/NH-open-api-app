@@ -29,6 +29,12 @@ class Feed:
     def now(self):
         return NOW
 
+    def is_open(self, leg, now):
+        return leg.name not in getattr(self, "closed", ())
+
+    def history(self, legs, count):
+        return []
+
 
 class ApiFor:
     """다리 종목마다 가짜 api 하나 — `adapter_for` 가 받은 api 모듈 자리에 꽂는다."""
@@ -58,6 +64,9 @@ def account(tmp_path, fakes=None, feed=None, positions=None):
     for name, leg in legs.items():
         b = book._broker(leg)
         b.api.api = fakes[name]
+    book._fees.clear()
+    for leg in legs.values():
+        book._seed_fee(leg)      # 가짜 api 를 꽂은 뒤 시작 fee 를 심는다
     return book, legs, fakes
 
 
@@ -98,7 +107,7 @@ def test_종이_멈춤이면_Halted(tmp_path):
 def test_계좌_체결은_다리별_종목으로_한_번_주문하고_보유를_갱신(tmp_path):
     book, legs, fakes = account(tmp_path)
     f = book.order(legs["a"], 2, "진입")
-    assert (f.leg, f.qty) == ("a", 2) and f.fee is None      # 첫 체결은 이전 fee 를 몰라 수수료 모름
+    assert (f.leg, f.qty) == ("a", 2) and f.fee == 2.0      # 시작 fee 를 심어 두어 첫 체결도 수수료를 안다
     assert fakes["a"].orders == [("MKUX26", "buy", 2)] and fakes["b"].orders == []
     assert book.position(legs["a"]) == 2
     f = book.order(legs["a"], -2, "청산")
@@ -107,6 +116,7 @@ def test_계좌_체결은_다리별_종목으로_한_번_주문하고_보유를_
 
 def test_계좌_알려진_거부는_OrderRejected_멈춤_아님(tmp_path):
     book, legs, fakes = account(tmp_path)
+    fakes["a"].fill = False
     fakes["a"].order_error = BusinessError("overseas_order", "E1", "거부", {})
     with pytest.raises(OrderRejected):
         book.order(legs["a"], 1, "진입")
@@ -225,3 +235,92 @@ def test_계좌_주문과_reconcile은_자물쇠로_차례(tmp_path):
     t1.join(5)
     t2.join(5)
     assert got["r"] is None and book.position(legs["a"]) == 1    # 주문이 반영된 뒤 대조 → 일치
+
+
+# ---------------------------------------------------------------- 리뷰 1회 수정
+def test_수정1_잔고_관문_거절은_다시_읽어_같으면_OrderRejected_멈춤_아님(tmp_path):
+    book, legs, fakes = account(tmp_path)
+    reads = {"n": 0}
+    real = fakes["a"].ovs_open_interest_page
+
+    def flaky(nxt_key=""):
+        reads["n"] += 1
+        if reads["n"] == 1:
+            raise TransportError("overseas_open_interest", "일시 실패")     # 관문의 첫 읽기만 실패
+        return real(nxt_key)
+    fakes["a"].ovs_open_interest_page = flaky
+    with pytest.raises(OrderRejected):
+        book.order(legs["a"], 1, "진입")
+    assert book.halted is None and fakes["a"].orders == []
+
+
+def test_수정1_알려진_거부_뒤_잔고가_움직였으면_멈춤(tmp_path):
+    book, legs, fakes = account(tmp_path)
+    fakes["a"].fill = False
+
+    def reject_but_moved(sym, side, qty=1):
+        fakes["a"].orders.append((sym, side, qty))
+        fakes["a"].held = 4
+        raise BusinessError("overseas_order", "E1", "거부", {})
+    fakes["a"].ovs_market_order = reject_but_moved
+    with pytest.raises(Halted):
+        book.order(legs["a"], 1, "진입")
+    assert book.halted and "a(MKUX26)" in book.halted
+
+
+def test_수정2_보내기_직전_장이_닫혔으면_OrderRejected_아무것도_안_보냄(tmp_path):
+    feed = Feed()
+    feed.closed = ("a",)
+    book, legs, fakes = account(tmp_path, feed=feed)
+    with pytest.raises(OrderRejected):
+        book.order(legs["a"], 1, "진입")
+    assert fakes["a"].orders == [] and book.halted is None
+
+
+def test_수정3_reconcile_못_읽음은_주기_대조는_넘어가고_끝_확인은_멈춤(tmp_path):
+    book, legs, fakes = account(tmp_path)
+    fakes["b"].oi_pages = []        # 읽기가 터진다
+    assert book.reconcile() is None and book.halted is None
+    reason = book.reconcile(strict=True)
+    assert reason and "확인 못 함" in reason and book.halted == reason
+
+
+def test_수정4_같은_통화_두_다리의_수수료는_누적을_나눠_차이를_낸다(tmp_path):
+    total = {"fee": 10.0}       # 같은 통화 예수금은 한 계좌 — 보유는 다리마다지만 fee 누적은 하나
+
+    class SharedFee(FakeOvsApi):
+        fee = property(lambda self: total["fee"], lambda self, v: total.__setitem__("fee", v))
+    book, legs, _ = account(tmp_path, fakes={"a": SharedFee(), "b": SharedFee()})
+    fa = book.order(legs["a"], 1, "a")      # 시작 fee 를 심어 두었으니 첫 체결도 수수료를 안다
+    fb = book.order(legs["b"], -1, "b")
+    fa2 = book.order(legs["a"], -1, "a")
+    assert (fa.fee, fb.fee, fa2.fee) == (2.0, 2.0, 2.0)
+
+
+def test_수정5_시세를_못_받아도_계좌_주문은_나간다(tmp_path):
+    class NoQuote(Feed):
+        def quote(self, leg):
+            raise RuntimeError("시세 끊김")
+    book, legs, fakes = account(tmp_path, feed=NoQuote())
+    f = book.order(legs["a"], 1, "진입")
+    assert f.qty == 1 and len(fakes["a"].orders) == 1
+
+
+def test_수정6_멈춤_까닭에_다리_이름과_종목이_있다(tmp_path):
+    book, legs, fakes = account(tmp_path)
+    fakes["a"].fill = False
+    fakes["a"].order_error = TransportError("overseas_order", "응답 없음")
+    with pytest.raises(Halted):
+        book.order(legs["a"], 1, "진입")
+    assert "a(MKUX26)" in book.halted
+    import json
+    rows = [json.loads(x) for x in (tmp_path / "j.jsonl").read_text().splitlines()]
+    assert any("a(MKUX26)" in r.get("text", "") for r in rows if r["kind"] == "event")
+
+
+def test_수정6_체결_줄에_다리와_종목이_붙는다(tmp_path):
+    book, legs, _ = account(tmp_path)
+    book.order(legs["a"], 1, "진입")
+    import json
+    rows = [json.loads(x) for x in (tmp_path / "j.jsonl").read_text().splitlines()]
+    assert any(r.get("leg") == "a" and r.get("sym") == "MKUX26" and r.get("qty") == 1 for r in rows)

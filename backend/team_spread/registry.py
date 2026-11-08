@@ -21,8 +21,10 @@
 (`_reserved` — 실행의 `order_syms()` 가 새 종목을 보이기 전에도 다른 시작이 그 종목을 못 잡게).
 
 **이어받기**(사람이 하는 재개, 설계 8장) 조건: 앞선 실행이 끝났고(`run.json` 상태 끝·오류) 방식 orders · `inheritable`(기계용 칸 —
-끝 까닭 글을 보지 않는다) · 아직 `handed_to` 없음 · 같은 실행기 파일 · 같은 다리 종목. 화면이 `inherit_preview` 로 보인 잔고를
-`expect` 로 돌려주면, 시작 때 잔고를 다시 읽어 다르면 거부한다. 성공하면 앞선 실행에 `handed_to` 를 남긴다.
+끝 까닭 글을 보지 않는다) · 아직 `handed_to` 없음 · 같은 실행기 파일 · 같은 다리 종목. 다리 종목은 따로 주지 않으면 **앞선 실행의
+run.json 다리 종목**을 쓴다(월물을 바꿨거나 그 사이 최근월물이 바뀌어도 미리 보기와 같은 종목) — 직접 준 종목이 앞선 것과 다르면 거부.
+화면이 `inherit_preview` 로 보인 잔고를 `expect` 로 돌려주면, 시작 때 잔고를 다시 읽어 다르면 거부한다. 성공하면 앞선 실행에
+`handed_to` 를 남긴다.
 """
 from __future__ import annotations
 
@@ -183,12 +185,14 @@ class SpreadRegistry:
             raise StartRefused("모의투자 환경에서만 모의 계좌 실행을 세울 수 있습니다")
         if Path(spec.file).name != spec.file or not spec.file.endswith(".py"):
             raise StartRefused(f"실행기 파일 이름이 올바르지 않습니다: {spec.file!r}")
-        for name, value in (spec.syms or {}).items():
-            if not isinstance(value, str) or not ID_PATTERN.fullmatch(value):
-                raise StartRefused(f"다리 {name} 의 종목 표기가 올바르지 않습니다: {value!r}")
         if spec.inherit_from is not None and (spec.mode != "orders" or not isinstance(spec.inherit_from, str)
                                               or not ID_PATTERN.fullmatch(spec.inherit_from)):
             raise StartRefused("이어받기는 모의 계좌 실행만, 앞선 실행 id 가 있어야 합니다")
+        if spec.inherit_from:       # 이어받기 — 다리 종목은 앞선 실행의 것(직접 준 다리만 그것으로, 다르면 아래에서 거부)
+            spec = replace(spec, syms={**self._prev_syms(spec.inherit_from), **(spec.syms or {})} or None)
+        for name, value in (spec.syms or {}).items():
+            if not isinstance(value, str) or not ID_PATTERN.fullmatch(value):
+                raise StartRefused(f"다리 {name} 의 종목 표기가 올바르지 않습니다: {value!r}")
         try:
             loaded = load_runner(self.folder_of_runners, spec.file)
         except LoadError as e:
@@ -313,6 +317,15 @@ class SpreadRegistry:
         if prev != syms:
             raise StartRefused(f"다리 종목이 다릅니다: 앞선 {prev} ≠ {syms}")
         return data
+
+    def _prev_syms(self, prev_id: str) -> dict[str, str]:
+        """앞선 실행 run.json 의 다리 → 종목. 못 읽으면 {} (이어받기 검사 `_inheritable` 이 까닭을 밝혀 거부한다)."""
+        try:
+            data = _read_json(self.folder(prev_id) / "run.json") or {}
+        except KeyError:
+            return {}
+        return {d["name"]: d["sym"] for d in data.get("legs") or []
+                if isinstance(d, dict) and isinstance(d.get("name"), str) and isinstance(d.get("sym"), str)}
 
     def _prev_avg(self, prev_id: str) -> dict[str, float | None]:
         summary = _read_json(self.root / prev_id / "summary.json") or {}

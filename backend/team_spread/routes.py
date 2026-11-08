@@ -12,7 +12,9 @@
     GET  /runs/{id}/download               zip(`journal` `summary` `api_log` 만)
     GET · POST /runs/{id}/inherit          이어받기 미리 보기 / 시작 `{file, expect}`
 
-없는 실행·이상한 id 는 404. 앱을 켜고 끌 때 하는 일은 `spread_startup`·`spread_shutdown` — `main.py` 의 `lifespan` 이 부른다.
+없는 실행·이상한 id 는 404. 앱을 켜고 끌 때 하는 일은 `spread_startup`·`spread_shutdown` — `main.py` 의 `lifespan` 이
+부른다. 응답에 실리는 기록의 NaN·무한대 실수는 null 로 바꾼다(`_finite` — 예전 기록 하나가 목록 전체를 깨지 않게,
+프레임워크의 직렬화 방식에 기대지 않음).
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ import asyncio
 import dataclasses
 import io
 import logging
+import math
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -69,6 +72,22 @@ class UploadBody(BaseModel):
     file: Any
     content: Any
     overwrite: Any = False
+
+
+def _finite(obj: Any) -> Any:
+    """dict·list 안까지 NaN·무한대 실수를 None 으로 — 엄격한 JSON(`allow_nan=False`)으로도 내보낼 수 있게."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _finite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_finite(v) for v in obj]
+    return obj
+
+
+def _num(v: Any) -> bool:
+    """차트에 찍을 수 있는 수 — 참/거짓·NaN·무한대가 아닌 int·float."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 def _folder(run_id: str) -> Path:
@@ -129,7 +148,7 @@ def runner_convention() -> dict[str, str]:
 # ---------------------------------------------------------------- 실행
 @router.get("/runs")
 def list_runs() -> dict[str, Any]:
-    return {"runs": registry().list()}
+    return {"runs": _finite(registry().list())}
 
 
 def _max_qty(body: StartBody) -> dict[str, int] | None:
@@ -166,13 +185,13 @@ def get_run(run_id: str) -> dict[str, Any]:
         data = live.status()
         if data.get("state") in FINISHED:       # 끝난 실행은 폴더에서 읽은 것과 같은 칸을 보인다
             _merge_summary(data, live.folder)
-        return data
+        return _finite(data)
     data = _read_json(_folder(run_id) / "run.json")
     if data is None:
         raise HTTPException(status_code=404, detail=f"실행 기록을 읽지 못했습니다: {run_id}")
     data.setdefault("id", run_id)
     _merge_summary(data, _folder(run_id))
-    return data
+    return _finite(data)
 
 
 def _merge_summary(data: dict[str, Any], folder: Path) -> None:
@@ -187,7 +206,7 @@ def _merge_summary(data: dict[str, Any], folder: Path) -> None:
 
 def _tail(folder: Path, name: str, after: int) -> dict[str, Any]:
     rows, nxt = Journal(folder / name).tail(after)
-    return {"rows": rows, "next": nxt}
+    return {"rows": _finite(rows), "next": nxt}
 
 
 @router.get("/runs/{run_id}/journal")
@@ -213,7 +232,9 @@ def run_bars(run_id: str) -> dict[str, Any]:
     """차트용 `{"legs": {다리: [{at, close}]}, "logs": {이름: [{at, value}]}, "fills": [...]}`.
 
     `legs` 는 실행이 받은 분마다 남긴 `minute` 줄의 다리별 종가(채워진 봉도 그 값 그대로 — `filled` 는 일지에서 본다).
-    준비 봉(시작 때 조회한 지난 봉)은 일지에 없다. `logs` 는 `log` 줄의 수 값, `fills` 는 체결 줄(다리·수량·가격·수수료)."""
+    준비 봉(시작 때 조회한 지난 봉)은 일지에 없다. `logs` 는 `log` 줄의 수 값(시각은 `ctx.now()` 를 적은 `t`, 없는 예전 줄은
+    기록 시각 `at` — 재생은 봉 시계라 `t` 가 봉과 같은 축), `fills` 는 체결 줄(다리·수량·가격·수수료·`price_known`).
+    NaN·무한대 값은 점으로 찍지 않는다."""
     rows, _ = Journal(_folder(run_id) / "journal.jsonl").tail(0)
     legs: dict[str, list[dict[str, Any]]] = {}
     logs: dict[str, list[dict[str, Any]]] = {}
@@ -223,13 +244,13 @@ def run_bars(run_id: str) -> dict[str, Any]:
         if kind == "minute":
             at = _minute_at(row)
             for name, bar in (row.get("legs") or {}).items():
-                if at and isinstance(bar, dict) and bar.get("close") is not None:
+                if at and isinstance(bar, dict) and _num(bar.get("close")):
                     legs.setdefault(name, []).append({"at": at, "close": bar["close"]})
         elif kind == "fill":
-            fills.append({k: row.get(k) for k in ("at", "clock", "leg", "sym", "qty", "price", "fee")})
-        elif kind == "log" and isinstance(row.get("value"), (int, float)) and row.get("name"):
-            logs.setdefault(row["name"], []).append({"at": row.get("at"), "value": row["value"]})
-    return {"legs": legs, "logs": logs, "fills": fills}
+            fills.append({k: row.get(k) for k in ("at", "clock", "leg", "sym", "qty", "price", "fee", "price_known")})
+        elif kind == "log" and _num(row.get("value")) and row.get("name"):
+            logs.setdefault(row["name"], []).append({"at": row.get("t") or row.get("at"), "value": row["value"]})
+    return _finite({"legs": legs, "logs": logs, "fills": fills})
 
 
 @router.get("/runs/{run_id}/download")

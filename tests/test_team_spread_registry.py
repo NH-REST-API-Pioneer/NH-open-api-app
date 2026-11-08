@@ -233,22 +233,20 @@ def test_이어받기_거부들(tmp_path):
         "20261109_C_orders": (dict(mode="paper"), "모의 계좌 실행만"),
         "20261109_D_orders": (dict(file="t.py"), "다른 실행기 파일"),
         "20261109_E_orders": (dict(handed_to="x"), "이미"),
-        "20261109_F_orders": (dict(legs=leg_dicts(("ho", "HOF27"), ("rb", "RBZ26"))), "다리 종목"),
     }
     for rid, (kw, _) in cases.items():
         write_prev(reg, rid, **kw)
     for rid, (_, match) in cases.items():
         with pytest.raises(StartRefused, match=match):
             reg.start(spec(inherit_from=rid), expect=ok)
-        if rid != "20261109_D_orders":              # 미리보기는 자기 파일·종목으로 보므로 파일·종목 다름은 시작에서만 걸린다
-            if rid != "20261109_F_orders":
-                with pytest.raises(StartRefused, match=match):
-                    reg.inherit_preview(rid)
+        if rid != "20261109_D_orders":              # 미리보기는 자기 파일로 보므로 파일 다름은 시작에서만 걸린다
+            with pytest.raises(StartRefused, match=match):
+                reg.inherit_preview(rid)
     assert set(folders(reg)) == set(cases)            # 거부된 시작은 새 폴더를 남기지 않는다
     write_prev(reg, "20261109_G_orders")
     with pytest.raises(StartRefused, match="expect"):
         reg.start(spec(inherit_from="20261109_G_orders"))
-    with pytest.raises(StartRefused, match="다리 종목"):                  # 다른 종목을 고르면
+    with pytest.raises(StartRefused, match="다리 종목"):                  # 앞선 실행과 다른 종목을 직접 고르면
         reg.start(spec(inherit_from="20261109_G_orders", syms={"ho": "HOF27"}), expect=ok)
     with pytest.raises(StartRefused, match="찾지 못"):
         reg.start(spec(inherit_from="20261109_NOPE_orders"), expect=ok)
@@ -488,3 +486,25 @@ def test_시작을_거부당한_이어받기_기록은_이어받기로_세지_�
     (ref / "run.json").write_text(json.dumps(d))
     api.pos = {"HOZ26": 1, "RBZ26": -1}
     assert reg.start(spec(inherit_from=prev), expect={"ho": 1, "rb": -1})["state"] == "진행 중"
+
+
+# ---------------------------------------------------------------- 마지막 검토 고침 (final-findings)
+def test_F3_월물을_바꾼_앞선_실행은_그_다리_종목으로_이어받는다(tmp_path):
+    reg, api = make(tmp_path)
+    prev = write_prev(reg, legs=leg_dicts(("ho", "HOF27"), ("rb", "RBZ26"))).name       # 앞선 실행이 ho 를 F27 로 굴림
+    api.pos = {"HOF27": 1, "RBZ26": -1}
+    pv = reg.inherit_preview(prev)
+    assert pv["syms"] == {"ho": "HOF27", "rb": "RBZ26"}
+    st = reg.start(spec(inherit_from=prev), expect={k: v["qty"] for k, v in pv["legs"].items()})
+    run = reg.get(st["id"])
+    assert run.spec.syms == {"ho": "HOF27", "rb": "RBZ26"} and run.order_syms() == {"HOF27", "RBZ26"}
+    assert run.ctx.position("ho") == 1 and api.orders == []
+
+
+def test_F3_이어받기에_같은_종목을_직접_주면_되고_일부만_주면_나머지는_앞선_실행에서(tmp_path):
+    reg, api = make(tmp_path)
+    prev = write_prev(reg, legs=leg_dicts(("ho", "HOF27"), ("rb", "RBF27"))).name
+    api.pos = {"HOF27": 1, "RBF27": -1}
+    st = reg.start(spec(inherit_from=prev, syms={"ho": "HOF27"}), expect={"ho": 1, "rb": -1})
+    assert reg.get(st["id"]).spec.syms == {"ho": "HOF27", "rb": "RBF27"}
+

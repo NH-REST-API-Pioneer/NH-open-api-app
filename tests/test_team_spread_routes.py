@@ -280,3 +280,55 @@ def test_복구_중지가_실패해도_앱은_뜨고_꺼진다(reg, monkeypatch,
     asyncio.run(routes_mod.spread_startup())
     asyncio.run(routes_mod.spread_shutdown())
     assert "스프레드 실행 복구에 실패" in caplog.text and "스프레드 실행 중지에 실패" in caplog.text
+
+
+# ---------------------------------------------------------------- 마지막 검토 고침 (final-findings)
+def _orders_run_with_holding(reg):
+    """도는 모의 계좌 실행에 ho +1 을 들게 한 뒤 앱 종료로 끝낸다(메모리에 남은 끝난 실행)."""
+    run = reg.get(reg.start(reg_mod.SpreadSpec("s.py", "orders"))["id"])
+    run.ctx.order("ho", 1)
+    run.request_stop(shutdown=True)
+    run.finish("앱 종료")
+    return run
+
+
+def test_F2_메모리에_남은_끝난_실행도_이어받기와_남은_보유를_보인다(client, reg):
+    run = _orders_run_with_holding(reg)
+    got = client.get(f"{BASE}/runs/{run.run_id}").json()
+    assert got["state"] == "끝" and got["inheritable"] is True and got["holding_left"] == {"ho": 1}
+    row = next(r for r in client.get(f"{BASE}/runs").json()["runs"] if r["id"] == run.run_id)
+    assert row["inheritable"] is True and row["holding_left"] == {"ho": 1} and row["handed_to"] is None
+
+
+def test_F6_예전_일지의_NaN_무한대는_null_로_응답이_깨지지_않는다(client, reg):
+    folder = write_prev(reg, "20261108_S_orders")
+    j = Journal(folder / "journal.jsonl")
+    j.write("log", name="z", value=float("nan"), beta=float("inf"))
+    j.write("log", name="z", value=1.5)
+    j.write("fill", leg="ho", qty=1, price=float("nan"))
+    r = client.get(f"{BASE}/runs/20261108_S_orders/journal")
+    assert r.status_code == 200 and r.json()["rows"][0]["value"] is None and r.json()["rows"][0]["beta"] is None
+    b = client.get(f"{BASE}/runs/20261108_S_orders/bars")
+    assert b.status_code == 200 and [p["value"] for p in b.json()["logs"]["z"]] == [1.5]
+    assert b.json()["fills"][0]["price"] is None
+    run_id = start(client).json()["id"]
+    reg.get(run_id).j.write("log", name="z", value=float("nan"))       # ctx 를 거치지 않은 줄(예전 파일과 같은 꼴)
+    assert client.get(f"{BASE}/runs").status_code == 200
+    got = client.get(f"{BASE}/runs/{run_id}")
+    assert got.status_code == 200 and got.json()["logs_tail"][-1]["value"] is None
+    # 프레임워크의 직렬화(지금 FastAPI 는 NaN 을 null 로 바꿔 줌)에 기대지 않는다 — 라우트가 돌려주는 값 자체가 엄격한 JSON
+    for body in (routes_mod.run_journal("20261108_S_orders", 0), routes_mod.run_bars("20261108_S_orders"),
+                 routes_mod.get_run(run_id), routes_mod.list_runs()):
+        json.dumps(body, allow_nan=False)
+
+
+def test_F11_F13_차트_체결엔_price_known_log_점은_봉_시각_t(client, reg):
+    folder = write_prev(reg, "20261108_S_orders")
+    j = Journal(folder / "journal.jsonl")
+    j.write("fill", clock="101500", leg="ho", sym="HOZ26", qty=-1, price=2.5, fee=0.1, price_known=False)
+    j.write("log", name="z", value=1.5, t="2026-11-09T10:15:00")
+    j.write("log", name="old", value=2.0)                              # t 가 없는 예전 줄은 기록 시각 그대로
+    body = client.get(f"{BASE}/runs/20261108_S_orders/bars").json()
+    assert body["fills"][0]["price_known"] is False and body["fills"][0]["qty"] == -1
+    assert body["logs"]["z"][0]["at"] == "2026-11-09T10:15:00"
+    assert body["logs"]["old"][0]["at"]

@@ -324,3 +324,90 @@ def test_수정6_체결_줄에_다리와_종목이_붙는다(tmp_path):
     import json
     rows = [json.loads(x) for x in (tmp_path / "j.jsonl").read_text().splitlines()]
     assert any(r.get("leg") == "a" and r.get("sym") == "MKUX26" and r.get("qty") == 1 for r in rows)
+
+
+# ---------------------------------------------------------------- 리뷰 2회 수정
+def _unread_price(fake):
+    """체결은 되지만 주문내역에서 체결가를 읽을 수 없는 가짜 (두 가격 칸이 0)."""
+    real = fake.ovs_market_order
+
+    def go(sym, side, qty=1):
+        r = real(sym, side, qty)
+        for h in fake.history:
+            h["exec_pric"] = h["ord_avg_pric"] = "0"
+        return r
+    fake.ovs_market_order = go
+
+
+class BarFeed(Feed):
+    def __init__(self, close=None, fail=True):
+        super().__init__()
+        self.close, self.fail = close, fail
+
+    def quote(self, leg):
+        if self.fail:
+            raise RuntimeError("시세 끊김")
+        return super().quote(leg)
+
+    def history(self, legs, count):
+        from types import SimpleNamespace as NS
+        return [] if self.close is None else [NS(legs={legs[0].name: NS(close=self.close)})]
+
+
+def test_수정A_체결가를_못_읽고_시세도_실패하면_마지막_봉_종가_price_known_False(tmp_path):
+    book, legs, fakes = account(tmp_path, feed=BarFeed(close=0.7500))
+    _unread_price(fakes["a"])
+    f = book.order(legs["a"], 1, "진입")
+    assert f.price == 0.7500 and f.price_known is False and book.halted is None
+
+
+def test_수정A_읽은_체결가는_price_known_True(tmp_path):
+    book, legs, _ = account(tmp_path)
+    assert book.order(legs["a"], 1, "진입").price_known is True
+
+
+def test_수정A_양의_기준가가_하나도_없으면_잔고를_따르고_멈춤_0_Fill_없음(tmp_path):
+    book, legs, fakes = account(tmp_path, feed=BarFeed(close=None))
+    _unread_price(fakes["a"])
+    with pytest.raises(Halted):
+        book.order(legs["a"], 1, "진입")
+    assert book.position(legs["a"]) == 1
+    assert "체결가 모름" in book.halted and "a(MKUX26)" in book.halted
+
+
+def test_수정A_결과_모름_잔고_따르기에서도_기준가가_없으면_멈춤(tmp_path):
+    book, legs, fakes = account(tmp_path, feed=BarFeed(close=None))
+
+    def lost(sym, side, qty=1):
+        fakes["a"].orders.append((sym, side, qty))
+        fakes["a"].held = 1
+        raise TransportError("overseas_order", "응답 없음")
+    fakes["a"].ovs_market_order = lost
+    with pytest.raises(Halted):
+        book.order(legs["a"], 1, "진입")
+    assert book.position(legs["a"]) == 1 and "체결가 모름" in book.halted
+
+
+def test_수정A_0_이하_기준가는_저장하지_않고_다음에도_쓰지_않는다(tmp_path):
+    feed = Feed(a=Quote(0.0, 0.0, 0.0, NOW))
+    book, legs, _ = account(tmp_path, feed=feed)
+    book.order(legs["a"], 1, "진입")
+    assert "a" not in book._last_ref
+    assert all(v > 0 for v in book._last_ref.values())
+
+
+def test_수정A_0으로_채운_호가는_없는_값으로_본다(tmp_path):
+    book = PaperBook(Feed(a=Quote(0.7447, 0.0, 0.0, NOW)), jr(tmp_path))
+    assert book.order(A, 1, "x").price == pytest.approx(0.7448)     # 마지막 + 1틱
+    book = PaperBook(Feed(a=Quote(0.0, 0.0, 0.0, NOW)), jr(tmp_path))
+    with pytest.raises(OrderRejected):
+        book.order(A, 1, "x")
+
+
+def test_수정B_브로커가_쓴_줄에도_다리와_종목이_붙는다(tmp_path):
+    import json
+    book, legs, fakes = account(tmp_path)
+    book.order(legs["b"], 1, "진입")
+    rows = [json.loads(x) for x in (tmp_path / "j.jsonl").read_text().splitlines()]
+    broker_rows = [r for r in rows if r["kind"] == "order"]
+    assert broker_rows and all(r.get("leg") == "b" and r.get("sym") == "MKUX26" for r in broker_rows)

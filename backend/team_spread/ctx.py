@@ -39,11 +39,14 @@ class _Stopped(OrderRejected):
 
 @dataclass(frozen=True)
 class Fill:
-    """체결 결과 — qty = 실제 체결 수량, 부호 = 방향(매수 +). 되돌리기가 이 부호에 기댄다."""
+    """체결 결과 — qty = 실제 체결 수량, 부호 = 방향(매수 +). 되돌리기가 이 부호에 기댄다.
+
+    `price_known` 이 False 면 체결가를 읽지 못해 `price` 는 기준가(주문 때 가장 신선한 양의 값)다 — 체결가로 믿지 말 것."""
     leg: str
     qty: int
     price: float
     fee: float | None
+    price_known: bool = True
 
 
 class Book(Protocol):

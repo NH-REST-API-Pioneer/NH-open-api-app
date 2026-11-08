@@ -372,10 +372,11 @@ class Engine:
 - `leg` 자리엔 다리 이름 글자를 쓰는 게 가장 안전하다. `ctx.roll` 뒤에는 옛 다리 객체가 낡아 `OrderRejected` — 이름을 쓰거나 `ctx.leg` 로 다시 받는다. `roll` 은 그 다리 보유가 0 일 때만.
 - 두 다리 짝은 **`ctx.target` 으로** 낸다(달라지는 모든 다리를 미리 검사해 하나라도 안 되면 아무것도 안 낸다; 뒤 다리가 거부되면 앞 다리를 한 번 되돌린다).
 - 루프는 `while ctx.running(): m = ctx.next_minute([...]); if m is None: break`.
+- 수량(`ctx.order` 의 `qty`, `ctx.target` 의 목표)은 **정수 `int`** 만(실수·참/거짓이면 `TypeError`). `ctx.log` 값·칸에 NaN·무한대를 넣지 않는다(`ValueError` — 0 으로 나눌 수 있으면 먼저 거른다). `t` 는 앱이 쓰는 칸이라 `ctx.log` 칸 이름으로 쓰지 않는다.
 - 예외: `OrderRejected`(결과를 아는 실패 — 잡고 다음 분에 다시 가능; 중지 뒤엔 `OrderRejected("중지됨")`) · `Halted`(결과 모르는 주문으로 멈춤 — 더 주문 못 함, 돌려준다).
 - `Fill` = `leg qty price fee price_known`. `qty` 부호가 방향. `price_known` 이 False 면 `price` 는 기준가이니 **정확한 체결가로 손익을 계산하지 않는다**.
 - `ctx.inherited` 는 이어받은 실행에서만 `{"from": id, "ended_reason": 글, "legs": {이름: {"qty": 정수, "avg_price": 수|None}}}`, 아니면 `None`. 롤링 창 같은 자기 상태는 이것과 `ctx.bars` 로 직접 되살린다.
-- 한도는 앱이 적용한다: 다리별 최대 보유(기본 `MAX_QTY` 또는 5)·분당 주문 10건·장 쉬는 다리 주문 금지(국내는 주간 장만). 한도를 우회하려고 하지 않는다.
+- 한도는 앱이 적용한다: 다리별 최대 보유(기본 `MAX_QTY` 또는 5)·분당 주문 10건·장 쉬는 다리 주문 금지(국내는 주간 장만, **주문은 09:00 부터** — 08:45~08:59 봉은 오지만 주문은 거부, `ctx.market_open` 도 거짓). 한도를 우회하려고 하지 않는다.
 
 ## S3. 지어내지 말 것 · 점검
 

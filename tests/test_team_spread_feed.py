@@ -320,3 +320,16 @@ def test_열린_직후_1초_간격으로_봐도_장_쉼_공백은_한_번():
     assert gaps[0][1] == "20261116 085900"
     assert feed.next_minute([d], stop).time == "090100"            # 이어서 빠짐없이
     assert [g[2] for g in gaps] == ["장 쉼"]
+
+
+# ---------------------------------------------------------------- 마지막 검토 고침 (final-findings)
+def test_F1_주문_창은_국내_다리만_09시부터_봉은_08시45분부터():
+    from backend.team_spread.feed import order_open
+    usd = leg("usd", "A756B000")
+    feed = make(Clock(at(8, 50, 0)), {}, lambda market, sym, now: {"state": "day" if market == "domestic" else "open"})
+    assert feed.is_open(usd, at(8, 50, 0)) is True                   # 봉(데이터)은 국내 주간 판정 그대로
+    assert order_open(feed, usd, at(8, 50, 0)) is False and order_open(feed, usd, at(8, 59, 59)) is False
+    assert order_open(feed, usd, at(9, 0, 0)) is True
+    assert order_open(feed, HO, at(8, 50, 0)) is True                # 해외 다리는 장 열림 그대로
+    closed = make(Clock(at(10, 0, 0)), {}, lambda market, sym, now: {"state": "closed"})
+    assert order_open(closed, usd, at(10, 0, 0)) is False

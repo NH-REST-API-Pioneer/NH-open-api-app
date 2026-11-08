@@ -776,3 +776,174 @@ def test_받은_분봉은_minute_줄로_기록된다(tmp_path):
     assert len(mins) == 1
     assert mins[0]["date"] == "20261109" and mins[0]["time"] == "101500"
     assert mins[0]["legs"] == {"ho": {"close": 1.5, "filled": False}, "rb": {"close": 3, "filled": True}}
+
+
+# ---------------------------------------------------------------- 마지막 검토 고침 (final-findings)
+class MixApi(Api):
+    """국내 다리(A75…)도 받는 가짜 — 국내 이름(`market_order`·`order_history`·`open_interest`·`deposit`)도
+    같은 `pos`·`orders` 를 쓴다(해외 가짜 위에 얹음). 국내 주문은 늘 전체체결."""
+
+    from backend.team_pyrun import api as _real
+    net_position = staticmethod(_real.net_position)
+
+    def __init__(self):
+        super().__init__()
+        self.dom_history: list[dict] = []
+
+    def deposit(self, biz_dt):
+        return {"fee": "0", "fut_cls_pl_amt": "0", "pl_tot_pric": "0", "ord_psb_tot_amt": "100000000"}
+
+    def open_interest(self):
+        return [{"sym": s, "trd_div": "1" if q > 0 else "2", "opint_qty": str(abs(q))}
+                for s, q in self.pos.items() if q and s.startswith("A75")]
+
+    def order_history(self):
+        return [dict(r) for r in self.dom_history]
+
+    def market_order(self, sym, side, qty=1, exec_cnd="1"):
+        self.orders.append((sym, side, qty))
+        self.order_times.append(time.monotonic())
+        self.pos[sym] = self.pos.get(sym, 0) + (qty if side == "buy" else -qty)
+        no = f"{len(self.orders):010d}"
+        self.dom_history.insert(0, {"ord_no": no.lstrip("0"), "ord_sts": "6", "ord_sts_nm": "전체체결",
+                                    "avg_exec_pric": "1400.1", "exec_pric": "1400.1", "exec_qty": str(qty),
+                                    "exch_exec_tm": "090104000"})
+        return {"ord_no": no, "msg_cd": "", "msg_cntn": ""}
+
+
+def test_F1_정리_대기의_국내_다리는_08시45분이_아니라_09시에_함께_정리(tmp_path):
+    entered = threading.Event()
+    clock = Clock(datetime(2026, 11, 9, 10, 0))
+
+    def run_fn(ctx):
+        ctx.target({"m": 1, "u": -1})
+        entered.set()
+        while ctx.running():
+            ctx.sleep(1)
+    run, feed, api = build(tmp_path, run_fn, legs={"m": "MKU", "u": "A75"}, api=MixApi(), clock=clock)
+    t = start(run)
+    assert entered.wait(5)
+    entry = [("MKUX26", "buy", 1), ("A756B000", "sell", 1)]
+    assert api.orders == entry
+    clock.t = datetime(2026, 11, 10, 8, 30)                 # 다음 날 아침 — 국내 장 쉼
+    feed.closed = {"u"}
+    run.request_stop()
+    until(lambda: run.state == "정리 대기")
+    clock.t = datetime(2026, 11, 10, 8, 45)                 # 국내 주간 판정은 열림(봉은 옴) — 모의계좌 주문은 아직
+    feed.closed = set()
+    time.sleep(0.1)
+    assert api.orders == entry and run.state == "정리 대기" and run.status()["waiting_for"] == ["u"]
+    clock.t = datetime(2026, 11, 10, 9, 0)
+    t.join(5)
+    assert run.ended_reason == "중지 · 보유 정리" and api.pos == {"MKUX26": 0, "A756B000": 0}
+    assert api.orders == entry + [("MKUX26", "sell", 1), ("A756B000", "buy", 1)]
+
+
+def test_F2_끝난_실행의_상태에도_남은_보유와_이어받기_표시(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+
+    def run_fn(ctx):
+        ctx.target({"ho": 1, "rb": -1})
+        entered.set()
+        release.wait(5)
+    run, feed, api = build(tmp_path, run_fn, timing=Timing(poll=0.005))
+    t = start(run)
+    assert entered.wait(5)
+    assert "inheritable" not in run.status()                # 도는 실행엔 없다(칸 순서 그대로)
+    run.request_stop(shutdown=True)
+    t.join(5)
+    release.set()
+    st = run.status()
+    assert st["holding_left"] == {"ho": 1, "rb": -1} and st["inheritable"] is True and st["handed_to"] is None
+
+
+def test_F4_멈췄는데_장부가_평탄해도_모의_계좌면_이어받기로_확인한다(tmp_path):
+    release = threading.Event()
+    run, feed, api = build(tmp_path, lambda ctx: release.wait(5))
+    t = start(run)
+    until(lambda: run.state == "진행 중")
+    run.book.halt("주문 결과 모름 — 시험")                   # 결과 모르는 주문이 장부를 움직이지 않은 채 멈춤
+    release.set()
+    t.join(5)
+    head = saved(run)
+    assert head["holding_left"] == {} and head["inheritable"] is True and run.status()["inheritable"] is True
+    paper, _, _ = build(tmp_path / "p", lambda ctx: None, mode="paper")
+    paper.prepare()
+    paper.book.halt("x")
+    paper.finish("중지")
+    assert saved(paper)["inheritable"] is False                       # 종이는 이어받기 없음
+
+
+def test_F5_멈춘_실행의_월물_교체_콜백은_거부(tmp_path):
+    run, feed, api = build(tmp_path, lambda ctx: None)
+    run.prepare()
+    run.book.halt("결과 모름")
+    with pytest.raises(Halted):
+        run._roll("ho")
+    assert run.order_syms() == {"HOZ26", "RBZ26"} and api.orders == []
+
+
+class GateApi(Api):
+    """HO 매수가 나가는 동안(장부 자물쇠를 쥔 채) `gate` 가 열릴 때까지 붙잡는다."""
+
+    def __init__(self):
+        super().__init__()
+        self.gate, self.inside = threading.Event(), threading.Event()
+
+    def ovs_market_order(self, sym, side, qty=1):
+        if sym == "HOZ26" and side == "buy" and not self.gate.is_set():
+            self.inside.set()
+            self.gate.wait(5)
+        return super().ovs_market_order(sym, side, qty)
+
+
+def _pair_once(ctx):
+    ctx.target({"ho": 1, "rb": -1})
+
+
+def test_F8_앱_종료_중_짝의_뒤_다리가_거부돼도_되돌리지_않고_보유를_남긴다(tmp_path):
+    run, feed, api = build(tmp_path, _pair_once, api=GateApi(), timing=Timing(poll=0.005))
+    t = start(run)
+    assert api.inside.wait(5)                 # ho 매수가 나가는 중
+    run.request_stop(shutdown=True)
+    until(lambda: run._finishing)
+    time.sleep(0.05)
+    api.gate.set()
+    t.join(5)
+    until(run._runner_done.is_set)
+    time.sleep(0.05)
+    assert api.orders == [("HOZ26", "buy", 1)]                       # 되돌리기(ho 매도)를 내지 않는다
+    assert run.ended_reason == SHUTDOWN_HOLDING
+    head = saved(run)
+    assert head["holding_left"] == {"ho": 1} and head["inheritable"] is True
+    assert any("되돌리기 건너뜀" in str(r.get("text", "")) for r in journal(run))
+
+
+def test_F8_중지_정리와_실행기의_되돌리기가_겹쳐도_한_번만_정리(tmp_path):
+    run, feed, api = build(tmp_path, _pair_once, api=GateApi(),
+                           timing=Timing(stop_wait=0.05, reconcile=3600, retry=0, poll=0.005))
+    t = start(run)
+    assert api.inside.wait(5)
+    run.request_stop()
+    until(lambda: run._finishing)             # 실행기를 기다린 뒤 끝내기 시작 — 장부 자물쇠는 ho 주문이 쥐고 있다
+    time.sleep(0.05)
+    api.gate.set()
+    t.join(5)
+    until(run._runner_done.is_set)
+    time.sleep(0.05)
+    assert api.orders == [("HOZ26", "buy", 1), ("HOZ26", "sell", 1)] and api.pos == {"HOZ26": 0}
+    assert run.ended_reason == "중지 · 보유 정리" and saved(run)["holding_left"] == {}
+
+
+def test_F9_끝난_뒤_ctx_시세_조회는_나가지_않는다(tmp_path):
+    run, feed, api = build(tmp_path, lambda ctx: None, mode="paper")
+    start(run).join(5)
+    assert run.state == "끝"
+    seen = []
+    feed.quote = lambda leg: seen.append("quote")
+    feed.history = lambda legs, count: seen.append("history")
+    feed.next_minute = lambda legs, stop: seen.append("next")
+    for call in (lambda: run.ctx.quote("ho"), lambda: run.ctx.bars(["ho"], 3), lambda: run.ctx.next_minute(["ho"])):
+        with pytest.raises(OrderRejected, match="중지"):
+            call()
+    assert seen == []

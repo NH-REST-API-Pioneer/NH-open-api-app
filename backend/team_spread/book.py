@@ -6,7 +6,7 @@
 
 `AccountBook` 은 다리마다 `MockAccountBroker` 를 하나씩 둔다(그 다리 시장 어댑터·거래소 코드·종목). 브로커가 `None` 을 돌려주면
 `live.py`·`realtime.py` 와 같은 규칙으로 읽는다(`broker.py` 모듈 설명).
-- 보내기 직전 휴장(`held_back`) → 안 보냄이 확실 → `OrderRejected`
+- 보내기 직전 휴장(`held_back`, 관문은 `feed.order_open` — 국내 다리는 09:00 전도 휴장) → 안 보냄이 확실 → `OrderRejected`
 - 결과 모름(`open_unknowns()` 가 있음) → 그 다리 잔고를 본다. `explains(잔고)` 면 잔고를 따라 `Fill`(가격은 기준가), 아니면 멈춤 + `Halted`
 - 그 밖(서버 거부·취소, 잔고 관문에 걸려 안 보냄 등) → 그 다리 잔고를 다시 읽는다. 읽지 못하거나 장부와 다르면 멈춤 + `Halted`,
   장부와 같으면 `OrderRejected`(짝 주문이 앞 다리를 되돌릴 수 있게)
@@ -29,7 +29,7 @@ from backend.team_pyrun.broker import MockAccountBroker, error_text
 from backend.team_pyrun.journal import Journal
 from backend.team_pyrun.markets import DOMESTIC, OVERSEAS, Market, adapter_for
 from backend.team_spread.ctx import Fill, Halted, OrderRejected
-from backend.team_spread.feed import Feed
+from backend.team_spread.feed import Feed, order_open
 from backend.team_spread.legs import Leg, LegError
 
 
@@ -43,15 +43,22 @@ def _clock(at: datetime) -> str:
 
 class _LegJournal:
     """브로커가 쓰는 기록에 다리 이름·종목을 붙이는 대리 — 공유 기록에서 어느 다리 줄인지 보이게.
-    체결 줄의 `price_read` 도 기억한다(체결가를 못 읽어 기준가로 적었는지)."""
+    체결 줄의 `price_read` 도 기억한다(체결가를 못 읽어 기준가로 적었는지).
+
+    체결 줄에는 종이·잔고 줄과 같은 칸을 더 붙인다 — `qty`(부호 있는 이번 주문 수량, 매수 +; 브로커는 통째로 체결만 체결로
+    보므로 주문 수량 = 체결 수량)와 `price_known`(체결가를 읽었나). 화면의 체결 표·차트가 이 칸을 본다."""
 
     def __init__(self, journal: Journal, leg: Leg):
         self._journal, self._leg = journal, leg
         self.price_read: bool | None = None
+        self.qty: int | None = None         # 지금 나가는 주문의 부호 있는 수량 (`AccountBook.order` 가 채움)
 
     def write(self, kind: str, **data: Any) -> dict:
         if kind == "fill":
             self.price_read = data.get("price_read")
+            if self.qty is not None:
+                data.setdefault("qty", self.qty)
+            data.setdefault("price_known", data.get("price_read") is not False)
         return self._journal.write(kind, leg=self._leg.name, sym=self._leg.sym, **data)
 
 
@@ -148,7 +155,7 @@ class AccountBook(_BookBase):
                 adapter, leg.sym, self._legj[key], today=self._today or self._day(),
                 expected=lambda n=leg.name: self._pos.get(n, 0),
                 halt=lambda r, lg=leg: self.halt(f"{self._tag(lg)} {r}"),
-                may_send=lambda lg=leg: self._feed.is_open(lg, self._feed.now()), **kw)
+                may_send=lambda lg=leg: order_open(self._feed, lg, self._feed.now()), **kw)
             self._seed_fee(leg)
         return self._brokers[key]
 
@@ -197,7 +204,7 @@ class AccountBook(_BookBase):
             ref = self._ref_price(leg, qty)
             b = self._broker(leg)
             lj = self._legj[(leg.name, leg.sym)]
-            lj.price_read = None
+            lj.price_read, lj.qty = None, qty
             fk = self._fee_key(leg)
             side = "buy" if qty > 0 else "sell"
             clock = _clock(self._now())

@@ -79,11 +79,11 @@ class Jr:
         self.rows.append((kind, data))
 
 
-def make(max_qty=None, per_min=10, inherited=None, roll=None):
-    feed, book, jr, stop = FakeFeed(), FakeBook(), Jr(), threading.Event()
+def make(max_qty=None, per_min=10, inherited=None, roll=None, book=None, **kw):
+    feed, book, jr, stop = FakeFeed(), book or FakeBook(), Jr(), threading.Event()
     ctx = Ctx({"a": A, "b": B}, feed, book, jr, max_qty=max_qty or {"a": 5, "b": 5},
               orders_per_min=per_min, inherited=inherited, stop=stop,
-              roll=roll or (lambda n: replace(mk(n), sym=n + "Z27")))
+              roll=roll or (lambda n: replace(mk(n), sym=n + "Z27")), **kw)
     return ctx, feed, book, jr, stop
 
 
@@ -232,7 +232,7 @@ def test_review1_second_leg_unknown_halts_without_revert():
 def test_log_requires_number_and_writes_journal():
     ctx, _, _, jr, _ = make()
     ctx.log("z", 2.3, beta=0.8)
-    assert jr.rows == [("log", {"name": "z", "value": 2.3, "beta": 0.8})]
+    assert jr.rows == [("log", {"name": "z", "value": 2.3, "beta": 0.8, "t": "2026-11-09T10:00:00"})]
     with pytest.raises(TypeError):
         ctx.log("z", "x")
     with pytest.raises(TypeError):
@@ -343,3 +343,148 @@ def test_r11_stop_mid_target_still_reverts_filled_leg():
         ctx.target({"a": 2, "b": -2})
     assert book.orders == [("a", 2, "target"), ("a", -2, "revert")]
     assert book.pos == {"a": 0, "b": 0} and book.halted is None
+
+
+# ---------------------------------------------------------------- 마지막 검토 고침 (final-findings)
+D = mk("d", "domestic")
+
+
+def make_dom(t):
+    feed, book, jr, stop = FakeFeed(), FakeBook(), Jr(), threading.Event()
+    feed.open["d"], book.pos["d"], feed.t = True, 0, t
+    ctx = Ctx({"a": A, "d": D}, feed, book, jr, max_qty={"a": 5, "d": 5}, orders_per_min=10, inherited=None,
+              stop=stop, roll=lambda n: mk(n))
+    return ctx, feed, book
+
+
+def test_F1_국내_다리는_장이_열려도_09시_전엔_주문하지_않는다():
+    ctx, feed, book = make_dom(datetime(2026, 11, 9, 8, 50))        # 국내 주간 판정(08:45~)은 열림
+    assert ctx.market_open("d") is False and ctx.market_open("a") is True
+    with pytest.raises(OrderRejected, match="09:00"):
+        ctx.order("d", 1)
+    with pytest.raises(OrderRejected, match="09:00"):
+        ctx.target({"a": 1, "d": -1})                                # 짝은 아무것도 내지 않는다
+    assert book.orders == []
+    feed.t = datetime(2026, 11, 9, 9, 0)
+    assert ctx.market_open("d") is True
+    ctx.target({"a": 1, "d": -1})
+    assert book.orders == [("a", 1, "target"), ("d", -1, "target")]
+
+
+def test_F5_멈춘_뒤나_중지_뒤엔_월물을_바꾸지_않는다():
+    calls = []
+    ctx, _, book, _, stop = make(roll=lambda n: calls.append(n) or replace(mk(n), sym=n + "Z27"))
+    book.halted = "결과 모름"
+    with pytest.raises(Halted):
+        ctx.roll("a")
+    book.halted = None
+    stop.set()
+    with pytest.raises(OrderRejected, match="중지"):
+        ctx.roll("a")
+    assert calls == [] and ctx.leg("a") == A
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_F6_log_는_유한한_수만_받는다(bad):
+    ctx, _, _, jr, _ = make()
+    with pytest.raises(ValueError):
+        ctx.log("z", bad)
+    with pytest.raises(ValueError):
+        ctx.log("z", 1.0, beta=bad)
+    with pytest.raises(ValueError):
+        ctx.log("z", 1.0, info={"x": [1, bad]})
+    assert jr.rows == []
+
+
+@pytest.mark.parametrize("bad", [1.5, 1.0, True, False, "1", None])
+def test_F7_주문_수량은_정수만_아무것도_내기_전에_TypeError(bad):
+    ctx, _, book, _, _ = make()
+    with pytest.raises(TypeError):
+        ctx.order("a", bad)
+    with pytest.raises(TypeError):
+        ctx.target({"a": 1, "b": bad})
+    assert book.orders == []
+
+
+class _StopAfterA(FakeBook):
+    """a 다리가 체결된 순간 앱이 끝내기 시작한다(중지 + 끝내는 중) — 그 뒤 b 는 `중지됨` 으로 거부."""
+
+    def __init__(self):
+        super().__init__()
+        self.after_a = lambda: None
+
+    def order(self, leg, qty, why):
+        fill = super().order(leg, qty, why)
+        if leg.name == "a" and why == "target":
+            self.after_a()
+        return fill
+
+
+def test_F8_앱이_끝내는_중이면_되돌리기를_건너뛰고_반쪽은_장부에_남긴다():
+    closing = {"v": False}
+    book = _StopAfterA()
+    ctx, _, book, jr, stop = make(book=book, closing=lambda: closing["v"])
+    book.after_a = lambda: (stop.set(), closing.update(v=True))
+    with pytest.raises(OrderRejected, match="중지") as ei:
+        ctx.target({"a": 1, "b": -1})
+    assert not isinstance(ei.value, Halted) and book.halted is None
+    assert book.orders == [("a", 1, "target")] and book.pos == {"a": 1, "b": 0}     # 되돌리기 주문 없음
+    assert any("되돌리기 건너뜀" in str(d.get("text", "")) for _, d in jr.rows)
+
+
+class _MovesA(FakeBook):
+    """b 주문 순간 다른 스레드(앱 정리)가 a 를 이미 0 으로 만들었고, b 는 거부된다."""
+
+    def order(self, leg, qty, why):
+        if leg.name == "b":
+            self.orders.append((leg.name, qty, why))
+            self.pos["a"] = 0
+            raise OrderRejected("거부")
+        return super().order(leg, qty, why)
+
+
+def test_F8_체결_뒤_보유가_바뀌었으면_되돌리지_않고_멈춘다():
+    ctx, _, book, jr, _ = make(book=_MovesA())
+    with pytest.raises(Halted):
+        ctx.target({"a": 1, "b": -1})
+    assert book.orders == [("a", 1, "target"), ("b", -1, "target")]                  # 눈먼 -1 을 내지 않는다
+    assert book.pos["a"] == 0 and book.halted and "되돌리기 건너뜀" in book.halted
+
+
+def test_F9_끝내는_중엔_시세_조회도_나가지_않는다():
+    ctx, feed, _, _, stop = make(closing=lambda: True)
+    stop.set()
+    seen = []
+    feed.quote = lambda leg: seen.append("quote")
+    feed.history = lambda legs, count: seen.append("history")
+    for call in (lambda: ctx.quote("a"), lambda: ctx.bars(["a"], 3), lambda: ctx.next_minute(["a"])):
+        with pytest.raises(OrderRejected, match="중지"):
+            call()
+    assert seen == [] and feed.waits == []
+
+
+def test_F9_중지만_했을_때는_시세를_아직_준다():
+    ctx, feed, _, _, stop = make(closing=lambda: False)
+    stop.set()
+    assert ctx.quote("a").last == 1.0 and ctx.bars(["a"], 3)
+
+
+def test_F13_log_줄에는_ctx_now_시각_t():
+    ctx, feed, _, jr, _ = make()
+    feed.t = datetime(2026, 11, 9, 10, 15, 30)
+    ctx.log("z", 1.5)
+    assert jr.rows[-1] == ("log", {"name": "z", "value": 1.5, "t": "2026-11-09T10:15:30"})
+    with pytest.raises(ValueError, match="t"):
+        ctx.log("z", 1.0, t="내 시각")                    # t 는 앱이 쓰는 칸
+
+
+def test_F14_이어받은_보유가_최대보다_크면_줄이는_주문만():
+    ctx, _, book, _, _ = make(max_qty={"a": 5, "b": 5})
+    book.pos["a"] = 7                                    # 이어받음 — 최대 보유 5 보다 크다
+    ctx.order("a", -1)                                   # 7 → 6 줄이기는 된다
+    ctx.target({"a": 5})                                 # 6 → 5
+    book.pos["a"] = 7
+    for bad in (1, -14):                                 # 늘리기·0 을 넘어 반대로 한도 밖은 거부
+        with pytest.raises(OrderRejected, match="최대 보유"):
+            ctx.order("a", bad)
+    assert book.orders == [("a", -1, "order"), ("a", -1, "target")]

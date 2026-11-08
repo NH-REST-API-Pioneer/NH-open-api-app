@@ -9,6 +9,9 @@
 장 열림은 운영자 세션 판정(`backend.sessions.sessions_routes.judged`)의 `state` 로 본다. 거래 창인 상태
 (국내 `day`·`night`, 해외 `open`·`open-2`·`next-day`)만 열림이고, `unknown`·`closed`·`break`·단일가 등
 나머지와 판정 오류는 모두 닫힘이다(모르면 거래하지 않는다).
+
+`is_open` 은 **봉(데이터)** 의 열림이고, 주문은 `order_open` 으로 본다 — 국내 다리는 주간 판정이 08:45 부터 열려도
+모의계좌 주문은 09:00(`markets.DOMESTIC.session_start`) 부터라, 그 앞 15분은 봉만 받고 주문·정리는 하지 않는다.
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
-from backend.sessions.hours import now_kst
+from backend.sessions.hours import now_kst, to_kst
 from backend.team_pyrun import markets
 from backend.team_pyrun.api import num
 from backend.team_pyrun.broker import error_text
@@ -56,6 +59,14 @@ class Feed(Protocol):
     def is_open(self, leg: Leg, now: datetime) -> bool: ...
     def now(self) -> datetime: ...
     def sleep(self, seconds: float, stop: threading.Event) -> None: ...
+
+
+def order_open(feed: Feed, leg: Leg, now: datetime) -> bool:
+    """그 다리로 지금 주문할 수 있나 — 장 열림(`feed.is_open`)이고, 국내 다리는 모의계좌 주문이 되는 09:00
+    (`markets.DOMESTIC.session_start`) 부터. ctx 의 주문 검사·`ctx.market_open`·계좌 장부의 보내기 직전 관문·앱 정리가 이것을 쓴다."""
+    if not feed.is_open(leg, now):
+        return False
+    return leg.market != "domestic" or to_kst(now).strftime("%H%M%S") >= markets.DOMESTIC.session_start
 
 
 def _default_sleep(seconds: float, stop: threading.Event) -> None:

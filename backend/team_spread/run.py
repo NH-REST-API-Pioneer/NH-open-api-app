@@ -12,15 +12,20 @@
   (`OrderRejected`)를 실행기가 그대로 던진 것은 오류가 아니라 중지다(`running()` 확인과 주문 사이의 경합).
 - 「중지」 → 실행기를 30초 기다린 뒤 정리. 그 안에 안 돌려줘도 ctx 는 이미 주문을 받지 않는다(돌던 스레드는 버려 둠).
 - 정리는 `Book` 을 직접 쓴다(ctx 아님). 다리마다 `book.lock` 을 쥔 채 보유를 읽고 주문한다(실행기 쪽 주문과 섞이지 않게).
+  정리할지 정하는 첫 보유 읽기도 `book.lock` 안에서 — 실행기 주문이 나가는 중이면 그 체결까지 본다. 끝내기를 시작하면
+  (`closing` — `_finishing`·앱 종료) ctx 는 짝 되돌리기를 내지 않고 시세 조회도 내보내지 않는다(남은 반쪽은 여기 정리가 맡거나,
+  앱 종료면 장부에 남아 `inheritable`).
   - 멈춤(확인 필요)이면 정리하지 않는다.
-  - 모의 계좌: 보유한 다리가 모두 열려 있으면 잔고를 엄격히 대조한 뒤 다리마다 시장가로 0 까지. 하나라도 쉬면
+  - 모의 계좌: 보유한 다리가 모두 주문할 수 있으면(`feed.order_open` — 국내 다리는 09:00 부터) 잔고를 엄격히 대조한 뒤
+    다리마다 시장가로 0 까지. 하나라도 쉬면
     「정리 대기」 — 짝을 그대로 들고 모두 열릴 때까지. 거부된 다리는 열린 다리를 마저 정리한 뒤 10초 뒤 다시,
     3번(처음 + 다시 2번, 파이썬 전략 실시간과 같음) 안 되면 멈춤. 결과를 모르면 장부가 멈춘다.
   - 종이·재생: 계좌가 없어 장이 쉬어도 기다리지 않고 지금 시세로 장부만 0 (앱 종료 때도 — 이어받을 계좌 보유가 없음).
 - 앱 종료(`shutdown=True`): 실행기를 기다리지 않고 모의 계좌 보유를 정리하지 않는다(정리 대기 중이었어도, 정리 전 대조
   중에 와도 첫 정리 주문 전에 멈춤). 보유가 남으면 끝 까닭 「앱 종료 · 보유 남음 — 이어받기로 다시」.
-- 끝난 run.json·summary.json 의 `holding_left`(다리 → 남은 보유)·`inheritable`(모의 계좌가 보유를 남기고 끝남 — 앱 종료·멈춤·
-  오류·정리 거부) 가 기계용 표시다(판정 R21). registry 는 이것으로 「이어받기」를 보이고, 끝 까닭 글은 사람용이다.
+- 끝난 run.json·summary.json·`status()` 의 `holding_left`(다리 → 남은 보유)·`inheritable`(모의 계좌가 보유를 남기고 끝남 —
+  앱 종료·오류·정리 거부 — 또는 멈춤: 결과 모르는 주문이 장부를 안 움직였어도 계좌엔 있을 수 있어 확인 화면이 실제 잔고를 읽게)
+  가 기계용 표시다(판정 R21). registry 는 이것으로 「이어받기」를 보이고, 끝 까닭 글은 사람용이다.
   끝내기 자체가 실패해도 장부를 멈추고 요약·이 칸을 남긴다(보유를 든 채 표시 없이 「끝」이 되지 않게).
 - 끝 확인은 `reconcile(strict=True)` — 잔고를 못 읽으면 깨끗하게 끝났다고 하지 않는다.
 
@@ -55,7 +60,7 @@ from backend.team_pyrun.journal import Journal, write_summary
 from backend.team_pyrun.live import StartRefused, write_run_json
 from backend.team_spread.book import AccountBook, PaperBook
 from backend.team_spread.ctx import DEFAULT_MAX_QTY, Ctx, Halted, OrderRejected
-from backend.team_spread.feed import WAIT_CLOSED, Feed, LiveFeed
+from backend.team_spread.feed import WAIT_CLOSED, Feed, LiveFeed, order_open
 from backend.team_spread.legs import Leg, LegError, master_rows, next_month, resolve
 from backend.team_spread.pnl import Ledger, trading_date
 from backend.team_spread.runner_files import LoadedRunner
@@ -106,6 +111,11 @@ class _Recorder:
 
     def __init__(self, book: Any, record: Callable[[Leg, int, float | None, float | None, bool], None]):
         self._book, self._record = book, record
+
+    @property
+    def lock(self) -> Any:
+        """진짜 장부의 자물쇠 — ctx 가 체결과 그 직후 보유 읽기·되돌리기 확인을 앱 정리와 섞지 않게 쓴다."""
+        return self._book.lock
 
     @property
     def halted(self) -> str | None:
@@ -324,7 +334,7 @@ class SpreadRun:
         self.book = book
         self._rec = _Recorder(book, self._record)
         self.ctx = Ctx(self.legs, self.feed, self._rec, j, max_qty=self.max_qty, orders_per_min=self.orders_per_min,
-                       inherited=self.inherited, stop=self._stop, roll=self._roll)
+                       inherited=self.inherited, stop=self._stop, roll=self._roll, closing=self.closing)
 
     def _fixed(self, specs: dict[str, str]) -> tuple[Sources, dict[str, Leg]]:
         """재생이 직접 준 다리 — 마스터·품목 세부정보를 읽지 않는다(월물 교체는 마스터가 없어 거절됨)."""
@@ -491,7 +501,9 @@ class SpreadRun:
         self._stop.set()                # ctx 는 이제 주문을 받지 않는다(실행기가 아직 돌아도)
         book, j = self.book, self.j
         note = None
-        if self._held() and book.halted is None:
+        with book.lock:                 # 실행기 주문이 나가는 중이면 그 체결까지 본 보유로 정한다(놓치고 「정리할 것 없음」이 되지 않게)
+            held = self._held()
+        if held and book.halted is None:
             if not self.orders:
                 note = self._flatten_paper()
             elif not self._shutdown:
@@ -502,7 +514,8 @@ class SpreadRun:
             with purpose("끝 잔고"):
                 if book.reconcile(strict=True) is None:
                     j.write("event", text="끝 잔고 대조 맞음 · " + self._positions_text())
-        held = self._held()
+        with book.lock:
+            held = self._held()
         if book.halted is not None:
             reason = f"{reason} · 정리 안 함 — 확인 필요: {book.halted}"
             j.write("event", text=f"정리하지 않고 끝냄 — 보유 {self._positions_text()} 는 그대로. "
@@ -544,9 +557,10 @@ class SpreadRun:
             held = self._held()
             if not held:
                 break
-            closed = [n for n in held if not self.feed.is_open(self.legs[n], self.feed.now())]
+            closed = [n for n in held if not order_open(self.feed, self.legs[n], self.feed.now())]
             if closed:
-                self._wait_flatten(closed, f"정리 대기 — {', '.join(closed)} 장 쉼, 짝을 그대로 들고 모두 열리길 기다림")
+                self._wait_flatten(closed, f"정리 대기 — {', '.join(closed)} 장 쉼(국내는 09:00 전 포함), "
+                                           "짝을 그대로 들고 모두 주문할 수 있길 기다림")
                 self._shutdown_evt.wait(self.timing.poll)
                 continue
             self._waiting = []
@@ -562,7 +576,7 @@ class SpreadRun:
                     try:
                         self._app_order(leg)
                     except OrderRejected as e:
-                        if not self.feed.is_open(leg, self.feed.now()):
+                        if not order_open(self.feed, leg, self.feed.now()):
                             continue                    # 보내기 직전 장이 닫힘 — 거부로 세지 않고 정리 대기로
                         rejects[name] = rejects.get(name, 0) + 1
                         self.j.write("event", text=f"정리 거부 {rejects[name]}번째 · {name}({leg.sym}) — {e}")
@@ -605,6 +619,10 @@ class SpreadRun:
         write_summary(self.folder, data)
 
     # ------------------------------------------------------------ 요청·알림 (다른 스레드에서)
+    def closing(self) -> bool:
+        """앱이 끝내는 중인가 — 끝내기를 시작했거나(`finish`, 중지 뒤 기다림이 지남) 앱 종료. ctx 가 본다."""
+        return self._finishing or self._shutdown
+
     def request_stop(self, shutdown: bool = False) -> None:
         """「중지」. `shutdown`(앱 종료)이면 실행기를 기다리지 않고 모의 계좌 보유를 정리하지 않는다."""
         if shutdown:
@@ -632,9 +650,11 @@ class SpreadRun:
         self.ledger.add(leg, qty, price, fee, known, trading_date(self.now()))
 
     def _roll(self, name: str) -> Leg:
-        """ctx.roll 콜백 — 다음 월물을 찾아 장부·run.json·기록을 바꾼다. 안 되면 `OrderRejected`(다리는 그대로)."""
+        """ctx.roll 콜백 — 다음 월물을 찾아 장부·run.json·기록을 바꾼다. 안 되면 `OrderRejected`(다리는 그대로).
+        멈춘 실행(확인 필요)이면 `Halted` — 결과 모르는 주문이 있는데 종목을 바꾸면 그 주문의 대조가 엉뚱한 종목으로 간다."""
         if self._stop.is_set():
             raise OrderRejected("중지됨 — 월물을 바꾸지 않음")
+        self._check_not_halted()
         old, src = self.legs[name], self.sources
         try:
             sym = next_month(old, overseas_rows=src.overseas_rows, domestic_rows=src.domestic_rows)
@@ -653,6 +673,7 @@ class SpreadRun:
                 raise OrderRejected(f"월물 교체 안 됨 — {new.sym}: {e}") from e
         if self.orders:
             with self.book.lock, purpose("월물 교체"):
+                self._check_not_halted()
                 self.book.set_leg(new)
                 try:
                     held: int | None = self.book.balances().get(name)
@@ -667,6 +688,10 @@ class SpreadRun:
                      **{k: v for k, v in asdict(new).items() if k != "name"})
         self._write_run()
         return new
+
+    def _check_not_halted(self) -> None:
+        if self.book is not None and self.book.halted is not None:
+            raise Halted(f"멈춤: {self.book.halted} — 월물을 바꾸지 않음")
 
     def mark_handed_to(self, new_id: str) -> None:
         """이 (끝난) 실행을 새 실행이 이어받았다 — run.json 에 남긴다(registry 가 부름)."""
@@ -702,9 +727,10 @@ class SpreadRun:
                 "ended_at": self.ended_at, "ended_reason": self.ended_reason}
 
     def status(self) -> dict:
-        """화면(Task 11)에 보일 지금 상태(칸 순서 고정)."""
+        """화면(Task 11)에 보일 지금 상태(칸 순서 고정). 끝난 실행엔 run.json 과 같은 기계용 칸(`holding_left`·`inheritable`)을
+        끝에 붙인다 — 메모리에 남은 끝난 실행도 화면이 「이어받기」·「끝날 때 남은 보유」를 보이게."""
         days, total = self.ledger.snapshot()
-        return {
+        data = {
             **self._head(),
             "halted": self.book.halted if self.book else None,
             "legs": [{"name": leg.name, "sym": leg.sym, "market": leg.market, "currency": leg.currency,
@@ -714,6 +740,9 @@ class SpreadRun:
             "inherited_from": self.inherited_from, "handed_to": self.handed_to,
             "logs_tail": list(self.j.logs),
         }
+        if self._finished:
+            data.update(self._end_marks())
+        return data
 
     def _refresh_state(self) -> None:
         """지금 상태를 다시 본다(장부 멈춤 → 「확인 필요」). 상태 읽기도 자물쇠 안에서 — 다른 스레드의 「장 쉼」을 덮지 않게."""
@@ -749,6 +778,8 @@ class SpreadRun:
     def _end_marks(self) -> dict[str, Any]:
         """끝난 실행의 기계용 칸(판정 R21) — registry(Task 8)는 끝 까닭 글이 아니라 이것을 본다.
         `holding_left` = 끝날 때 장부에 남은 보유, `inheritable` = 모의 계좌 실행이 보유를 남기고 끝남
-        (앱 종료·멈춤·오류·정리 거부 — 「이어받기」로 다시 세울 수 있다)."""
+        (앱 종료·오류·정리 거부 — 「이어받기」로 다시 세울 수 있다) **또는 멈춤** — 결과 모르는 주문이 장부를 안 움직였어도
+        계좌엔 들어갔을 수 있다. 확인 화면이 실제 계좌 잔고를 읽어 보이므로 사람이 보고 정한다."""
         left = self._held()
-        return {"holding_left": left, "inheritable": self.orders and bool(left)}
+        halted = self.book is not None and self.book.halted is not None
+        return {"holding_left": left, "inheritable": self.orders and (bool(left) or halted)}

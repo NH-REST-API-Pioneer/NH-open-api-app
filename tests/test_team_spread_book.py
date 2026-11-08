@@ -411,3 +411,39 @@ def test_수정B_브로커가_쓴_줄에도_다리와_종목이_붙는다(tmp_pa
     rows = [json.loads(x) for x in (tmp_path / "j.jsonl").read_text().splitlines()]
     broker_rows = [r for r in rows if r["kind"] == "order"]
     assert broker_rows and all(r.get("leg") == "b" and r.get("sym") == "MKUX26" for r in broker_rows)
+
+
+# ---------------------------------------------------------------- 마지막 검토 고침 (final-findings)
+class FeedAt(Feed):
+    """시각을 시험이 바꾸는 시세 — 국내 주간 판정(08:45~)은 열림으로 둔다."""
+
+    def __init__(self, t, **quotes):
+        super().__init__(**quotes)
+        self.t = t
+
+    def now(self):
+        return self.t
+
+
+def test_F1_국내_다리_계좌_주문은_09시_전엔_보내지_않는다(tmp_path):
+    from tests.test_team_pyrun_live import FakeApi as DomApi
+    api = DomApi()
+    feed = FeedAt(datetime(2026, 11, 9, 8, 50), d=Quote(1335.0, 1334.9, 1335.1, NOW))
+    book = AccountBook({"d": DOM}, feed, jr(tmp_path), api_module=api, sleep=lambda s: None, today="20261109",
+                       now=feed.now)
+    with pytest.raises(OrderRejected, match="보류"):
+        book.order(DOM, 1, "정리")                      # 앱 정리도 ctx 를 거치지 않으므로 장부가 막는다
+    assert api.orders == [] and book.halted is None and book.position(DOM) == 0
+    feed.t = datetime(2026, 11, 9, 9, 0, 5)
+    assert book.order(DOM, 1, "정리").qty == 1 and len(api.orders) == 1
+
+
+def test_F11_계좌_체결_줄에_부호_있는_qty_와_price_known(tmp_path):
+    import json
+    book, legs, fakes = account(tmp_path)
+    book.order(legs["a"], -2, "진입")
+    _unread_price(fakes["b"])
+    book.order(legs["b"], 1, "진입")
+    rows = [json.loads(x) for x in (tmp_path / "j.jsonl").read_text().splitlines()]
+    fills = [r for r in rows if r["kind"] == "fill"]
+    assert [(r["leg"], r["qty"], r["price_known"]) for r in fills] == [("a", -2, True), ("b", 1, False)]

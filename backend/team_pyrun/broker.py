@@ -1,6 +1,6 @@
 """모의계좌 체결 — week02 `runner.py` 의 `MockAccountBroker` 를 팀 API 계층(`api.py`) 위로 옮긴 것.
 
-모의 서버(`environment="paper"`)의 모의계좌에 **시장가 1계약**을 넣고, 주문내역에서 그 주문번호가
+모의 서버(`environment="paper"`)의 모의계좌에 **시장가 qty계약**(기본 1, `fill(..., qty=)`)을 넣고, 주문내역에서 그 주문번호가
 전체체결(`ord_sts` 6)이 될 때까지 0.5초씩 최대 30번(15초) 봅니다. 체결가는 `avg_exec_pric`, 그게
 0 이면 `exec_pric`(week02 10/29 수정). 둘 다 못 읽으면 체결은 확인된 것이므로 기준가로 기록합니다(재시도 없음).
 수수료는 체결 전후 예수금 `fee`(하루 누적)의 차이입니다.
@@ -166,9 +166,9 @@ class MockAccountBroker:
         self.had_unknown = True
 
     @staticmethod
-    def _post(pre: int | None, side: str) -> int | None:
-        """주문 전 보유 pre 에서 side 1계약이 체결되면 될 보유."""
-        return None if pre is None else pre + (1 if side == "buy" else -1)
+    def _post(pre: int | None, side: str, qty: int = 1) -> int | None:
+        """주문 전 보유 pre 에서 side qty계약이 체결되면 될 보유."""
+        return None if pre is None else pre + (qty if side == "buy" else -qty)
 
     def _halt(self, reason: str) -> None:
         """실행을 멈추게 한다(실행이 `halt` 를 꽂아 둔 경우). 없으면 기록만."""
@@ -294,21 +294,24 @@ class MockAccountBroker:
         self.j.write("event", clock=clock, text=f"주문 전 잔고 {got} ≠ 기대 {exp:+d} — 주문 안 냄, 잔고로 확인")
         return False
 
-    def fill(self, side: str, ref_price: float, clock: str, why: str) -> float | None:
-        """시장가 1계약을 **한 번** 넣고 체결가를 돌려줍니다. 체결가를 못 받으면 None(재전송 없음).
+    def fill(self, side: str, ref_price: float, clock: str, why: str, qty: int = 1) -> float | None:
+        """시장가 qty계약(기본 1)을 **한 번** 넣고 체결가를 돌려줍니다. 체결가를 못 받으면 None(재전송 없음).
 
-        None 이면 `needs_check` 가 서서 실행이 바로 잔고를 대조합니다."""
+        qty>1 이어도 전체체결만 체결로 봅니다 — 부분체결로 15초가 지나면 `unresolved`(보수적, 부분 수량은 읽지 않음).
+        qty<1 은 아무것도 보내기 전에 ValueError. None 이면 `needs_check` 가 서서 실행이 바로 잔고를 대조합니다."""
+        if qty < 1:
+            raise ValueError(f"주문 수량은 1 이상이어야 합니다: {qty}")
         self.last_fill_fee = None
         self.unknown = False
         self.sent = False
         self.held_back = False
         self.landed = None
-        px = self._fill(side, ref_price, clock, why)
+        px = self._fill(side, ref_price, clock, why, qty)
         if px is None and not self.held_back:
             self.needs_check = True     # 보류(안 보냄이 확실)는 대조할 것이 없다
         return px
 
-    def _fill(self, side: str, ref_price: float, clock: str, why: str) -> float | None:
+    def _fill(self, side: str, ref_price: float, clock: str, why: str, qty: int = 1) -> float | None:
         if self._blocked_by_blind(clock):
             return None
         if self._blocked_by_unresolved(side, clock):
@@ -324,25 +327,25 @@ class MockAccountBroker:
         try:
             with purpose("진입" if why.startswith("진입") else "청산"):
                 self.sent = True
-                res = self.api.market_order(self.sym, side, 1, self.exec_cnd)
+                res = self.api.market_order(self.sym, side, qty, self.exec_cnd)
         except BusinessError as e:
             # 서버가 업무 거부로 답했다 — 접수 안 됨이 확인된 것
             self.j.write("order", clock=clock, side=side, ok=False, text=f"주문 거부 · {why}", error=error_text(e))
             return None
         except Exception as e:
             # 응답 없음(TransportError)·처리 여부 모름(GatewayError)·그 밖 — 접수됐을 수 있다. 다시 보내지 않는다.
-            self._sent_blind(side, pre)
+            self._sent_blind(side, pre, qty)
             self.j.write("order", clock=clock, side=side, ok=False, unknown=True,
                          text=f"주문 결과 모름 · {why} — 잔고로 확인될 때까지 새 주문 없음", error=error_text(e))
             return None
         res = res if isinstance(res, dict) else {}
         ord_no = str(res.get("ord_no") or "").strip()
         self.j.write("order", clock=clock, side=side, ord_no=ord_no, **self.api.order_log(res),
-                     ok=bool(ord_no), text=f"시장가 1계약 · {why}")
+                     ok=bool(ord_no), text=f"시장가 {qty}계약 · {why}")
         if not ord_no:
-            self._sent_blind(side, pre)     # 응답은 왔지만 주문번호가 없다 — 접수 여부는 잔고로
+            self._sent_blind(side, pre, qty)     # 응답은 왔지만 주문번호가 없다 — 접수 여부는 잔고로
             return None
-        return self._confirm(side, ord_no, clock, ref_price, pre)
+        return self._confirm(side, ord_no, clock, ref_price, pre, qty)
 
     def explains(self, held: int | None) -> bool:
         """잔고 held 가 이 실행의 결과 모름 주문으로 설명되는가. 실행기가 체결가 없이 잔고를 따를 때 묻는다.
@@ -367,12 +370,13 @@ class MockAccountBroker:
             return dict(self.blind)
         return None
 
-    def _sent_blind(self, side: str, pre: int | None) -> None:
+    def _sent_blind(self, side: str, pre: int | None, qty: int = 1) -> None:
         """번호 없이 결과를 모르는 주문 — 잔고가 그 주문 체결 뒤 보유를 보일 때까지 모든 주문을 막는 표시."""
         self._mark_unknown()
-        self.blind = {"side": side, "pre": pre, "post": self._post(pre, side)}
+        self.blind = {"side": side, "pre": pre, "post": self._post(pre, side, qty)}
 
-    def _confirm(self, side: str, ord_no: str, clock: str, ref_price: float, pre: int | None) -> float | None:
+    def _confirm(self, side: str, ord_no: str, clock: str, ref_price: float, pre: int | None,
+                 qty: int = 1) -> float | None:
         """주문내역에서 이 주문번호가 전체체결(6)이 될 때까지 0.5초씩 최대 30번 봅니다.
 
         전체체결인데 체결가를 못 읽으면(두 칸 다 0·빈 값) **체결된 것으로 보고 기준가로 기록**합니다 — 주문내역이
@@ -412,7 +416,7 @@ class MockAccountBroker:
                 return None
         self._mark_unknown()
         self.unresolved, self.unresolved_side, self.unresolved_checks = ord_no, side, 0
-        self.unresolved_pre, self.unresolved_post = pre, self._post(pre, side)
+        self.unresolved_pre, self.unresolved_post = pre, self._post(pre, side, qty)
         self.j.write("event", clock=clock, ord_no=ord_no, text="15초 안에 전체체결 확인 안 됨 — 잔고로 확인",
                      raw=self.api.log_row(last))
         return None

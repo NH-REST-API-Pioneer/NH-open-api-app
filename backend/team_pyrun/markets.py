@@ -253,6 +253,12 @@ class OverseasAdapter(MarketAdapter):
     market = OVERSEAS
     account_keys = OVERSEAS_ACCOUNT_KEYS
 
+    def __init__(self, api_module: ModuleType | Any = default_api, *, exch_cd: str | None = None,
+                 cur_cd: str | None = None):
+        super().__init__(api_module)
+        #: 거래소·통화 코드 — 없으면 api 의 기본값(MKU: `FSGX`·`USD`)을 쓴다. 다른 종목(예: NYMEX `FCME`)용
+        self.exch_cd, self.cur_cd = exch_cd, cur_cd
+
     @property
     def filled(self) -> str:        # type: ignore[override]
         return self.api.OVS_FILLED
@@ -282,7 +288,7 @@ class OverseasAdapter(MarketAdapter):
 
     def deposit(self, biz_dt: str) -> dict:
         """USD 예수금. 날짜는 브로커가 실행 시작 때 정한 한국 날짜(해외 실행은 23:55 에 끝나 자정을 넘지 않음)."""
-        return self.api.ovs_deposit("USD", biz_dt=biz_dt)
+        return self.api.ovs_deposit(self.cur_cd or "USD", biz_dt=biz_dt)
 
     def fill_price(self, row: dict) -> float | None:
         """`exec_pric`, 0·빈 값이면 `ord_avg_pric`, 둘 다 못 읽으면 None (`api.ovs_fill_price`)."""
@@ -315,10 +321,14 @@ class OverseasAdapter(MarketAdapter):
 
     # ---- 1분봉 실행이 부름
     def chart_minute(self, sym: str, *, req_qty: int) -> list[dict]:
-        return self.api.ovs_chart_minute(sym, req_qty=req_qty)
+        if self.exch_cd is None:
+            return self.api.ovs_chart_minute(sym, req_qty=req_qty)
+        return self.api.ovs_chart_minute(sym, req_qty=req_qty, exch_cd=self.exch_cd)
 
     def price(self, sym: str) -> dict:
-        return self.api.ovs_price(sym)
+        if self.exch_cd is None:
+            return self.api.ovs_price(sym)
+        return self.api.ovs_price(sym, exch_cd=self.exch_cd)
 
     def spec(self) -> tuple[float, float]:
         """(호가 단위, 1틱 가치 USD) — 해외 품목 세부정보의 `MKU` 줄(큰 계약 KU 아님)."""
@@ -348,21 +358,26 @@ def _all_pages(page) -> list[dict]:
     raise PagesLeft(f"{OVS_MAX_PAGES}쪽을 넘게 이어집니다 — 받은 줄이 전부가 아니라 쓰지 않습니다")
 
 
-def adapter(market: Market, api_module: ModuleType | Any = default_api) -> MarketAdapter:
-    """그 시장의 어댑터. `api_module` 은 시험에서 가짜를 꽂는 자리."""
+def adapter(market: Market, api_module: ModuleType | Any = default_api, *, exch_cd: str | None = None,
+            cur_cd: str | None = None) -> MarketAdapter:
+    """그 시장의 어댑터. `api_module` 은 시험에서 가짜를 꽂는 자리. `exch_cd`·`cur_cd` 는 해외만 씀(국내는 무시)."""
     if market.id == "domestic":
         return DomesticAdapter(api_module)
     if market.id == "overseas":
-        return OverseasAdapter(api_module)
+        return OverseasAdapter(api_module, exch_cd=exch_cd, cur_cd=cur_cd)
     raise ValueError(f"모르는 시장입니다: {market.id!r}")
 
 
-def adapter_for(market: Market, api_module: ModuleType | Any = default_api) -> MarketAdapter:
+def adapter_for(market: Market, api_module: ModuleType | Any = default_api, *, exch_cd: str | None = None,
+                cur_cd: str | None = None) -> MarketAdapter:
     """그 시장의 어댑터. `api_module` 이 이미 그 시장 어댑터면 그대로(감싸지 않음), 다른 시장 어댑터면 속의
-    api 로 그 시장 어댑터를 새로, 모듈·가짜면 `adapter(market, api_module)`."""
+    api 로 그 시장 어댑터를 새로, 모듈·가짜면 `adapter(market, api_module)`.
+    해외에서 `exch_cd`·`cur_cd` 를 주면 이미 어댑터여도 그 코드로 속의 api 를 다시 감쌉니다."""
     if isinstance(api_module, MarketAdapter):
-        return api_module if api_module.market is market else adapter(market, api_module.api)
-    return adapter(market, api_module)
+        if api_module.market is market and exch_cd is None and cur_cd is None:
+            return api_module
+        return adapter(market, api_module.api, exch_cd=exch_cd, cur_cd=cur_cd)
+    return adapter(market, api_module, exch_cd=exch_cd, cur_cd=cur_cd)
 
 
 def as_adapter(api_module: ModuleType | Any) -> MarketAdapter:

@@ -1,5 +1,6 @@
 """ctx — 한도·멈춤·장 쉼·짝 되돌리기 (가짜 Feed·Book)."""
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -48,7 +49,10 @@ class FakeBook:
         self.pos = {"a": 0, "b": 0}
         self.orders = []
         self.halted = None
-        self.script = {}     # (leg, nth call) -> exception
+        self.script = {}     # (leg, nth call) -> exception 또는 돌려줄 Fill
+
+    def halt(self, reason):
+        self.halted = self.halted or reason
 
     def position(self, leg):
         return self.pos[leg.name]
@@ -56,6 +60,9 @@ class FakeBook:
     def order(self, leg, qty, why):
         self.orders.append((leg.name, qty, why))
         exc = self.script.get((leg.name, len([o for o in self.orders if o[0] == leg.name])))
+        if isinstance(exc, Fill):
+            self.pos[leg.name] += exc.qty
+            return exc
         if exc is not None:
             if isinstance(exc, Halted):
                 self.halted = "결과 모름"
@@ -76,7 +83,7 @@ def make(max_qty=None, per_min=10, inherited=None, roll=None):
     feed, book, jr, stop = FakeFeed(), FakeBook(), Jr(), threading.Event()
     ctx = Ctx({"a": A, "b": B}, feed, book, jr, max_qty=max_qty or {"a": 5, "b": 5},
               orders_per_min=per_min, inherited=inherited, stop=stop,
-              roll=roll or (lambda n: mk(n + "2")))
+              roll=roll or (lambda n: replace(mk(n), sym=n + "Z27")))
     return ctx, feed, book, jr, stop
 
 
@@ -106,13 +113,11 @@ def test_review2_stopped_runner_ignoring_running_gets_no_orders():
     ctx, _, book, _, stop = make()
     stop.set()
     assert not ctx.running()
-    with pytest.raises(OrderRejected, match="중지됨"):
-        ctx.order("a", 1)
-    with pytest.raises(Halted):
-        ctx.order("a", 1)
-    with pytest.raises(Halted):
-        ctx.target({"a": 1, "b": -1})
-    assert book.orders == []
+    for call in (lambda: ctx.order("a", 1), lambda: ctx.target({"a": 1, "b": -1})):
+        with pytest.raises(OrderRejected, match="중지됨") as ei:
+            call()
+        assert not isinstance(ei.value, Halted)
+    assert book.orders == [] and book.halted is None
 
 
 def test_closed_market_rejected():
@@ -204,7 +209,7 @@ def test_revert_rejected_halts():
     book.script = {("b", 1): OrderRejected("거부"), ("a", 2): OrderRejected("되돌리기 거부")}
     with pytest.raises(Halted):
         ctx.target({"a": 2, "b": -2})
-    assert not ctx.running()
+    assert not ctx.running() and book.halted and "되돌리기 거부" in book.halted
     n = len(book.orders)
     with pytest.raises(Halted):
         ctx.order("a", 1)
@@ -241,7 +246,7 @@ def test_roll_only_when_flat():
         ctx.roll("a")
     book.pos["a"] = 0
     new = ctx.roll("a")
-    assert ctx.leg("a") is new and new.name == "a2"
+    assert ctx.leg("a") is new and new.sym == "aZ27"
 
 
 def test_stop_aware_waits_use_stop_event():
@@ -260,3 +265,81 @@ def test_inherited_is_read_only_copy():
     src["a"]["qty"] = 7
     assert ctx.inherited == {"a": {"qty": 1, "avg_price": 2.0}}
     assert make()[0].inherited is None
+
+
+def test_stale_leg_after_roll_rejected():
+    ctx, _, book, _, _ = make()
+    old = ctx.leg("a")
+    ctx.roll("a")
+    with pytest.raises(OrderRejected, match="낡은"):
+        ctx.order(old, 1)
+    with pytest.raises(OrderRejected):
+        ctx.quote(old)
+    with pytest.raises(OrderRejected):
+        ctx.order(replace(ctx.leg("a"), tick=9.0), 1)
+    ctx.order(ctx.leg("a"), 1)
+    assert len(book.orders) == 1
+
+
+def test_roll_accepts_leg_argument():
+    ctx, *_ = make()
+    assert ctx.roll(A).sym == "aZ27"
+
+
+def test_wrong_sign_fill_halts_book():
+    ctx, _, book, _, _ = make()
+    book.script = {("a", 1): Fill("a", -1, 1.0, None)}
+    with pytest.raises(Halted):
+        ctx.order("a", 1)
+    assert book.halted
+    with pytest.raises(Halted):
+        ctx.order("b", 1)
+
+
+def test_wrong_leg_fill_halts_book():
+    ctx, _, book, _, _ = make()
+    book.script = {("a", 1): Fill("b", 1, 1.0, None)}
+    with pytest.raises(Halted):
+        ctx.order("a", 1)
+    assert book.halted
+
+
+def test_unexpected_exception_in_send_halts():
+    ctx, _, book, jr, _ = make()
+    book.script = {("a", 1): RuntimeError("boom")}
+    with pytest.raises(Halted) as ei:
+        ctx.order("a", 1)
+    assert isinstance(ei.value.__cause__, RuntimeError) and book.halted
+    assert any(k == "halt" for k, _ in jr.rows)
+
+
+def test_unexpected_exception_in_revert_halts():
+    ctx, _, book, _, _ = make()
+    book.script = {("b", 1): OrderRejected("거부"), ("a", 2): RuntimeError("boom")}
+    with pytest.raises(Halted):
+        ctx.target({"a": 2, "b": -2})
+    assert book.halted
+
+
+def test_zero_qty_fill_skipped_in_revert():
+    ctx, _, book, _, _ = make()
+    book.script = {("a", 1): Fill("a", 0, 0.0, None), ("b", 1): OrderRejected("거부")}
+    with pytest.raises(OrderRejected):
+        ctx.target({"a": 2, "b": -2})
+    assert not any(o[2] == "revert" for o in book.orders)
+
+
+def test_r11_stop_mid_target_still_reverts_filled_leg():
+    ctx, _, book, _, stop = make()
+    orig = book.order
+
+    def order_then_stop(leg, qty, why):
+        r = orig(leg, qty, why)
+        if why == "target":
+            stop.set()
+        return r
+    book.order = order_then_stop
+    with pytest.raises(OrderRejected, match="중지됨"):
+        ctx.target({"a": 2, "b": -2})
+    assert book.orders == [("a", 2, "target"), ("a", -2, "revert")]
+    assert book.pos == {"a": 0, "b": 0} and book.halted is None

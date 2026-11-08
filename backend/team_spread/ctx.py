@@ -33,12 +33,13 @@ class Halted(Exception):
     """멈춘 실행 — 결과를 모르는 주문이 있어 더 주문하지 않는다."""
 
 
-class _Stopped(OrderRejected, Halted):
-    """중지 뒤 주문 — 실행기가 어느 쪽을 잡아도 주문은 나가지 않는다."""
+class _Stopped(OrderRejected):
+    """중지 뒤 주문 — 중지는 멈춤이 아니다(`Halted` 아님). 주문은 나가지 않는다."""
 
 
 @dataclass(frozen=True)
 class Fill:
+    """체결 결과 — qty = 실제 체결 수량, 부호 = 방향(매수 +). 되돌리기가 이 부호에 기댄다."""
     leg: str
     qty: int
     price: float
@@ -46,10 +47,14 @@ class Fill:
 
 
 class Book(Protocol):
-    """주문 장부 — 거부면 `OrderRejected`, 결과 모름이면 `Halted`(장부가 스스로 멈춤 상태)."""
+    """주문 장부 — 거부면 `OrderRejected`, 결과 모름이면 `Halted`(장부가 스스로 멈춤 상태).
+
+    멈춤 상태의 단일 근원은 장부다(`halted`, `halt(reason)`). 반환 `Fill.qty` 는 실제 체결 수량이며 부호 = 방향(매수 +).
+    """
 
     @property
     def halted(self) -> str | None: ...
+    def halt(self, reason: str) -> None: ...
     def position(self, leg: Leg) -> int: ...
     def order(self, leg: Leg, qty: int, why: str) -> Fill: ...
 
@@ -68,16 +73,17 @@ class Ctx:
         self._stop = stop
         self._roll = roll
         self._sent: list[datetime] = []     # 실행기가 시도한 주문 시각 (분당 한도)
-        self._halt_reason: str | None = None
 
     # ── 다리·시세 ────────────────────────────────────────────
     def _leg(self, leg: Leg | str) -> Leg:
-        if isinstance(leg, Leg):
-            return leg
+        name = leg.name if isinstance(leg, Leg) else leg
         try:
-            return self._legs[leg]
+            cur = self._legs[name]
         except KeyError:
-            raise KeyError(f"다리 「{leg}」 이 없습니다") from None
+            raise KeyError(f"다리 「{name}」 이 없습니다") from None
+        if isinstance(leg, Leg) and leg != cur:
+            raise OrderRejected(f"낡은 다리 「{name}」 ({leg.sym}) — 지금은 {cur.sym}, ctx.leg 로 다시 받으세요")
+        return cur
 
     def leg(self, name: str) -> Leg:
         return self._leg(name)
@@ -118,6 +124,7 @@ class Ctx:
 
     def roll(self, name: str) -> Leg:
         old = self._leg(name)
+        name = old.name
         if self._book.position(old) != 0:
             raise OrderRejected(f"{name} 보유가 0 이 아니라 월물을 바꿀 수 없습니다")
         new = self._roll(name)
@@ -127,7 +134,12 @@ class Ctx:
 
     # ── 주문 ────────────────────────────────────────────────
     def _halted(self) -> str | None:
-        return self._halt_reason or self._book.halted
+        return self._book.halted
+
+    def _halt(self, reason: str) -> None:
+        if self._book.halted is None:
+            self._book.halt(reason)
+        self._journal.write("halt", reason=reason)
 
     def _recent(self, now: datetime) -> int:
         self._sent = [t for t in self._sent if now - t < RATE_WINDOW]
@@ -158,10 +170,19 @@ class Ctx:
         self._check_rate()
         self._sent.append(self._feed.now())
         try:
-            return self._book.order(leg, qty, why)
-        except Halted as e:
-            self._halt_reason = self._halt_reason or str(e) or "결과 모름"
+            fill = self._book.order(leg, qty, why)
+        except OrderRejected:
             raise
+        except Halted as e:
+            self._halt(str(e) or "결과 모름")
+            raise
+        except Exception as e:     # 그 밖의 오류는 결과 모름
+            self._halt(f"주문 결과 모름: {e!r}")
+            raise Halted(f"주문 결과 모름: {e!r}") from e
+        if fill.leg != leg.name or fill.qty * qty < 0:
+            self._halt(f"체결 결과가 요청과 맞지 않음: 요청 {leg.name} {qty}, 체결 {fill.leg} {fill.qty}")
+            raise Halted(self._halted() or "체결 결과 이상")
+        return fill
 
     def order(self, leg: Leg | str, qty: int) -> Fill | None:
         if qty == 0:
@@ -194,15 +215,21 @@ class Ctx:
         """이번 target 에서 체결된 다리를 반대로 한 번 — 한도·분당 수에 걸리지 않는다. 안 되면 멈춤."""
         failed: list[str] = []
         for f in reversed(fills):
+            if f.qty == 0:
+                continue
             leg = self._leg(f.leg)
             try:
                 self._book.order(leg, -f.qty, "revert")
             except OrderRejected as e:
                 failed.append(f"{f.leg}: {e}")
-            except Halted:
-                self._halt_reason = self._halt_reason or "되돌리기 결과 모름"
+            except Halted as e:
+                self._halt(str(e) or "되돌리기 결과 모름")
                 raise
+            except Exception as e:
+                self._halt(f"되돌리기 결과 모름: {e!r}")
+                raise Halted(f"되돌리기 결과 모름: {e!r}") from e
         self._journal.write("revert", legs=[f.leg for f in fills], cause=str(cause), failed=failed)
         if failed:
-            self._halt_reason = "되돌리기 거부 — " + "; ".join(failed)
-            raise Halted(self._halt_reason) from cause
+            reason = "되돌리기 거부 — " + "; ".join(failed)
+            self._halt(reason)
+            raise Halted(reason) from cause

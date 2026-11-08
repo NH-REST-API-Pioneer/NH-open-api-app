@@ -211,11 +211,15 @@ class SpreadRun:
                  master: Callable[[], tuple[list, list]] = master_rows,
                  active_env: Callable[[], str | None] = runtime.active_environment,
                  inherited: dict[str, dict] | None = None, roll_guard: Callable[[str], None] | None = None,
-                 timing: Timing = Timing()):
+                 timing: Timing = Timing(), legs: dict[str, Leg] | None = None,
+                 paper_book: Callable[..., PaperBook] = PaperBook):
         self.run_id, self.folder, self.loaded, self.spec = run_id, Path(folder), loaded, spec
         self.now, self.sleep, self.timing = now, sleep, timing
         self._api, self._master, self._active_env, self._roll_guard = api_module, master, active_env, roll_guard
         self.kind = "spread"
+        #: 재생(`replay.py`)만 쓰는 두 자리 — 다리를 마스터·서버 없이 직접 받고, 종이 장부를 바꿔 끼운다
+        self._fixed_legs = dict(legs) if legs is not None else None
+        self._paper_book = paper_book
         self.orders = spec.mode == "orders"
         #: 이어받기(판정 R20) — registry(Task 8)가 확인 순간 다시 읽은 잔고로 채워 넘긴 값. prepare 가 한 번 고른 뒤
         #: `{"from": 앞선 실행 id, "ended_reason": 글, "legs": {다리: {"qty": int, "avg_price": float | None}}}` 만 남는다
@@ -289,8 +293,11 @@ class SpreadRun:
         j.write("event", text=f"{where} · 주문 {'모의계좌' if self.orders else '종이'} · 스프레드")
         j.write("event", text=f"실행기 {loaded.file} · sha256 {loaded.sha256[:12]} · 다리 {specs} · "
                               f"최대 보유 {self.max_qty} · 분당 주문 {self.orders_per_min}")
-        self.sources = load_sources(specs, api_module=self._api, master=self._master)
-        self.legs = resolve_legs(specs, self.sources, today=self._today())
+        if self._fixed_legs is not None:
+            self.sources, self.legs = self._fixed(specs)
+        else:
+            self.sources = load_sources(specs, api_module=self._api, master=self._master)
+            self.legs = resolve_legs(specs, self.sources, today=self._today())
         for leg in self.legs.values():
             j.write("leg", leg=leg.name, why="시작", **{k: v for k, v in asdict(leg).items() if k != "name"})
         self._write_run()
@@ -311,13 +318,25 @@ class SpreadRun:
                     raise StartRefused(f"{name}({leg.sym}) 잔고 {got:+d}계약이 남아 있습니다 — 정리한 뒤 시작하세요")
             j.write("event", text="시작 잔고 " + " · ".join(f"{n}({lg.sym}) {held[n]:+d}" for n, lg in self.legs.items()))
         else:
-            book = PaperBook(self.feed, j, positions=start)
+            book = self._paper_book(self.feed, j, positions=start)
         if self.inherited:
             j.write("event", text=f"이어받음 ← {self.inherited_from}", inherited=self.inherited)
         self.book = book
         self._rec = _Recorder(book, self._record)
         self.ctx = Ctx(self.legs, self.feed, self._rec, j, max_qty=self.max_qty, orders_per_min=self.orders_per_min,
                        inherited=self.inherited, stop=self._stop, roll=self._roll)
+
+    def _fixed(self, specs: dict[str, str]) -> tuple[Sources, dict[str, Leg]]:
+        """재생이 직접 준 다리 — 마스터·품목 세부정보를 읽지 않는다(월물 교체는 마스터가 없어 거절됨)."""
+        legs = self._fixed_legs
+        if self.spec.mode != "replay":
+            raise StartRefused("다리를 직접 주는 건 재생만 됩니다")
+        if set(legs) != set(specs):
+            raise StartRefused(f"다리가 실행기와 맞지 않습니다: {sorted(legs)} ≠ {sorted(specs)}")
+        syms = [leg.sym for leg in legs.values()]
+        if len(set(syms)) != len(syms):
+            raise StartRefused(f"두 다리가 같은 종목입니다: {', '.join(syms)}")
+        return Sources([], [], [], []), dict(legs)
 
     def _limits(self, specs: dict[str, str]) -> None:
         given = dict(self.spec.max_qty or {})

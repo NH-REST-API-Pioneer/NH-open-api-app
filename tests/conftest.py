@@ -38,6 +38,8 @@ import os
 # 서버 배포 시험은 `nh.example.com` 을 쓴다. 이 값들은 시험에서만 — 실제 실행에는 들어가지 않는다.
 os.environ["NH_PUBLIC_HOSTS"] = "testserver,nh.example.com"
 
+from datetime import datetime
+
 import pytest
 
 from backend.nh_api.fixtures import PRIVATE_DIR_FLAG
@@ -253,6 +255,10 @@ def _파이썬_전략_실행은_임시_자리로(tmp_path_factory, monkeypatch):
         자리 / "pyrun_schedules.json", registry_lib._registry))
 
 
+def _스프레드_시세_막힘(**_kw):
+    raise AssertionError("시험이 스프레드 실시간 시세를 열려 했습니다")
+
+
 @pytest.fixture(autouse=True)
 def _스프레드_실행은_임시_자리로(tmp_path_factory, monkeypatch):
     """팀: 스프레드 `registry()` 싱글턴을 시험마다 임시 폴더의 `SpreadRegistry` 로 둡니다(스레드 없음, api 는 부르면 실패)."""
@@ -261,4 +267,5 @@ def _스프레드_실행은_임시_자리로(tmp_path_factory, monkeypatch):
     자리 = tmp_path_factory.mktemp("spread")
     monkeypatch.setattr(spread_lib, "_registry", spread_lib.SpreadRegistry(
         자리 / "spreads", 자리 / "runners", start_thread=False, api_module=_파이썬_전략_api_막힘(),
-        sleep=lambda _초: None))
+        sleep=lambda _초: None, active_env=lambda: "paper", master=lambda: ([], []),
+        feed_factory=_스프레드_시세_막힘, now=lambda: datetime(2026, 11, 9, 10, 15, 0)))

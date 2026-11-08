@@ -758,3 +758,21 @@ def test_다리_찾기_함수는_실행_밖에서도_쓴다(tmp_path):
     assert isinstance(src, Sources) and {n: x.sym for n, x in legs.items()} == {"ho": "HOF27", "rb": "RBZ26"}
     with pytest.raises(StartRefused, match="실행기에 없는 다리"):
         leg_specs(loaded, {"zz": "HO"})
+
+
+def test_받은_분봉은_minute_줄로_기록된다(tmp_path):
+    from backend.team_spread.bars import LegBar, Minute
+
+    def run_fn(ctx):
+        ctx.next_minute(["ho", "rb"])
+
+    run, feed, api = build(tmp_path, run_fn, mode="paper")
+    m = Minute("20261109", "101500", {"ho": LegBar(1, 2, 0.5, 1.5, 10, False), "rb": LegBar(3, 3, 3, 3, 0, True)})
+    sent = []
+    feed.next_minute = lambda legs, stop: sent.append(1) or (m if len(sent) == 1 else None)
+    start(run).join(5)
+    rows = [json.loads(x) for x in (run.folder / "journal.jsonl").read_text("utf-8").splitlines()]
+    mins = [r for r in rows if r["kind"] == "minute"]
+    assert len(mins) == 1
+    assert mins[0]["date"] == "20261109" and mins[0]["time"] == "101500"
+    assert mins[0]["legs"] == {"ho": {"close": 1.5, "filled": False}, "rb": {"close": 3, "filled": True}}

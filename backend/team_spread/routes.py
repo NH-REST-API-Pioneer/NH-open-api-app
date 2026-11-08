@@ -145,12 +145,26 @@ def start_run(body: StartBody) -> dict[str, Any]:
 def get_run(run_id: str) -> dict[str, Any]:
     live = registry().get(run_id)
     if live is not None:
-        return live.status()
+        data = live.status()
+        if data.get("state") in FINISHED:       # 끝난 실행은 폴더에서 읽은 것과 같은 칸을 보인다
+            _merge_summary(data, live.folder)
+        return data
     data = _read_json(_folder(run_id) / "run.json")
     if data is None:
         raise HTTPException(status_code=404, detail=f"실행 기록을 읽지 못했습니다: {run_id}")
     data.setdefault("id", run_id)
+    _merge_summary(data, _folder(run_id))
     return data
+
+
+def _merge_summary(data: dict[str, Any], folder: Path) -> None:
+    """끝난 실행의 요약 파일(`summary.json` 전체)을 `summary` 로(없으면 null), `halted`·`unresolved_order` 는 칸이 비었을 때만 채운다
+    (파이썬 전략 라우트의 `_merge_summary` 와 같은 뜻 — 스프레드 요약 파일은 그 자체가 요약이다)."""
+    summary = _read_json(folder / "summary.json") or {}
+    data["summary"] = summary or None
+    for key in ("halted", "unresolved_order"):
+        if summary.get(key) is not None and data.get(key) is None:
+            data[key] = summary[key]
 
 
 def _tail(folder: Path, name: str, after: int) -> dict[str, Any]:
@@ -168,22 +182,33 @@ def run_api_log(run_id: str, after: int = Query(0, ge=0)) -> dict[str, Any]:
     return _tail(_folder(run_id), "api_log.jsonl", after)
 
 
+def _minute_at(row: dict[str, Any]) -> str | None:
+    """`minute` 줄의 `date`(YYYYMMDD)·`time`(HHMMSS)를 `2026-11-09T10:15:00` 로. 뜻을 못 알아보면 None."""
+    d, t = str(row.get("date") or ""), str(row.get("time") or "")
+    if len(d) != 8 or len(t) != 6 or not (d + t).isdigit():
+        return None
+    return f"{d[:4]}-{d[4:6]}-{d[6:]}T{t[:2]}:{t[2:4]}:{t[4:]}"
+
+
 @router.get("/runs/{run_id}/bars")
 def run_bars(run_id: str) -> dict[str, Any]:
     """차트용 `{"legs": {다리: [{at, close}]}, "logs": {이름: [{at, value}]}, "fills": [...]}`.
 
-    실행은 분마다의 시세를 기록하지 않는다 — 기록에 있는 것은 체결(`fill`)·`log` 점뿐이다. 그래서 `legs` 는 체결가가
-    있는 체결의 (시각, 가격)이고(`close` 칸 이름은 화면 약속), 분 봉 시계열이 아니다. `fills` 는 체결 줄(다리·수량·가격·수수료)."""
+    `legs` 는 실행이 받은 분마다 남긴 `minute` 줄의 다리별 종가(채워진 봉도 그 값 그대로 — `filled` 는 일지에서 본다).
+    준비 봉(시작 때 조회한 지난 봉)은 일지에 없다. `logs` 는 `log` 줄의 수 값, `fills` 는 체결 줄(다리·수량·가격·수수료)."""
     rows, _ = Journal(_folder(run_id) / "journal.jsonl").tail(0)
     legs: dict[str, list[dict[str, Any]]] = {}
     logs: dict[str, list[dict[str, Any]]] = {}
     fills: list[dict[str, Any]] = []
     for row in rows:
         kind = row.get("kind")
-        if kind == "fill":
+        if kind == "minute":
+            at = _minute_at(row)
+            for name, bar in (row.get("legs") or {}).items():
+                if at and isinstance(bar, dict) and bar.get("close") is not None:
+                    legs.setdefault(name, []).append({"at": at, "close": bar["close"]})
+        elif kind == "fill":
             fills.append({k: row.get(k) for k in ("at", "clock", "leg", "sym", "qty", "price", "fee")})
-            if row.get("price") is not None and row.get("leg"):
-                legs.setdefault(row["leg"], []).append({"at": row.get("at"), "close": row["price"]})
         elif kind == "log" and isinstance(row.get("value"), (int, float)) and row.get("name"):
             logs.setdefault(row["name"], []).append({"at": row.get("at"), "value": row["value"]})
     return {"legs": legs, "logs": logs, "fills": fills}

@@ -134,8 +134,8 @@ class _Recorder:
 class _Seen:
     """ctx·장부가 보는 시세 — 그대로 넘기며 다리별 마지막 값(봉 종가·현재가)을 기억한다(상태 화면용)."""
 
-    def __init__(self, feed: Feed, last: dict[str, float]):
-        self._f, self._last = feed, last
+    def __init__(self, feed: Feed, last: dict[str, float], journal: Journal | None = None):
+        self._f, self._last, self._j = feed, last, journal
 
     def _bars(self, minutes: list) -> None:
         for m in minutes[-1:]:
@@ -151,7 +151,19 @@ class _Seen:
         m = self._f.next_minute(legs, stop)
         if m is not None:
             self._bars([m])
+            self._journal_minute(m)
         return m
+
+    def _journal_minute(self, m) -> None:
+        """받은 분봉 한 묶음을 `minute` 줄로 남긴다(차트용 — 다리별 종가와 채운 봉 표시). 준비 봉(`history`)은 남기지 않는다
+        (시작 때 한꺼번에 오는 많은 줄이 일지를 채우지 않게). 기록 실패는 실행을 막지 않는다."""
+        if self._j is None:
+            return
+        try:
+            self._j.write("minute", date=m.date, time=m.time,
+                          legs={n: {"close": b.close, "filled": b.filled} for n, b in m.legs.items()})
+        except OSError:
+            pass
 
     def quote(self, leg):
         q = self._f.quote(leg)
@@ -217,7 +229,7 @@ class SpreadRun:
         self.apilog = ApiLog(self.folder / "api_log.jsonl", run_id)
         self._last: dict[str, float] = {}
         self.feed = _Seen(feed_factory(now=now, on_wait=self._on_wait, on_gap=self._on_gap,
-                                       on_error=self._on_feed_error), self._last)
+                                       on_error=self._on_feed_error), self._last, self.j)
         self.legs: dict[str, Leg] = {}
         self.sources: Sources | None = None
         self.book: AccountBook | PaperBook | None = None

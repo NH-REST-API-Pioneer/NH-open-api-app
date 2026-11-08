@@ -130,18 +130,39 @@ def test_일지_이어_읽기(client, reg):
     assert client.get(f"{BASE}/runs/{run_id}/api-log").json() == {"rows": [], "next": 0}
 
 
-def test_차트용_점은_체결과_log_에서(client, reg):
+def test_차트용_점은_분봉_줄에서_체결과_log_는_따로(client, reg):
     folder = write_prev(reg, "20261108_S_orders")
     j = Journal(folder / "journal.jsonl")
+    j.write("minute", date="20261109", time="101500", legs={"ho": {"close": 1.5, "filled": False}, "rb": {"close": 3, "filled": True}})
+    j.write("minute", date="20261109", time="101600", legs={"ho": {"close": 1.6, "filled": False}})
     j.write("fill", clock="10:00:01", leg="ho", sym="HOZ26", qty=1, price=2.5, fee=0.1)
-    j.write("fill", clock="10:00:02", leg="rb", sym="RBZ26", qty=-1, price=None, fee=0.1)
     j.write("log", name="gap", value=1.5)
     j.write("log", name="skip", value="x")
     body = client.get(f"{BASE}/runs/20261108_S_orders/bars").json()
     assert set(body) == {"legs", "logs", "fills"}
-    assert [p["close"] for p in body["legs"]["ho"]] == [2.5] and "rb" not in body["legs"]
+    assert [p["close"] for p in body["legs"]["ho"]] == [1.5, 1.6] and [p["close"] for p in body["legs"]["rb"]] == [3]
+    assert body["legs"]["ho"][0]["at"] == "2026-11-09T10:15:00"
     assert [p["value"] for p in body["logs"]["gap"]] == [1.5] and "skip" not in body["logs"]
-    assert len(body["fills"]) == 2 and body["fills"][0]["leg"] == "ho"
+    assert len(body["fills"]) == 1 and body["fills"][0]["price"] == 2.5
+
+
+def test_끝난_실행은_요약을_합친다(client, reg):
+    folder = write_prev(reg, "20261108_S_orders")
+    assert client.get(f"{BASE}/runs/20261108_S_orders").json()["summary"] is None
+    (folder / "summary.json").write_text(json.dumps({"total": {"USD": {"fills": 4}}, "halted": "멈춤"}), encoding="utf-8")
+    got = client.get(f"{BASE}/runs/20261108_S_orders").json()
+    assert got["summary"]["total"] == {"USD": {"fills": 4}} and got["halted"] == "멈춤"
+    run_id = start(client).json()["id"]
+    client.post(f"{BASE}/runs/{run_id}/stop")
+    assert "summary" in client.get(f"{BASE}/runs/{run_id}").json()
+
+
+def test_기본_시험_레지스트리는_홈과_실제_시세를_못_쓴다():
+    from backend.team_spread import registry as m
+    fresh = m.registry()
+    assert fresh._active_env() == "paper"
+    assert fresh._master() == ([], [])
+    assert fresh._feed_factory.__name__ != "_live_feed"
 
 
 def test_내려받기는_세_파일만(client, reg):

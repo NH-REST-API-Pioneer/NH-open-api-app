@@ -2,6 +2,7 @@
 
 > 쓰는 법: 아래 `---` 사이를 통째로 복사해 AI(Claude·ChatGPT 등)에 붙여 넣고, 맨 끝 「내 전략」 칸에 전략 설명이나
 > 기존 코드(백테스트 파일 등)를 넣으세요. 나온 `.py` 를 「전략주문 › 파이썬 전략」에 올리면 됩니다.
+> 두 종목 이상을 함께 매매하는 스프레드 전략이면 맨 아래 「부록: 스프레드 실행기」 절을 대신(또는 함께) 붙여 넣으세요.
 > 사람이 읽는 자세한 설명은 `strategy-file-convention.md` 입니다. 이 프롬프트는 그 문서를 AI 가 틀리지 않게 줄인 것입니다.
 
 ---
@@ -347,3 +348,37 @@ class Engine:
 판정 봉(1분·5분·초 단위), 손절·익절·보유 시간, 하루 진입 한도를 적으면 좋다.)
 
 ---
+
+---
+
+# 부록: 스프레드 실행기 (두 종목 이상을 함께 매매할 때)
+
+위 1~10장은 **파이썬 전략**(종목 하나)입니다. 내 전략이 **둘 이상의 종목 사이 관계**(스프레드·페어·괴리)를 매매한다면 아래 약속의 **스프레드 실행기**를 쓰고,
+「전략주문 › 스프레드」에 올립니다. 이때는 위 1~10장의 `Params`·`on_minute`·`Signal` 을 쓰지 않습니다. 사람용 설명은 `spread-runner-convention.md`, 예제는 `examples/spread_rolling_beta.py`.
+
+## S1. 파일 모양
+
+- 맨 위에 `LEGS = {"이름": "종목"}` (이름은 영문·숫자·`_`, 값은 품목 뿌리 `"HO"` 또는 정확한 코드 `"HOZ26"`, 공백·`/` 없음)와 `def run(ctx):`(인자 하나) 가 **꼭** 있어야 한다.
+- 선택: `TITLE`(문자열) · `NAME`(영문·숫자·`_`·`-`) · `MAX_QTY`(양의 정수, 다리별 최대 보유 기본값. 없으면 5).
+- import 는 파일 맨 위에서만, 표준 라이브러리만. 주문·잔고·네트워크 코드를 넣지 않는다 — **주문은 `ctx` 로만** 한다.
+- `run` 은 실행 하나에 한 번 불리고 **돌려주면 실행이 끝난다**(보유가 있으면 앱이 정리). 날을 넘겨 보유하려면 `while ctx.running():` 으로 계속 돈다.
+
+## S2. `ctx` (이 이름만 쓴다)
+
+`ctx.leg(name)` · `ctx.bars(legs, count)` · `ctx.next_minute(legs)`(다음 분 `Minute`, 중지·끝이면 `None`; `m.legs[이름].open/high/low/close/volume/filled`, `m.date`, `m.time`) ·
+`ctx.quote(leg)` · `ctx.position(leg)`(매수 +) · `ctx.inherited` · `ctx.order(leg, qty)`(부호 = 방향) · `ctx.target({이름: 목표보유, …})` ·
+`ctx.log(name, 수, **칸)` · `ctx.running()` · `ctx.now()` · `ctx.sleep(초)` · `ctx.market_open(leg)` · `ctx.roll(이름)`.
+
+- `leg` 자리엔 다리 이름 글자를 쓰는 게 가장 안전하다. `ctx.roll` 뒤에는 옛 다리 객체가 낡아 `OrderRejected` — 이름을 쓰거나 `ctx.leg` 로 다시 받는다. `roll` 은 그 다리 보유가 0 일 때만.
+- 두 다리 짝은 **`ctx.target` 으로** 낸다(달라지는 모든 다리를 미리 검사해 하나라도 안 되면 아무것도 안 낸다; 뒤 다리가 거부되면 앞 다리를 한 번 되돌린다).
+- 루프는 `while ctx.running(): m = ctx.next_minute([...]); if m is None: break`.
+- 예외: `OrderRejected`(결과를 아는 실패 — 잡고 다음 분에 다시 가능; 중지 뒤엔 `OrderRejected("중지됨")`) · `Halted`(결과 모르는 주문으로 멈춤 — 더 주문 못 함, 돌려준다).
+- `Fill` = `leg qty price fee price_known`. `qty` 부호가 방향. `price_known` 이 False 면 `price` 는 기준가이니 **정확한 체결가로 손익을 계산하지 않는다**.
+- `ctx.inherited` 는 이어받은 실행에서만 `{"from": id, "ended_reason": 글, "legs": {이름: {"qty": 정수, "avg_price": 수|None}}}`, 아니면 `None`. 롤링 창 같은 자기 상태는 이것과 `ctx.bars` 로 직접 되살린다.
+- 한도는 앱이 적용한다: 다리별 최대 보유(기본 `MAX_QTY` 또는 5)·분당 주문 10건·장 쉬는 다리 주문 금지(국내는 주간 장만). 한도를 우회하려고 하지 않는다.
+
+## S3. 지어내지 말 것 · 점검
+
+- 진입·청산 규칙, 창 길이, 임계값을 내가 말하지 않았다면 지어내지 말고 **질문**한다.
+- 점검: ① `LEGS` 와 `run(ctx)` 있음 ② 주문은 모두 `ctx.target`/`ctx.order` ③ 루프가 `ctx.running()` 과 `next_minute` 의 `None` 을 확인 ④ `OrderRejected` 를 잡아 실행이 죽지 않게 함 ⑤ 날을 넘길 거라면 `return` 하지 않음 ⑥ 표준 라이브러리만.
+- 답은 파일 이름 + 코드 블록 하나 + 고른 값과 까닭 몇 줄. 재생 명령(`uv run python -m backend.team_spread.replay <파일> <다리>=<csv>:<tick>:<tick_value>:<통화> ...`)으로 먼저 돌려 보라고 덧붙인다.

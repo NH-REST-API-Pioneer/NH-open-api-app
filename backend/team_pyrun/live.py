@@ -56,7 +56,8 @@ week02 와 다른 점
 「장 끝」으로 끝납니다(끝 `"310000"` 에도 닿음). 실제 시각 그대로인 것: 분 바뀜 감지(`_seen_minute`)·잔고 대조 간격,
 장 판정(`order_open`·`known`·`day_end` — 거래일 시계는 `plan.clock.moment` 로 되돌려 넘김)·고정 휴장의 지금 시각,
 기록의 `at`, 예수금 날짜(`biz_dt` — 시작 때 달력 날짜, 설계 6장 모름). 기록 첫머리에 거래일과 바꾼 Params 를 한 줄 남깁니다.
-자정을 넘지 않는 실행은 `RunClock(False)` 라 달력 날짜·실제 시각 그대로입니다.
+자정을 넘지 않는 실행은 `RunClock(False)` 라 달력 날짜·실제 시각 그대로입니다. 실행 하나 = 하루라서, 자정 넘지 않는 실행도
+시작한 달력 날짜가 지난 뒤 온 step(잠들었다 자정 뒤에 깸)은 「대기」로 다음 장을 기다리지 않고 「장 끝」으로 끝냅니다.
 
 **장 판정(`judge`)** — 꽂으면 아래 「휴장」 규칙의 막힘이 `opening.order_open`(국내 `day` + 09:00 부터, 해외
 `open`·`open-2`·`next-day`) 이 아닌 모든 때가 됩니다(쉼·마감·국내 09:00 전·시간표 모름·판정 오류). 보내기 직전 관문
@@ -470,11 +471,13 @@ class LiveRun:
     def _label(self, now: datetime) -> tuple[str, str]:
         """실행의 (날짜, 시각) — 거래일 시계(`plan.clock.label`, 자정 넘지 않는 실행은 달력 그대로).
 
-        자정 넘는 실행이 그 거래일을 지난 뒤(다음 날 07:00 이후)면 거래일에서 이어 센 시각(`_trading_clock` —
-        다음 날 07:00 → `"310000"`, 08:00 → `"320000"`). 그래서 실행 끝(`"310000"` 이하)에 반드시 닿고, 끝내기 정리·기록이
-        다음 거래일 07:00 으로 되감기지 않는다. 날짜는 실행의 거래일이라 `_moment` 가 실제 시각으로 되돌린다."""
+        실행 하나 = 하루. 실행의 날짜(`trading_date` — 자정 넘는 실행은 거래일, 아니면 시작 때 달력 날짜)가 지난 뒤면
+        그 날짜에서 이어 센 시각(`_trading_clock` — 자정 넘는 실행의 다음 날 07:00 → `"310000"`, 자정 넘지 않는 실행의
+        다음 날 00:10 → `"241000"`). 실행 끝은 언제나 그보다 이르므로 그 step 에서 「장 끝」으로 끝나고(잠들었다 깨어도
+        「대기」로 다음 장을 기다리지 않음), 끝내기 정리·기록이 다음 날 이른 시각으로 되감기지 않는다.
+        날짜는 실행의 날짜라 `_moment` 가 실제 시각으로 되돌린다."""
         date, clock = self.plan.clock.label(now)
-        if self.plan.overnight and self.trading_date and date > self.trading_date:
+        if self.trading_date and date > self.trading_date:
             return self.trading_date, _trading_clock(self.trading_date, now)
         return date, clock
 
@@ -548,7 +551,7 @@ class LiveRun:
         held_in_break = in_brk and r.pos is not None and not r.halted
         if not in_brk and self._break_noted:
             self._break_noted = set()
-        # 실행 끝 — 자정 넘는 실행은 거래일이 지나면(다음 날 07:00 이후) 시각이 "310000" 이상으로 이어져(`_label`) 여기서 끝남
+        # 실행 끝 — 실행의 날짜가 지나면(자정 넘는 실행은 다음 날 07:00, 아니면 자정) 시각이 끝보다 늦게 이어져(`_label`) 여기서 끝남
         if clock >= self.plan.end:
             self._finish("장 끝", now)
             return

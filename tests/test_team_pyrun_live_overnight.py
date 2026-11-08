@@ -298,6 +298,24 @@ def test_자정_넘지_않는_MKU_전략의_준비_봉은_지금처럼_달력_�
     assert not any("자정을 넘는 실행" in x for x in texts(out))
 
 
+def test_자정_넘지_않는_실행도_날이_지나_온_step_은_대기_없이_끝낸다(tmp_path):
+    """실행 하나 = 하루. 23:55 에 끝나는 MKU 실행이 잠들었다 다음 날 00:10 에 깨어도 「대기」로 다음 장을 기다리지 않는다."""
+    run, fake, out, clock = make_night(tmp_path, src=MKU_SRC, file="fakemku.py", leg=None, mode="orders",
+                                       start=(MON, "082000"))
+    run.prepare()
+    assert (run.plan.overnight, run.plan.end, run.trading_date) == (False, "235500", MON)
+    tick(run, fake, clock, when(MON, "230004"))
+    assert run.state == "진행 중"
+    states: list[str] = []
+    set_state = run._set_state
+    run._set_state = lambda s: (states.append(s), set_state(s))
+    tick(run, fake, clock, when(TUE, "001004"))
+    assert run.state == "끝" and run.ended_reason == "장 끝" and "대기" not in states
+    tick(run, fake, clock, when(TUE, "083004"))      # 다음 장이 열려도 끝난 실행은 그대로
+    assert run.state == "끝" and fake.orders == [] and "대기" not in states
+    assert read_json(out / "run.json")["state"] == "끝"
+
+
 # ---------------------------------------------------------------- Runner: 24시를 넘는 시각 셈
 def _night_runner(tmp_path, broker):
     p = SimpleNamespace(entry_start="223000", entry_end="280000", flatten_at="285500", hold_min=45)

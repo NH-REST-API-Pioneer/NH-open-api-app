@@ -49,6 +49,15 @@ week02 와 다른 점
 해외 실행 끝이 다음 날 07:00 을 넘음, 판정이 종목을 모름(`known`), 해외 거래일 마지막 장 끝(`day_end`)이 `flatten_at`
 보다 이름(전략 장 시작 시각으로 물어 모르면 건너뜀). 종이 수수료는 전략 `PAPER_FEE`, 없으면 시장 값(`paper_fee_of`).
 
+**자정을 넘는 실행(`plan.overnight`, 설계 4.4)** — 전략과 실행기가 비교하는 시각·날짜를 거래일 시계(`plan.clock`)로 적습니다.
+07:00 전 시각은 24를 더하고(00:01 → `"240100"`), 날짜는 그 거래일(자정 뒤 봉도 앞 날짜). 준비 봉·장중 봉(`RunClock.bar`),
+준비 봉 자르기, step·끝내기의 시각(진입 창·`hold_min`·재시도·정리·실행 끝 비교, 기록의 `clock`)이 모두 이 시계라 자정을 넘어
+한 실행으로 이어집니다. 거래일이 지난 뒤(다음 날 07:00 이후) 온 step 은 그 거래일에서 이어 센 시각(`"310000"` …, `_label`)이라
+「장 끝」으로 끝납니다(끝 `"310000"` 에도 닿음). 실제 시각 그대로인 것: 분 바뀜 감지(`_seen_minute`)·잔고 대조 간격,
+장 판정(`order_open`·`known`·`day_end` — 거래일 시계는 `plan.clock.moment` 로 되돌려 넘김)·고정 휴장의 지금 시각,
+기록의 `at`, 예수금 날짜(`biz_dt` — 시작 때 달력 날짜, 설계 6장 모름). 기록 첫머리에 거래일과 바꾼 Params 를 한 줄 남깁니다.
+자정을 넘지 않는 실행은 `RunClock(False)` 라 달력 날짜·실제 시각 그대로입니다.
+
 **장 판정(`judge`)** — 꽂으면 아래 「휴장」 규칙의 막힘이 `opening.order_open`(국내 `day` + 09:00 부터, 해외
 `open`·`open-2`·`next-day`) 이 아닌 모든 때가 됩니다(쉼·마감·국내 09:00 전·시간표 모름·판정 오류). 보내기 직전 관문
 (`may_send`)도 국내까지 꽂고, 기록 글의 까닭은 `opening.span_text`. 실행 중 판정이 종목을 모르게 되면 「장 시간표 모름 —
@@ -337,7 +346,7 @@ class LiveRun:
         self._stop_deferred = False                    # 휴장 중 중지 요청을 미뤘음 — 풀리면 현재가를 받고 정리
         self._shutdown = False                         # 앱 종료 중지 — 휴장이어도 미루지 않고 바로 끝냄(정리는 안 함)
         self._break_noted: set[str] = set()            # 이번 휴장에 「요청을 미룬다」 기록을 남긴 요청 (stop·flatten)
-        self._clock_date = ""                          # step 시각(`clock`)의 날짜 — 판정에 넘길 시각을 되살림
+        self._clock_date = ""                          # step 시각(`clock`)의 날짜(자정 넘는 실행은 거래일) — 판정에 넘길 시각을 되살림
         self._timetable_lost = False                   # 실행 중 판정이 종목을 모름(`unknown`·예외) — 바뀔 때만 기록
 
     # ------------------------------------------------------------ 시작
@@ -360,11 +369,11 @@ class LiveRun:
                 self._refuse(msg)
                 raise StartRefused(msg) from e
             self._prepared = True
-            self._set_state("대기" if now.strftime("%H%M%S") < self.runner.p.session_start else "진행 중")
+            self._set_state("대기" if self._label(now)[1] < self.runner.p.session_start else "진행 중")
 
     def _prepare(self, now: datetime) -> None:
         j, api, loaded, r, plan = self.j, self.api, self.loaded, self.runner, self.plan
-        today, clock = now.strftime("%Y%m%d"), now.strftime("%H%M%S")
+        today, clock = self._label(now)     # 실행의 (거래일, 거래일 시계) — 자정 넘지 않는 실행은 달력 그대로
         self._today = today
         self._clock_date = today
         market = self.market
@@ -387,6 +396,8 @@ class LiveRun:
             breaks = ("장 시간표대로" if self.judge is not None else
                       ", ".join(f"{a[:2]}:{a[2:4]}~{b[:2]}:{b[2:4]}" for a, b in market.breaks) or "없음")
             j.write("event", text=f"시장 {market.id} · 통화 {self.currency} · 실행 끝 {clock_text(plan.end)} · 휴장 {breaks}")
+        if plan.overnight:
+            j.write("event", text=self._overnight_text(today))
         j.write("event", text=f"전략 {loaded.file} · sha256 {loaded.sha256[:12]} · Params {asdict(r.p)}")
         # 2. 종목과 틱 — registry 가 같은 종목 검사에 쓴 종목(`self.sym`)이 먼저. 다시 고르면 월물이 넘어가는 날
         #    검사한 종목과 주문하는 종목이 달라질 수 있다(RealtimeRun 과 같은 규칙)
@@ -413,7 +424,8 @@ class LiveRun:
         # 3. 모의계좌: 시작 잔고가 0 이어야 한다
         if self.orders:
             # 보내기 직전 관문 — 해외(고정 휴장), 판정을 꽂았으면 국내도(모의 주문 09:00 부터)
-            broker = MockAccountBroker(api, sym, j, sleep=self.sleep, today=today,
+            # 예수금 날짜(`biz_dt`)는 시작 때의 달력 날짜 그대로 — 자정 넘는 실행에 어떤 날짜가 맞는지는 설계 6장 「모름」
+            broker = MockAccountBroker(api, sym, j, sleep=self.sleep, today=now.strftime("%Y%m%d"),
                                        expected=r.expected_position, halt=r.halt,
                                        may_send=self._may_send if market.breaks or self.judge is not None else None)
             held = broker.position()
@@ -426,10 +438,10 @@ class LiveRun:
             if self.account_start:
                 broker.last_fee = self.account_start["fee"]
             self.broker = r.broker = broker
-        # 4. 준비 봉: 지금 분보다 앞선 것만, 시각순
-        now_min = now.strftime("%H%M") + "00"
+        # 4. 준비 봉: 지금 분보다 앞선 것만, 시각순 (봉·자르는 기준 둘 다 실행의 시계)
+        now_min = clock[:4] + "00"
         with purpose("준비 봉"):
-            got = [minute_of(x) for x in api.chart_minute(sym, req_qty=WARMUP_BARS)]
+            got = [plan.clock.bar(minute_of(x)) for x in api.chart_minute(sym, req_qty=WARMUP_BARS)]
         hist = sorted((m for m in got if (m.date, m.time) < (today, now_min)), key=lambda m: (m.date, m.time))
         signals = r.warmup(hist)
         r.live_date = today       # 준비 봉에서 난 오늘 신호로는 진입하지 않음 — 이 뒤로 닫히는 봉부터
@@ -452,8 +464,27 @@ class LiveRun:
                     windows=list(self._windows))
         self._day_obj = getattr(r.strat, "day", None)
         self._last_fed = (hist[-1].date, hist[-1].time) if hist else ("", "")
-        self._seen_minute = now.strftime("%H%M")
+        self._seen_minute = now.strftime("%H%M")       # 분 바뀜 감지는 실제 시각
         self._last_check = now
+
+    def _label(self, now: datetime) -> tuple[str, str]:
+        """실행의 (날짜, 시각) — 거래일 시계(`plan.clock.label`, 자정 넘지 않는 실행은 달력 그대로).
+
+        자정 넘는 실행이 그 거래일을 지난 뒤(다음 날 07:00 이후)면 거래일에서 이어 센 시각(`_trading_clock` —
+        다음 날 07:00 → `"310000"`, 08:00 → `"320000"`). 그래서 실행 끝(`"310000"` 이하)에 반드시 닿고, 끝내기 정리·기록이
+        다음 거래일 07:00 으로 되감기지 않는다. 날짜는 실행의 거래일이라 `_moment` 가 실제 시각으로 되돌린다."""
+        date, clock = self.plan.clock.label(now)
+        if self.plan.overnight and self.trading_date and date > self.trading_date:
+            return self.trading_date, _trading_clock(self.trading_date, now)
+        return date, clock
+
+    def _overnight_text(self, trading_date: str) -> str:
+        """기록 첫머리 한 줄 — 자정 넘는 실행의 거래일과 07:00 전이라 24시간을 더한 Params 칸(원래 값→바꾼 값)."""
+        before, after = self.loaded.params_for(self.market)(), self.runner.p
+        changed = [f"{n} {getattr(before, n)}→{getattr(after, n)}" for n in tradeday.SCHEDULE_FIELDS
+                   if hasattr(before, n) and getattr(before, n) != getattr(after, n)]
+        return (f"자정을 넘는 실행 — 거래일 {trading_date}, 시각은 07:00 전이면 +24 (예 01:30 → 253000). "
+                f"바꾼 Params: {', '.join(changed) or '없음'}")
 
     def _restore_windows(self) -> None:
         """「이미 진입함」 개장을 전략에 되살린다 — `on_entry(window)` 뒤 바로 `day.in_position = False`.
@@ -511,13 +542,13 @@ class LiveRun:
 
     def _step(self, now: datetime) -> None:
         r = self.runner
-        clock = now.strftime("%H%M%S")
-        self._clock_date = now.strftime("%Y%m%d")
+        self._clock_date, clock = self._label(now)     # 거래일 시계 — 판정엔 `_moment` 로 실제 시각을 되살려 넘김
         self._note_timetable(now, clock)
         in_brk = self._in_break(clock)
         held_in_break = in_brk and r.pos is not None and not r.halted
         if not in_brk and self._break_noted:
             self._break_noted = set()
+        # 실행 끝 — 자정 넘는 실행은 거래일이 지나면(다음 날 07:00 이후) 시각이 "310000" 이상으로 이어져(`_label`) 여기서 끝남
         if clock >= self.plan.end:
             self._finish("장 끝", now)
             return
@@ -610,17 +641,19 @@ class LiveRun:
             self.j.write("event", clock=clock, text=text if self.judge is None else f"{self._closed_text(clock)} 중 {judged}")
 
     def _feed_minutes(self, now: datetime, clock: str) -> None:
-        """분이 바뀌고 3초 뒤: 막 끝난 1분봉(들)을 시각순으로 한 번씩 전략에 넣는다."""
+        """분이 바뀌고 3초 뒤: 막 끝난 1분봉(들)을 시각순으로 한 번씩 전략에 넣는다.
+
+        분 바뀜은 실제 시각(`hhmm`)으로 보고, 봉과 「지금 분」(`now_key`)은 실행의 시계(`clock`·`_clock_date`)로 비교한다."""
         hhmm = now.strftime("%H%M")
         if hhmm == self._seen_minute or now.second < MINUTE_DELAY_SECONDS:
             return
         try:
             with purpose("1분봉"):
-                got = [minute_of(x) for x in self.api.chart_minute(self.sym, req_qty=LIVE_BARS)]
+                got = [self.plan.clock.bar(minute_of(x)) for x in self.api.chart_minute(self.sym, req_qty=LIVE_BARS)]
         except Exception as e:      # 연결·응답 문제로 하루 실행이 멈추지 않게 — 기록하고 다음 초에 다시
             self.j.write("event", clock=clock, text="차트(분) 처리 실패 — 다음 초에 다시", error=error_text(e))
             return
-        now_key = (now.strftime("%Y%m%d"), hhmm + "00")
+        now_key = (self._clock_date, clock[:4] + "00")
         for m in sorted((m for m in got if self._last_fed < (m.date, m.time) < now_key),
                         key=lambda m: (m.date, m.time)):
             if (m.date, m.time) <= self._last_fed:
@@ -739,8 +772,7 @@ class LiveRun:
         if self._finished:
             return
         self._finished = True
-        clock = now.strftime("%H%M%S")
-        self._clock_date = now.strftime("%Y%m%d")
+        self._clock_date, clock = self._label(now)     # 끝내기 정리·기록도 실행의 시계(step 과 같음)
         try:
             if self._prepared:
                 reason = self._wrap_up(reason, clock)

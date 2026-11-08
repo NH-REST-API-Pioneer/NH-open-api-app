@@ -303,7 +303,7 @@ class OverseasAdapter(MarketAdapter):
         return self.api.ovs_net_position(positions, sym)
 
     def deposit(self, biz_dt: str) -> dict:
-        """USD 예수금. 날짜는 브로커가 실행 시작 때 정한 한국 날짜(해외 실행은 23:55 에 끝나 자정을 넘지 않음)."""
+        """USD 예수금. 날짜는 브로커가 실행 시작 때 정한 한국 달력 날짜 — 자정을 넘는 실행도 그대로(설계 6장 「모름」)."""
         return self.api.ovs_deposit(self.cur_cd or "USD", biz_dt=biz_dt)
 
     def fill_price(self, row: dict) -> float | None:

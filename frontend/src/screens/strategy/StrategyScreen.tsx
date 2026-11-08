@@ -30,6 +30,7 @@ import { StrategySettings } from './StrategySettings'
 import { StrategyVerify } from './StrategyVerify'
 // 팀: 전략주문 › 「파이썬 전략」 탭
 import { PyRunScreen } from '../team/PyRunScreen'
+// 팀: 전략주문 › 「스프레드」 탭
 import { SpreadScreen } from '../team/spread/SpreadScreen'
 import { StrategyRun } from './StrategyRun'
 import { StrategyAnalysis } from './StrategyAnalysis'

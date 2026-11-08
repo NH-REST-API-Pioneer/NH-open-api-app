@@ -155,7 +155,7 @@ export function priceIsGuess(row: PyJournalRow): boolean {
 export interface SpreadBars {
   legs: Record<string, { at: string; close: number }[]>
   logs: Record<string, { at: string; value: number }[]>
-  fills: { at: string | null; clock: string | null; leg: string | null; sym: string | null; qty: number | null; price: number | null; fee: number | null }[]
+  fills: { at: string | null; clock: string | null; leg: string | null; sym: string | null; qty: number | null; price: number | null; fee: number | null; price_known?: boolean | null }[]
 }
 
 export interface InheritLeg {

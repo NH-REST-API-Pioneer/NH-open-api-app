@@ -46,10 +46,20 @@ function decimalsOf(values: number[]): number {
   return most
 }
 
+/** 가장 작은 값·가장 큰 값 — 펼침(`Math.min(...values)`)은 점이 수십만 개면 호출 스택을 넘겨 RangeError 라 고리로 셉니다. */
+function extent(values: number[]): [number, number] {
+  let lo = Infinity
+  let hi = -Infinity
+  for (const v of values) {
+    if (v < lo) lo = v
+    if (v > hi) hi = v
+  }
+  return [lo, hi]
+}
+
 function span(values: number[]): [number, number] {
   if (values.length === 0) return [0, 1]
-  let lo = Math.min(...values)
-  let hi = Math.max(...values)
+  let [lo, hi] = extent(values)
   if (lo === hi) {
     const pad = Math.abs(lo) * 0.001 || 1
     lo -= pad
@@ -116,8 +126,9 @@ export function SpreadChart({ bars, legNames }: { bars: SpreadBars | null; legNa
 
   const allT = [...legSeries.flatMap((s) => s.points.map((p) => p.t)), ...logPoints.map((p) => p.t)]
   const empty = allT.length === 0
-  const t0 = empty ? 0 : Math.min(...allT)
-  const t1 = empty ? 1 : Math.max(...allT, t0 + 1)
+  const [tLo, tHi] = extent(allT)
+  const t0 = empty ? 0 : tLo
+  const t1 = empty ? 1 : Math.max(tHi, t0 + 1)
   const leftValues = [...legSeries.flatMap((s) => s.points.map((p) => p.v)), ...fills.map((f) => f.price as number)]
   const [l0, l1] = span(leftValues)
   const [r0, r1] = span(logPoints.map((p) => p.v))

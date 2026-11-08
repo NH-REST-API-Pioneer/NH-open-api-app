@@ -156,12 +156,13 @@ class LiveFeed:
             deliverable = pending <= target and self._minute_open(legs, pending)
             if not deliverable:
                 if closed and pending > target and self._minute_open(legs, pending):
-                    pass        # 닫히기 직전 마지막 분이 아직 확정 전 — 그 봉을 돌려준 뒤에 쉼으로 들어간다
+                    pass        # (아래 sleep/continue 는 `if not deliverable` 단계에 있어야 맞다 — 안쪽으로 옮기면 이 갈래가 바로 조회로 흐른다)
+                    # 닫히기 직전 마지막 분이 아직 확정 전 — 그 봉을 돌려준 뒤에 쉼으로 들어간다
                 elif closed:
                     if not waiting:
                         waiting = True
                         self._on_wait(WAIT_CLOSED, closed)
-                elif pending <= target:
+                elif pending <= target and self._minute_open(legs, target):
                     # 쉬는 구간이 끝났다 — 쉬던 마지막 분을 찾아 한 번에 공백으로 밝히고 그 뒤부터 센다
                     end = target
                     while end > pending and self._minute_open(legs, end):

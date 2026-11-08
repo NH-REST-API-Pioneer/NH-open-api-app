@@ -269,3 +269,33 @@ def test_주말_뒤_열리면_쉰_구간을_한_번_밝히고_열린_뒤_첫_분
     assert [g[2] for g in gaps] == ["장 쉼"]
     assert gaps[0][0] == "20261109 154500"
     assert max(calls) <= CHART_MAX_BARS
+
+
+def test_열린_직후_1초_간격으로_봐도_장_쉼_공백은_한_번():
+    d = leg("fx", "A756B000")
+    clock = Clock(at(15, 44, 30))
+    reopen = datetime(2026, 11, 16, 9, 0, 0, tzinfo=KST)
+    rows_ = [row("090300", 13.0, "20261116"), row("090200", 12.0, "20261116"), row("090100", 11.0, "20261116"),
+             row("090000", 10.0, "20261116"), row("154400", 9.0, "20261109")]
+    waits, gaps = [], []
+
+    def sleep(sec, st):
+        # 쉬는 동안은 크게 건너뛰고, 열리기 직전부터는 실제처럼 1초씩 간다
+        if clock.t < reopen - timedelta(minutes=5):
+            clock.t += timedelta(minutes=5)
+        else:
+            clock.t += timedelta(seconds=sec)
+
+    def judge(m, s, now):
+        return {"state": "day" if (now < at(15, 45, 0) or now >= reopen) else "closed"}
+
+    feed = LiveFeed(now=clock.now, sleep=sleep, adapter_of=lambda leg: FakeAdapter(rows_), judge=judge,
+                    on_wait=lambda s, n: waits.append(s), on_gap=lambda a, b, c: gaps.append((a, b, c)))
+    stop = threading.Event()
+    assert feed.next_minute([d], stop).time == "154400"
+    got = feed.next_minute([d], stop)
+    assert (got.date, got.time) == ("20261116", "090000")
+    assert [g[2] for g in gaps] == ["장 쉼"] and gaps[0][0] == "20261109 154500"
+    assert gaps[0][1] == "20261116 085900"
+    assert feed.next_minute([d], stop).time == "090100"            # 이어서 빠짐없이
+    assert [g[2] for g in gaps] == ["장 쉼"]

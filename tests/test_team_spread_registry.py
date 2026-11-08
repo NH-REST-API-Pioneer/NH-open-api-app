@@ -33,11 +33,12 @@ def runner_folder(tmp_path, **files):
     return folder
 
 
-def make(tmp_path, *, env="paper", api=None, start_thread=False, other_busy=None, cross=None, now=NOW, **files):
+def make(tmp_path, *, env="paper", api=None, start_thread=False, other_busy=None, cross=None, now=NOW, master=None,
+         **files):
     api = api if api is not None else Api()
     reg = SpreadRegistry(tmp_path / "spreads", runner_folder(tmp_path, **files), now=Clock(now), active_env=lambda: env,
                          start_thread=start_thread, api_module=api, sleep=lambda s: None,
-                         feed_factory=lambda **kw: FakeFeed(**kw), master=lambda: (ROWS["overseas_rows"], ROWS["domestic_rows"]),
+                         feed_factory=lambda **kw: FakeFeed(**kw), master=master or (lambda: (ROWS["overseas_rows"], ROWS["domestic_rows"])),
                          timing=FAST, other_busy=other_busy, cross_lock=cross)
     return reg, api
 
@@ -243,7 +244,7 @@ def test_이어받기_거부들(tmp_path):
             if rid != "20261109_F_orders":
                 with pytest.raises(StartRefused, match=match):
                     reg.inherit_preview(rid)
-    assert not any(p.endswith("_2") or p.startswith("20261109_S") for p in folders(reg))
+    assert set(folders(reg)) == set(cases)            # 거부된 시작은 새 폴더를 남기지 않는다
     write_prev(reg, "20261109_G_orders")
     with pytest.raises(StartRefused, match="expect"):
         reg.start(spec(inherit_from="20261109_G_orders"))
@@ -387,3 +388,103 @@ def test_roll_guard_다른_탭이_잡은_종목도_거부(tmp_path):
     with pytest.raises(StartRefused, match="파이썬 점유"):
         a._roll_guard("HOF27")
     a._roll_guard("HOG27")
+
+
+# ---------------------------------------------------------------- 고침 1회
+def with_avg(api, avgs):
+    """가짜 api 의 잔고 줄에 계좌 평균가(`avg_pric`) 칸을 붙인다."""
+    orig = api.ovs_open_interest_page
+
+    def page(nxt_key=""):
+        rows, nxt = orig(nxt_key)
+        return [{**r, "avg_pric": avgs[r["sym"]]} if r["sym"] in avgs else r for r in rows], nxt
+    api.ovs_open_interest_page = page
+
+
+def test_이어받기_평균가는_계좌_평균가가_먼저_앞선_기록은_없을_때만(tmp_path):
+    reg, api = make(tmp_path)
+    prev = write_prev(reg)
+    (prev / "summary.json").write_text(json.dumps({"legs": [{"name": "ho", "avg_price": 4.4}, {"name": "rb", "avg_price": 2.5}]}))
+    api.pos = {"HOZ26": 1, "RBZ26": -1}
+    with_avg(api, {"HOZ26": "4.4100"})
+    pv = reg.inherit_preview(prev.name)
+    assert pv["legs"]["ho"]["avg_price"] == 4.41 and pv["legs"]["rb"]["avg_price"] == 2.5     # 계좌 먼저, 없으면 앞선 기록
+    run = reg.get(reg.start(spec(inherit_from=prev.name), expect={"ho": 1, "rb": -1})["id"])
+    assert {n: v["avg_price"] for n, v in run.inherited["legs"].items()} == {"ho": 4.41, "rb": 2.5}   # 미리보기와 같은 값
+
+
+def test_복구한_실행을_이어받아도_계좌_평균가가_산다(tmp_path):
+    reg, api = make(tmp_path)
+    rid = write_prev(reg, state="진행 중", reason=None, inheritable=False).name
+    api.pos = {"HOZ26": 1, "RBZ26": -1}
+    with_avg(api, {"HOZ26": "4.4100", "RBZ26": "2.3000"})
+    reg.recover()
+    assert {n: v["avg_price"] for n, v in reg.inherit_preview(rid)["legs"].items()} == {"ho": 4.41, "rb": 2.3}
+
+
+def test_종이_실행은_월물_교체_가드가_없다(tmp_path):
+    reg, _ = make(tmp_path, **{"t.py": 'LEGS = {"x": "HOF27"}\ndef run(ctx):\n    pass\n'})
+    reg.start(spec("t.py"))                                              # 주문 실행이 HOF27 을 잡고 있다
+    paper = reg.get(reg.start(spec(mode="paper"))["id"])
+    assert paper._roll_guard is None
+    assert paper._roll("ho").sym == "HOF27"
+
+
+def test_다리_조회가_실패하면_StartRefused(tmp_path):
+    def boom():
+        raise OSError("마스터 없음")
+    reg, _ = make(tmp_path, master=boom)
+    with pytest.raises(StartRefused, match="다리를 찾지 못했습니다"):
+        reg.start(spec(mode="paper"))
+    reg, api = make(tmp_path / "b")
+    api.ovs_product_detail_page = lambda g, k="": (_ for _ in ()).throw(RuntimeError("끊김"))
+    with pytest.raises(StartRefused, match="다리를 찾지 못했습니다"):
+        reg.start(spec(mode="paper"))
+    assert folders(reg) == []
+
+
+def test_handed_to를_쓰기_전에_죽어도_두_번_이어받지_못한다(tmp_path):
+    reg, api = make(tmp_path)
+    prev = write_prev(reg).name
+    other = write_prev(reg, "20261109_X_orders", state="끝", inheritable=False)         # 이어받은 새 실행의 기록
+    d = read(other / "run.json")
+    d["inherited_from"] = prev
+    (other / "run.json").write_text(json.dumps(d))
+    api.pos = {"HOZ26": 1, "RBZ26": -1}
+    with pytest.raises(StartRefused, match="이미"):
+        reg.start(spec(inherit_from=prev), expect={"ho": 1, "rb": -1})
+    with pytest.raises(StartRefused, match="이미"):
+        reg.inherit_preview(prev)
+
+
+def test_경고는_기계용_칸으로_말이_다르다(tmp_path):
+    reg, api = make(tmp_path)
+    api.pos = {"HOZ26": 1, "RBZ26": 0}
+    halted = write_prev(reg, "20261109_H_orders", reason="x", halted="결과 모름").name
+    unread = write_prev(reg, "20261109_U_orders", reason="x", balance_unread=True).name
+    plain = write_prev(reg, "20261109_P_orders", reason="재시작 · 확인 필요").name
+    wh, wu = reg.inherit_preview(halted)["warning"], reg.inherit_preview(unread)["warning"]
+    assert "주문내역을 먼저 확인하세요" in wh and "멈췄" in wh
+    assert "잔고를 읽지 못" in wu and wu != wh
+    assert reg.inherit_preview(plain)["warning"] is None                  # 글자만 보고 경고하지 않는다
+
+
+@pytest.mark.parametrize("bad", ["1", True, 1.0, None])
+def test_expect_값이_정수가_아니면_거부(tmp_path, bad):
+    reg, api = make(tmp_path)
+    prev = write_prev(reg).name
+    api.pos = {"HOZ26": 1, "RBZ26": -1}
+    with pytest.raises(StartRefused, match="expect"):
+        reg.start(spec(inherit_from=prev), expect={"ho": bad, "rb": -1})
+    assert folders(reg) == [prev]
+
+
+def test_시작을_거부당한_이어받기_기록은_이어받기로_세지_않는다(tmp_path):
+    reg, api = make(tmp_path)
+    prev = write_prev(reg).name
+    ref = write_prev(reg, "20261109_R_orders", inheritable=False, reason="시작 거부: 잔고가 바뀜")
+    d = read(ref / "run.json")
+    d["inherited_from"] = prev
+    (ref / "run.json").write_text(json.dumps(d))
+    api.pos = {"HOZ26": 1, "RBZ26": -1}
+    assert reg.start(spec(inherit_from=prev), expect={"ho": 1, "rb": -1})["state"] == "진행 중"

@@ -77,14 +77,37 @@ def _write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def read_balances(legs: dict[str, Leg], api_module: Any) -> dict[str, int]:
-    """다리마다 계좌 순보유(시장 어댑터로 — 해외는 쪽을 따라감). 못 읽으면 예외."""
-    out: dict[str, int] = {}
+def _account_avg(positions: list[dict], sym: str) -> float | None:
+    """잔고 줄의 계좌 평균가(`avg_pric`) — 그 종목 줄을 수량으로 가중. 칸이 없거나 양수가 아니면 None."""
+    total, weight = 0.0, 0
+    for row in positions:
+        if str(row.get("sym", "")).strip() != sym:
+            continue
+        qty = int(default_api.num(row.get("opint_qty")) or 0)
+        avg = default_api.num(row.get("avg_pric"))
+        if not qty:
+            continue
+        if avg is None or avg <= 0:
+            return None
+        total, weight = total + avg * qty, weight + qty
+    return total / weight if weight else None
+
+
+def read_positions(legs: dict[str, Leg], api_module: Any) -> dict[str, tuple[int, float | None]]:
+    """다리마다 (계좌 순보유, 계좌 평균가) — 시장 어댑터로, 해외는 쪽을 따라간다. 못 읽으면 예외."""
+    out: dict[str, tuple[int, float | None]] = {}
     for name, leg in legs.items():
         ad = (adapter_for(OVERSEAS, api_module, exch_cd=leg.exchange, cur_cd=leg.currency)
               if leg.market == "overseas" else adapter_for(DOMESTIC, api_module))
-        out[name] = ad.net_position(ad.open_interest(), leg.sym)
+        rows = ad.open_interest()
+        qty = ad.net_position(rows, leg.sym)
+        out[name] = (qty, _account_avg(rows, leg.sym) if qty else None)
     return out
+
+
+def read_balances(legs: dict[str, Leg], api_module: Any) -> dict[str, int]:
+    """다리마다 계좌 순보유. 못 읽으면 예외."""
+    return {n: q for n, (q, _) in read_positions(legs, api_module).items()}
 
 
 def _legs_of(data: dict) -> dict[str, Leg]:
@@ -172,8 +195,13 @@ class SpreadRegistry:
             raise StartRefused(f"실행기 파일을 불러오지 못했습니다 — {e}") from e
         today = now.strftime("%Y%m%d")
         specs = leg_specs(loaded, spec.syms)
-        sources = load_sources(specs, api_module=self._api, master=self._master)     # 잠금 밖 — 조회가 느려도 다른 시작을 막지 않게
-        legs = resolve_legs(specs, sources, today=today)
+        try:       # 잠금 밖 — 조회가 느려도 다른 시작을 막지 않게
+            sources = load_sources(specs, api_module=self._api, master=self._master)
+            legs = resolve_legs(specs, sources, today=today)
+        except StartRefused:
+            raise
+        except Exception as e:
+            raise StartRefused(f"다리를 찾지 못했습니다 — {error_text(e)}") from e
         spec = replace(spec, syms={n: leg.sym for n, leg in legs.items()})           # 정확한 종목 코드
         inherited, claimed = None, None
         if spec.inherit_from:
@@ -206,7 +234,7 @@ class SpreadRegistry:
                 run = SpreadRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
                                 sleep=self._sleep, feed_factory=self._feed_factory, master=self._master,
                                 active_env=self._active_env, inherited=inherited,
-                                roll_guard=self._roll_guard(run_id), timing=self._timing)
+                                roll_guard=self._roll_guard(run_id) if spec.mode == "orders" else None, timing=self._timing)
             except Exception as e:
                 shutil.rmtree(self.root / run_id, ignore_errors=True)
                 raise StartRefused(f"실행을 만들지 못했습니다 — {type(e).__name__}: {e}") from e
@@ -276,6 +304,11 @@ class SpreadRegistry:
             raise StartRefused(f"이미 {data.get('handed_to') or live.handed_to} 이(가) 이어받았습니다")
         if data.get("file") != file:
             raise StartRefused(f"다른 실행기 파일입니다: 앞선 {data.get('file')} ≠ {file}")
+        for other in self.root.iterdir():       # handed_to 를 쓰기 전에 죽었어도 — 새 실행의 기록이 앞선 실행을 가리킨다
+            theirs = _read_json(other / "run.json") or {}
+            refused = str(theirs.get("ended_reason") or "").startswith("시작 거부")     # 시작을 거부당한 실행은 이어받지 못했다
+            if other.name != prev_id and theirs.get("inherited_from") == prev_id and not refused:
+                raise StartRefused(f"이미 {other.name} 이(가) 이어받았습니다")
         prev = {d.get("name"): d.get("sym") for d in data.get("legs") or []}
         if prev != syms:
             raise StartRefused(f"다리 종목이 다릅니다: 앞선 {prev} ≠ {syms}")
@@ -292,29 +325,40 @@ class SpreadRegistry:
         legs = _legs_of(data)
         try:
             with purpose("이어받기 확인"):
-                held = read_balances(legs, self._api)
+                held = read_positions(legs, self._api)
         except Exception as e:
             raise StartRefused(f"계좌 잔고를 읽지 못했습니다 — {error_text(e)}") from e
         avg = self._prev_avg(run_id)
         reason = str(data.get("ended_reason") or "")
         warning = None
-        if data.get("halted") or "확인 필요" in reason:
-            warning = (f"앞선 실행이 주문 결과를 모른 채 멈췄습니다 — 주문내역을 먼저 확인하세요 "
-                       f"({data.get('halted') or reason})")
+        if data.get("halted"):
+            warning = (f"앞선 실행이 주문 결과를 모른 채 멈췄습니다 — 주문내역을 먼저 확인하세요 ({data['halted']})")
+        elif data.get("balance_unread"):
+            warning = "다시 켤 때 계좌 잔고를 읽지 못해 닫았습니다 — 아래 잔고가 맞는지 계좌에서 먼저 확인하세요"
         return {"id": run_id, "file": data.get("file"), "ended_reason": reason, "warning": warning,
                 "syms": {n: leg.sym for n, leg in legs.items()},
-                "legs": {n: {"sym": leg.sym, "qty": held[n], "avg_price": avg.get(n)} for n, leg in legs.items()}}
+                "legs": {n: {"sym": leg.sym, "qty": held[n][0], "avg_price": self._avg(held[n][1], avg.get(n))}
+                         for n, leg in legs.items()}}
+
+    @staticmethod
+    def _avg(account: float | None, prev: Any) -> float | None:
+        """평균가 — 계좌 잔고의 것이 먼저, 없을 때만 앞선 실행의 기록."""
+        if account is not None:
+            return account
+        return float(prev) if isinstance(prev, (int, float)) and not isinstance(prev, bool) and prev > 0 else None
 
     def _head(self, run_id: str) -> dict:
         return _read_json(self.folder(run_id) / "run.json") or {}
 
     def _confirm_inherit(self, prev_id: str, data: dict, legs: dict[str, Leg], expect: dict[str, int] | None) -> dict:
         """시작 순간 잔고를 다시 읽어 화면이 보인 값(`expect`)과 같을 때만 `SpreadRun` 에 넘길 값(판정 R20)을 만든다."""
-        if not isinstance(expect, dict) or set(expect) != set(legs):
-            raise StartRefused("이어받기는 확인 화면에서 본 다리별 잔고(expect)가 있어야 합니다")
+        if (not isinstance(expect, dict) or set(expect) != set(legs)
+                or any(isinstance(v, bool) or not isinstance(v, int) for v in expect.values())):
+            raise StartRefused("이어받기는 확인 화면에서 본 다리별 잔고(expect, 정수)가 있어야 합니다")
         try:
             with purpose("이어받기 확인"):
-                held = read_balances(legs, self._api)
+                pos = read_positions(legs, self._api)
+            held = {n: q for n, (q, _) in pos.items()}
         except Exception as e:
             raise StartRefused(f"계좌 잔고를 읽지 못했습니다 — {error_text(e)}") from e
         diff = {n: (expect[n], held[n]) for n in legs if expect[n] != held[n]}
@@ -323,7 +367,7 @@ class SpreadRegistry:
                 f"{n} 보인 {a:+d} · 지금 {b:+d}" for n, (a, b) in diff.items()) + ")")
         avg = self._prev_avg(prev_id)
         return {"from": prev_id, "ended_reason": str(data.get("ended_reason") or ""),
-                "legs": {n: {"qty": held[n], "avg_price": avg.get(n)} for n in legs}}
+                "legs": {n: {"qty": held[n], "avg_price": self._avg(pos[n][1], avg.get(n))} for n in legs}}
 
     def _hand_over(self, prev_id: str, new_id: str) -> None:
         live = self._runs.get(prev_id)

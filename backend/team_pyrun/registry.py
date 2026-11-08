@@ -5,6 +5,8 @@
     list()           도는 실행의 `status()` + `root` 아래 폴더의 `run.json` (최근 시작순, 중복 없음)
     get / folder     실행 객체 / 기록 폴더 (id 는 폴더 이름 — `[0-9A-Za-z_]+` 만, 아니면 `KeyError`)
     stop / flatten   요청만 하고 바로 돌아온다 (실제 정리는 실행 스레드의 다음 step)
+    request_stop_all 앱을 끌 때 첫 단계 — 새 시작을 막고 모두에게 앱 종료 중지만 알린다(기다리지 않음). 스프레드 탭과 함께 끌 때
+                     둘 다 먼저 알린 뒤 함께 기다린다(`team_spread.routes.team_stop_begin` — 한쪽을 기다리는 동안 다른 쪽이 매매하지 않게)
     stop_all         앱을 끌 때 — 모두에게 중지를 요청하고 한 마감 시각 안에서 스레드를 기다린다
     recover          앱을 켤 때 — 끝나지 않은 채 남은 폴더를 「끝·재시작」으로 닫는다 (주문은 보내지 않는다)
 
@@ -357,6 +359,16 @@ class Registry:
     def flatten(self, run_id: str) -> None:
         """보유 정리를 요청하고 바로 돌아온다(실행은 계속)."""
         self._run(run_id).request_flatten()
+
+    def request_stop_all(self) -> None:
+        """앱을 끌 때 첫 단계 — `close_starts` 하고 모든 실행(준비 중 포함)에 `request_stop(shutdown=True)` 만 한다.
+        기다리지도 끝내지도 않는다 — 뒤이은 `stop_all` 이 기다린다(다시 알려도 같다)."""
+        self.close_starts()
+        with self._lock:
+            runs = list(self._runs.values())
+            self._stop_asked |= set(self._preparing)
+        for run in runs:
+            run.request_stop(shutdown=True)
 
     def stop_all(self, timeout: float = 20.0) -> list[str]:
         """앱을 끌 때. 1분봉·실시간 모두에게 앱 종료 중지(`request_stop(shutdown=True)`)를 요청하고 하나의 마감 시각

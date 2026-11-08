@@ -5,6 +5,8 @@
     start(spec, expect=None)   거부 규칙을 지나면 `SpreadRun` 을 만들어 `prepare()`(부른 스레드) 뒤 데몬 스레드로 돌린다
     list / get / folder        pyrun 과 같다
     stop(id)                   요청만 하고 돌아온다 (스레드가 없는 실행만 바로 `finish("중지")`)
+    request_stop_all()         앱을 끌 때 첫 단계 — 새 시작을 막고 모두에게 `request_stop(shutdown=True)` 만(기다리지 않음).
+                               두 탭(스프레드·파이썬 전략)을 함께 끌 때 둘 다 먼저 알리고 그다음 함께 기다린다(`routes.team_stop_begin`)
     stop_all(timeout)          앱을 끌 때 — 모두에게 `request_stop(shutdown=True)`, 한 마감 시각 안에서 스레드를 기다린다
                                (`finish` 는 부르지 않는다 — 정리 대기에 막힐 수 있다. 못 끝낸 폴더는 다음에 `recover` 가 닫는다)
     recover()                  앱을 켤 때 — 끝나지 않은 채 남은 폴더를 주문 없이 닫는다
@@ -440,6 +442,16 @@ class SpreadRegistry:
                 return
         if not self._alive(run_id) and run.state not in FINISHED:
             run.finish("중지")
+
+    def request_stop_all(self) -> None:
+        """앱을 끌 때 첫 단계 — 새 시작을 막고 모든 실행(준비 중 포함)에 앱 종료 중지를 알리기만 한다. 기다리지 않는다.
+        뒤이은 `stop_all` 이 기다린다(두 번 알려도 같다)."""
+        self.close_starts()
+        with self._lock:
+            runs = list(self._runs.values())
+            self._stop_asked |= set(self._preparing)
+        for run in runs:
+            run.request_stop(shutdown=True)
 
     def stop_all(self, timeout: float = 20.0) -> list[str]:
         """앱을 끌 때. `request_stop(shutdown=True)` 를 모두에게 하고 마감 시각 안에서 스레드를 기다린다.

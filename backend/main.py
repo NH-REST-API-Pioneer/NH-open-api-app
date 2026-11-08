@@ -57,7 +57,11 @@ from backend.strategy.strategy_routes import router as strategy_router
 from backend.strategy.strategy_routes import runs_router as strategy_runs_router
 from backend.team_pyrun.routes import pyrun_shutdown, pyrun_startup  # 팀: 파이썬 전략 실행 — 앱을 켜고 끌 때 부른다
 from backend.team_spread.routes import router as spread_router  # 팀: 스프레드 실행 라우트
-from backend.team_spread.routes import spread_shutdown, spread_startup  # 팀: 스프레드 실행 — 앱을 켜고 끌 때 부른다
+from backend.team_spread.routes import (  # 팀: 스프레드 실행 — 앱을 켜고 끌 때 부른다(끌 때 두 탭 함께 알림)
+    spread_shutdown,
+    spread_startup,
+    team_stop_begin,
+)
 from backend.team_pyrun.routes import router as pyrun_router  # 팀: 파이썬 전략 실행 라우트
 from backend.ui.ui_routes import router as ui_router
 
@@ -120,9 +124,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # 팀: 돌던 파이썬 전략 실행에 모두 중지를 요청한다(스레드에서 — 이벤트 루프를 막지 않게).
-        await spread_shutdown(spread_recover)  # 팀: 스프레드 실행 — 새 시작을 막고 모두 중지
-        await pyrun_shutdown(pyrun_recover)
+        # 팀: 스프레드·파이썬 전략 실행 — 두 탭 모두 먼저 새 시작을 막고 모든 실행에 중지를 알린 뒤(한쪽을 기다리는 동안
+        #     다른 쪽이 매매하지 않게), 한 마감 시각(20초, 도커 stop_grace_period 30초 안) 안에서 함께 기다린다(스레드에서).
+        shutdown_deadline = await asyncio.to_thread(team_stop_begin)
+        await asyncio.gather(spread_shutdown(spread_recover, shutdown_deadline),
+                             pyrun_shutdown(pyrun_recover, shutdown_deadline), return_exceptions=True)
         await engine.stop()
         task.cancel()
         hours.cancel()

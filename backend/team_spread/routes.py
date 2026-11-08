@@ -12,8 +12,8 @@
     GET  /runs/{id}/download               zip(`journal` `summary` `api_log` 만)
     GET · POST /runs/{id}/inherit          이어받기 미리 보기 / 시작 `{file, expect}`
 
-없는 실행·이상한 id 는 404. 앱을 켜고 끌 때 하는 일은 `spread_startup`·`spread_shutdown` — `main.py` 의 `lifespan` 이
-부른다. 응답에 실리는 기록의 NaN·무한대 실수는 null 로 바꾼다(`_finite` — 예전 기록 하나가 목록 전체를 깨지 않게,
+없는 실행·이상한 id 는 404. 앱을 켜고 끌 때 하는 일은 `spread_startup`·`team_stop_begin`·`spread_shutdown` — `main.py` 의
+`lifespan` 이 부른다. 응답에 실리는 기록의 NaN·무한대 실수는 null 로 바꾼다(`_finite` — 예전 기록 하나가 목록 전체를 깨지 않게,
 프레임워크의 직렬화 방식에 기대지 않음).
 """
 from __future__ import annotations
@@ -23,6 +23,7 @@ import dataclasses
 import io
 import logging
 import math
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/team/spread", tags=["team-spread"], dependencies=[Depends(refuse_cross_site)])
 
 DOWNLOAD_FILES = ("journal.jsonl", "summary.json", "api_log.jsonl")
+#: 앱을 끌 때 두 탭(스프레드·파이썬 전략)이 함께 쓰는 기다림 마감(초) — 도커 `stop_grace_period`(30초) 안
+SHUTDOWN_SECONDS = 20.0
 CONVENTION_DOC = Path(__file__).resolve().parents[2] / "docs" / "team" / "spread-runner-convention.md"
 
 
@@ -298,6 +301,27 @@ def inherit_run(run_id: str, body: InheritBody) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 앱을 켜고 끌 때 (main.py lifespan 이 부른다)
+def team_stop_begin(timeout: float | None = None) -> float:
+    """앱이 꺼질 때 첫 단계 — 스프레드·파이썬 전략 **두 탭 모두** 새 시작을 막고 모든 실행에 앱 종료 중지를 알린다(기다리지 않음).
+    돌려준 마감 시각(`time.monotonic()` 기준, 기본 `SHUTDOWN_SECONDS` 뒤)까지 `spread_shutdown`·`pyrun_shutdown` 이 **함께** 기다린다 —
+    한쪽을 기다리는 동안 다른 쪽이 매매를 이어가거나 두 기다림이 이어 붙어 도커의 30초를 넘기지 않게. 실패는 기록만 한다."""
+    from backend.team_pyrun.registry import registry as pyrun_registry
+
+    deadline = time.monotonic() + (SHUTDOWN_SECONDS if timeout is None else timeout)
+    for name, reg in (("스프레드", registry), ("파이썬 전략", pyrun_registry)):
+        try:
+            reg().request_stop_all()
+        except Exception:
+            logger.exception("%s 실행에 중지를 알리지 못했습니다", name)
+    return deadline
+
+
+def time_left(deadline: float | None, default: float = SHUTDOWN_SECONDS) -> float:
+    """마감까지 남은 초(지났으면 0). 마감이 없으면 `default`."""
+    return default if deadline is None else max(0.0, deadline - time.monotonic())
+
+
+
 async def spread_startup(after: asyncio.Task | None = None) -> None:
     """남은 스프레드 실행 폴더를 닫는다(스레드에서). `after` = 파이썬 전략 복구 작업 — 그것이 끝난 뒤에 한다.
     실패는 기록만 하고 앱은 계속 뜬다."""
@@ -311,14 +335,15 @@ async def spread_startup(after: asyncio.Task | None = None) -> None:
         logger.exception("스프레드 실행 복구에 실패했습니다 — 앱은 그대로 뜹니다")
 
 
-async def spread_shutdown(recover_task: asyncio.Task | None = None) -> None:
-    """새 시작을 막고 모든 스프레드 실행에 중지를 요청한다(스레드에서). 실패는 기록만 한다."""
+async def spread_shutdown(recover_task: asyncio.Task | None = None, deadline: float | None = None) -> None:
+    """새 시작을 막고 모든 스프레드 실행에 중지를 요청한다(스레드에서). `deadline`(`team_stop_begin` 이 준 마감)이 있으면
+    그때까지만 기다린다. 실패는 기록만 한다."""
     if recover_task is not None and not recover_task.done():
         recover_task.cancel()
         await asyncio.gather(recover_task, return_exceptions=True)
     try:
         registry().close_starts()
-        pending = await asyncio.to_thread(lambda: registry().stop_all())
+        pending = await asyncio.to_thread(lambda: registry().stop_all(timeout=time_left(deadline)))
         if pending:
             logger.warning("꺼질 때까지 끝나지 않은 스프레드 실행: %s", ", ".join(pending))
     except Exception:

@@ -641,3 +641,15 @@ def test_앱을_끄면_실시간_실행도_앱_종료_중지로_정리한다(tmp
     assert reg.stop_all(timeout=5) == []
     assert all(r._shutdown and r.state == "끝" for r in (a, b, c))
     assert all(f.closed for f in feeds) and fake.orders == []
+
+
+# ---------------------------------------------------------------- 두 탭 함께 끄기 (스프레드 마지막 검토 F10)
+def test_request_stop_all_은_새_시작을_막고_모두에게_앱_종료_중지만_알린다_기다리지_않는다(tmp_path):
+    reg, fake, clock = make_registry(tmp_path)
+    status = reg.start(RunSpec("fake.py", "paper", None))
+    run = reg.get(status["id"])
+    reg.request_stop_all()
+    assert run._shutdown and run._stop_requested and run.state not in ("끝", "오류")      # 끝내지 않는다
+    with pytest.raises(StartRefused):
+        reg.start(RunSpec("fake.py", "paper", None))
+    assert reg.stop_all(timeout=1) == [] and run.state == "끝"                          # 기다리고 끝내기는 stop_all 그대로

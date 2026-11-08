@@ -23,6 +23,7 @@ import dataclasses
 import io
 import json
 import logging
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -480,8 +481,10 @@ def pyrun_startup() -> asyncio.Task:
     return asyncio.create_task(_recover())
 
 
-async def pyrun_shutdown(recover_task: asyncio.Task | None) -> None:
-    """앱이 꺼질 때: 모든 실행에 중지를 요청하고(스레드에서 — 이벤트 루프를 막지 않게) 관찰자를 뗀다."""
+async def pyrun_shutdown(recover_task: asyncio.Task | None, deadline: float | None = None) -> None:
+    """앱이 꺼질 때: 모든 실행에 중지를 요청하고(스레드에서 — 이벤트 루프를 막지 않게) 관찰자를 뗀다.
+    `deadline`(`time.monotonic()` 기준 마감 — 스프레드 탭과 함께 끌 때 `team_spread.routes.team_stop_begin` 이 줌)이 있으면
+    그때까지만 실행을 기다린다. 없으면 `stop_all` 기본(20초)."""
     if recover_task is not None and not recover_task.done():
         recover_task.cancel()
         await asyncio.gather(recover_task, return_exceptions=True)
@@ -493,7 +496,8 @@ async def pyrun_shutdown(recover_task: asyncio.Task | None) -> None:
         logger.exception("파이썬 전략 자동 시작을 멈추지 못했습니다")
     try:
         try:
-            pending = await asyncio.to_thread(lambda: registry().stop_all())
+            kw = {} if deadline is None else {"timeout": max(0.0, deadline - time.monotonic())}
+            pending = await asyncio.to_thread(lambda: registry().stop_all(**kw))
             if pending:
                 logger.warning("꺼질 때까지 끝나지 않은 파이썬 전략 실행: %s", ", ".join(pending))
         except Exception:

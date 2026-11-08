@@ -508,3 +508,12 @@ def test_F3_이어받기에_같은_종목을_직접_주면_되고_일부만_주�
     st = reg.start(spec(inherit_from=prev, syms={"ho": "HOF27"}), expect={"ho": 1, "rb": -1})
     assert reg.get(st["id"]).spec.syms == {"ho": "HOF27", "rb": "RBF27"}
 
+
+def test_F10_request_stop_all_은_새_시작을_막고_모두에게_앱_종료_중지만_알린다(tmp_path):
+    reg, _ = make(tmp_path)
+    run = reg.get(reg.start(spec(mode="paper"))["id"])
+    reg.request_stop_all()
+    assert run._shutdown and run._stop.is_set() and run.state == "진행 중"      # 기다리지도 끝내지도 않는다
+    with pytest.raises(StartRefused, match="끄는 중"):
+        reg.start(spec(mode="paper"))
+    assert reg.stop_all(timeout=0.1) == [run.run_id]                          # 기다리기는 stop_all 이 그대로

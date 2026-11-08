@@ -240,6 +240,7 @@ def test_라우터와_수명_연결이_main_에_있다():
 def test_앱_수명에서_복구와_전체_중지가_불린다(reg, monkeypatch):
     calls = []
     monkeypatch.setattr(reg, "recover", lambda: calls.append("recover") or [])
+    monkeypatch.setattr(reg, "request_stop_all", lambda: calls.append("request_stop_all"), raising=False)
     monkeypatch.setattr(reg, "close_starts", lambda: calls.append("close_starts"))
     monkeypatch.setattr(reg, "stop_all", lambda timeout=20.0: calls.append("stop_all") or [])
 
@@ -268,7 +269,7 @@ def test_앱_수명에서_복구와_전체_중지가_불린다(reg, monkeypatch)
                     break
 
     asyncio.run(돌리기())
-    assert calls == ["recover", "close_starts", "stop_all"]
+    assert calls == ["recover", "request_stop_all", "close_starts", "stop_all"]
 
 
 def test_복구_중지가_실패해도_앱은_뜨고_꺼진다(reg, monkeypatch, caplog):
@@ -283,6 +284,56 @@ def test_복구_중지가_실패해도_앱은_뜨고_꺼진다(reg, monkeypatch,
 
 
 # ---------------------------------------------------------------- 마지막 검토 고침 (final-findings)
+def _lifespan(monkeypatch):
+    class _펌프:
+        def __init__(self, service):
+            pass
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    async def _아무것도():
+        return None
+
+    monkeypatch.setattr(app_main.strategy_pump, "RunPump", _펌프)
+    for name in ("_prepare_master", "_prepare_sessions", "_keep_fresh"):
+        monkeypatch.setattr(app_main, name, _아무것도)
+
+    async def 돌리기():
+        async with app_main.lifespan(app_main.app):
+            await asyncio.sleep(0.02)
+
+    asyncio.run(돌리기())
+
+
+def test_F10_앱_종료는_두_탭_모두에게_먼저_중지를_알린_뒤에_기다린다(reg, monkeypatch):
+    from backend.team_pyrun import registry as py_mod
+    py = py_mod.registry()
+    calls = []
+    for tag, r in (("spread", reg), ("pyrun", py)):
+        monkeypatch.setattr(r, "request_stop_all", lambda tag=tag: calls.append(f"{tag}.request_stop_all"), raising=False)
+        monkeypatch.setattr(r, "stop_all", lambda timeout=20.0, tag=tag: calls.append(f"{tag}.stop_all") or [])
+    _lifespan(monkeypatch)
+    asks = [i for i, c in enumerate(calls) if c.endswith("request_stop_all")]
+    joins = [i for i, c in enumerate(calls) if c.endswith(".stop_all")]
+    assert len(asks) == 2 and len(joins) == 2, calls
+    assert max(asks) < min(joins), calls          # 어느 쪽도 기다리기 전에 두 탭 모두 중지를 받는다
+
+
+def test_F10_두_탭의_기다림은_한_마감_시각을_나눠_쓴다(reg, monkeypatch):
+    from backend.team_pyrun import registry as py_mod
+    py = py_mod.registry()
+    got = {}
+    for tag, r in (("spread", reg), ("pyrun", py)):
+        monkeypatch.setattr(r, "stop_all", lambda timeout=20.0, tag=tag: got.update({tag: timeout}) or [])
+    monkeypatch.setattr(routes_mod, "SHUTDOWN_SECONDS", 5.0, raising=False)
+    _lifespan(monkeypatch)
+    assert set(got) == {"spread", "pyrun"} and all(0 < t <= 5.0 for t in got.values()), got   # 둘 다 같은 마감(기본 20초 따로가 아님)
+
+
 def _orders_run_with_holding(reg):
     """도는 모의 계좌 실행에 ho +1 을 들게 한 뒤 앱 종료로 끝낸다(메모리에 남은 끝난 실행)."""
     run = reg.get(reg.start(reg_mod.SpreadSpec("s.py", "orders"))["id"])

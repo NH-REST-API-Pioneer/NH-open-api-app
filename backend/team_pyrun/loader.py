@@ -174,8 +174,11 @@ def _inside(module: ModuleType, prefix: str | tuple[str, ...]) -> bool:
     return isinstance(file, str) and file.startswith(prefix)
 
 
-def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
-    """파일을 따로 불러온다. 모듈과 파일 sha256 을 돌려준다. 실패는 `LoadError`."""
+def exec_isolated(folder: Path, file: str, *, pick: bool = True) -> tuple[ModuleType, str]:
+    """파일을 따로 불러온다. 모듈과 파일 sha256 을 돌려준다. 실패는 `LoadError`.
+
+    # 팀: 공개 함수로 꺼냄(스프레드 탭도 씀). `pick=False` 면 판단 부분만 골라 쓰기를 하지 않아
+    # 앱에 없는 모듈은 그대로 `ModuleNotFoundError` 로 `LoadError` 가 된다."""
     folder = folder.resolve()
     builtin = BUILTIN_DIR.resolve()
     path = folder / file
@@ -204,7 +207,7 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
             # 팀: 실행하기 전에 맨 위 import 를 문법으로만 훑는다 — 앱에 없는 모듈(실행기 쪽 `nh_client` 등)이 있으면
             # 판단 부분만 골라 실행한다(`decision.py`). 없으면 지금까지처럼 해시한 바이트 그대로 전체를 실행한다.
             tree = ast.parse(data, filename=str(path))
-            missing = decision.unresolved(tree)
+            missing = decision.unresolved(tree) if pick else []
             picked = None
             if missing:
                 try:
@@ -231,6 +234,9 @@ def _exec_module(folder: Path, file: str) -> tuple[ModuleType, str]:
                     sys.modules.pop(n, None)
             sys.modules.pop(modname, None)
             sys.modules.update(saved_mods)
+
+
+_exec_module = exec_isolated   # 이전 이름 — 시험이 쓸 수 있어 남겨 둔다
 
 
 def _has_any(cls: type, names: tuple[str, ...]) -> bool:

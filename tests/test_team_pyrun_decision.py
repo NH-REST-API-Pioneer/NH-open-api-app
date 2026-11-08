@@ -421,3 +421,10 @@ def test_별표_import_가_있어도_모듈_dunder_는_막지_않는다(tmp_path
     write(tmp_path / "s", "t.py", f"from dataclasses import dataclass\nfrom pathlib import Path\nfrom {MISSING} import *\n"
           + MKU + "HERE = Path(__file__).parent\n" + LIVE + engine_krx("str(HERE) != ''"))
     assert load(tmp_path / "s", "t.py").new().on_krx(1, 0, "090000") is True
+
+
+def test_pick_False_면_골라_쓰지_않고_ModuleNotFoundError(tmp_path):
+    from backend.team_pyrun import loader
+    (tmp_path / "s.py").write_text("import nh_client_nowhere\nx = 1\n", "utf-8")
+    with pytest.raises(loader.LoadError, match="^ModuleNotFoundError"):
+        loader.exec_isolated(tmp_path, "s.py", pick=False)

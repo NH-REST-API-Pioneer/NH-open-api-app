@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { Modal } from '../../../app/Modal'
 import { pnlText, type PyJournalRow } from '../../../data/pyrun'
 import {
@@ -108,6 +108,8 @@ export function SpreadMain({
   const [askStop, setAskStop] = useState(false)
   const [acting, setActing] = useState(false)
   const [actWhy, setActWhy] = useState<string | null>(null)
+  /** 이어받기 시작 요청이 나가 있는지(동기) — 상태 갱신 전의 두 번 누름을 막습니다. */
+  const inheritInFlight = useRef(false)
   const [inherit, setInherit] = useState<{ preview: InheritPreview | null; why: string | null; sending: boolean } | null>(null)
 
   if (!run) {
@@ -145,13 +147,15 @@ export function SpreadMain({
   }
 
   async function sendInherit() {
-    if (!run || !inherit?.preview || inherit.sending) return
+    if (inheritInFlight.current || !run || !inherit?.preview || inherit.sending) return
+    inheritInFlight.current = true
     const preview = inherit.preview
     setInherit({ ...inherit, sending: true, why: null })
     /* 확인 얼굴에 보인 수량 그대로 보냅니다 — 그 사이 잔고가 달라졌으면 서버가 409 로 거절합니다. */
     const expect: Record<string, number> = {}
     for (const [name, leg] of Object.entries(preview.legs)) expect[name] = leg.qty
     const got = await startInherit(run.id, preview.file ?? run.file, expect)
+    inheritInFlight.current = false
     if (got.ok) {
       setInherit(null)
       onStarted(got.data)

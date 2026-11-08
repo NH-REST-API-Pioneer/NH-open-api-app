@@ -63,6 +63,29 @@ def test_작성_규칙은_문서가_없으면_404(client, monkeypatch, tmp_path)
 
 
 # ---------------------------------------------------------------- 실행
+def test_최대_보유_정수는_모든_다리에_펼쳐진다(client, reg):
+    r = start(client, max_qty=3, orders_per_min=7)
+    assert r.status_code == 201, r.text
+    legs = [x["name"] for x in r.json()["legs"]]
+    assert legs and reg.get(r.json()["id"]).max_qty == {n: 3 for n in legs}
+
+
+def test_최대_보유_dict_는_다리별로(client, reg):
+    name = next(iter(client.get(f"{BASE}/runners").json()["runners"][0]["legs"]))
+    r = start(client, max_qty={name: 2})
+    assert r.status_code == 201, r.text
+    assert reg.get(r.json()["id"]).max_qty[name] == 2
+
+
+def test_최대_보유_모르는_다리와_나쁜_값은_409(client):
+    assert "실행기에 없는 다리" in start(client, max_qty={"nope": 2}).json()["detail"]
+    name = next(iter(client.get(f"{BASE}/runners").json()["runners"][0]["legs"]))
+    assert start(client, max_qty={name: 0}).status_code == 409
+    assert start(client, max_qty=-1).status_code == 409
+    assert start(client, max_qty={name: True}).status_code == 422
+    assert start(client, max_qty=True).status_code == 422
+
+
 def test_시작_목록_조회(client, reg):
     r = start(client)
     assert r.status_code == 201

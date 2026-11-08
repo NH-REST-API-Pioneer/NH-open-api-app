@@ -240,7 +240,8 @@ export interface StartOptions {
   mode: SpreadMode
   /** 다리 이름 → 종목코드. 비운 다리는 빼서 보냅니다(서버가 `LEGS` 대로 찾음). 모두 비면 칸을 아예 뺍니다. */
   syms: Record<string, string>
-  maxQty: number
+  /** 다리 이름 → 최대 보유(계약). */
+  maxQty: Record<string, number>
   ordersPerMin: number
 }
 

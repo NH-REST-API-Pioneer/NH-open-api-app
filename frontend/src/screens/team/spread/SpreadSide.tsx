@@ -406,26 +406,34 @@ export function SpreadAddForm({
   const [mode, setMode] = useState<SpreadMode>('paper')
   /** 적은 종목코드(다리 이름 → 글). 파일이 바뀌면 비웁니다. */
   const [syms, setSyms] = useState<Record<string, string>>({})
-  /** 적은 값. `null` = 손대지 않음(실행기의 기본). */
-  const [qty, setQty] = useState<string | null>(null)
+  /** 적은 다리별 최대 보유(글). 없는 다리는 손대지 않음(실행기의 기본). */
+  const [qty, setQty] = useState<Record<string, string>>({})
+  /** 시작 요청이 나가 있는지 — 상태는 다음 그림 뒤에야 바뀌어 빠른 두 번 누름을 못 막으므로 동기로 따로 둡니다. */
+  const inFlight = useRef(false)
   const [perMin, setPerMin] = useState(String(DEFAULT_ORDERS_PER_MIN))
   const [sending, setSending] = useState(false)
   const [why, setWhy] = useState<string | null>(null)
 
   const picked = usable.find((one) => one.file === file)
   const legs = Object.entries(picked?.legs ?? {})
-  const qtyText = qty ?? String(picked?.max_qty ?? DEFAULT_MAX_QTY)
-  const qtyNum = Number(qtyText)
+  const qtyOf = (name: string) => qty[name] ?? String(picked?.max_qty ?? DEFAULT_MAX_QTY)
+  const qtyValid = (name: string) => /^\d+$/.test(qtyOf(name).trim()) && Number(qtyOf(name)) >= 1
   const perMinNum = Number(perMin)
-  const qtyOk = /^\d+$/.test(qtyText.trim()) && qtyNum >= 1
+  const qtyOk = legs.every(([name]) => qtyValid(name))
   const perMinOk = /^\d+$/.test(perMin.trim()) && perMinNum >= 1
-  const inputWhy = !file ? '실행기 파일을 고르세요' : !qtyOk ? '최대 보유는 1 이상의 정수입니다' : !perMinOk ? '분당 주문은 1 이상의 정수입니다' : null
+  const inputWhy = !file ? '실행기 파일을 고르세요' : !qtyOk ? '다리별 최대 보유는 1 이상의 정수입니다' : !perMinOk ? '분당 주문은 1 이상의 정수입니다' : null
 
   async function send() {
-    if (sending || !file || inputWhy) return
+    if (inFlight.current || sending || !file || inputWhy) return
+    /* 모의 계좌는 확인 얼굴을 지난 뒤에만 보냅니다 — 부르는 쪽이 빠뜨려도 여기서 막습니다. */
+    if (mode === 'orders' && !asking) return
+    inFlight.current = true
     setSending(true)
     setWhy(null)
-    const got = await startRun({ file, mode, syms, maxQty: qtyNum, ordersPerMin: perMinNum })
+    const maxQty: Record<string, number> = {}
+    for (const [name] of legs) maxQty[name] = Number(qtyOf(name))
+    const got = await startRun({ file, mode, syms, maxQty, ordersPerMin: perMinNum })
+    inFlight.current = false
     setSending(false)
     if (got.ok) onStarted(got.data)
     else {
@@ -454,10 +462,12 @@ export function SpreadAddForm({
               <dd>{syms[name]?.trim() ? syms[name].trim() : `${spec} (실행기 표기 — 시작할 때 서버가 정합니다)`}</dd>
             </div>
           ))}
-          <div className="run-confirm-row">
-            <dt>다리별 최대 보유</dt>
-            <dd>{qtyNum}계약</dd>
-          </div>
+          {legs.map(([name]) => (
+            <div className="run-confirm-row" key={`max-${name}`}>
+              <dt>다리 {name} 최대 보유</dt>
+              <dd>{Number(qtyOf(name))}계약</dd>
+            </div>
+          ))}
           <div className="run-confirm-row">
             <dt>분당 주문 상한</dt>
             <dd>{perMinNum}건</dd>
@@ -487,7 +497,7 @@ export function SpreadAddForm({
           onChange={(e) => {
             setFile(e.target.value)
             setSyms({})
-            setQty(null)
+            setQty({})
           }}
         >
           {files.length === 0 && <option value="">실행기 파일이 없습니다</option>}
@@ -521,16 +531,18 @@ export function SpreadAddForm({
         </label>
       ))}
       {legs.length > 0 && <p className="run-hint">비워 두면 실행기가 적은 표기(회색 글)대로 서버가 월물을 고릅니다. 특정 월물은 종목코드를 적으세요.</p>}
-      <label className="run-add-row">
-        <span className="run-add-label">다리별 최대 보유</span>
-        <input
-          className="control spread-num-input"
-          inputMode="numeric"
-          value={qtyText}
-          aria-invalid={!qtyOk || undefined}
-          onChange={(e) => setQty(e.target.value)}
-        />
-      </label>
+      {legs.map(([name]) => (
+        <label className="run-add-row" key={`max-${name}`}>
+          <span className="run-add-label">다리 {name} 최대 보유</span>
+          <input
+            className="control spread-num-input"
+            inputMode="numeric"
+            value={qtyOf(name)}
+            aria-invalid={!qtyValid(name) || undefined}
+            onChange={(e) => setQty((had) => ({ ...had, [name]: e.target.value }))}
+          />
+        </label>
+      ))}
       <label className="run-add-row">
         <span className="run-add-label">분당 주문 상한</span>
         <input

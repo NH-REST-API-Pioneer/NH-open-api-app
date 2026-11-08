@@ -25,15 +25,16 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictInt
 
 from backend.team_pyrun import strategy_files
 from backend.team_pyrun.journal import Journal
+from backend.team_pyrun.loader import LoadError
 from backend.team_pyrun.live import StartRefused
 from backend.team_pyrun.routes import _read_json, refuse_cross_site, require_json
 from backend.team_spread.registry import registry
 from backend.team_spread.run import FINISHED, SpreadSpec
-from backend.team_spread.runner_files import scan
+from backend.team_spread.runner_files import load_runner, scan
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class StartBody(BaseModel):
     file: str
     mode: str
     syms: dict[str, str] | None = None
-    max_qty: int | None = None
+    max_qty: dict[str, StrictInt] | StrictInt | None = None   # 정수 하나 = 실행기의 모든 다리에 같은 값(판정 R26)
     orders_per_min: int | None = None
 
 
@@ -131,11 +132,28 @@ def list_runs() -> dict[str, Any]:
     return {"runs": registry().list()}
 
 
+def _max_qty(body: StartBody) -> dict[str, int] | None:
+    """`max_qty` 를 다리 → 최대 보유로. 정수 하나는 실행기 `LEGS` 의 모든 다리에 펼친다. 모르는 다리·양이 아닌 값은 `StartRefused`."""
+    given = body.max_qty
+    if given is None:
+        return None
+    if isinstance(given, int):
+        try:
+            legs = load_runner(registry().folder_of_runners, body.file).legs
+        except LoadError as e:
+            raise StartRefused(f"실행기 파일을 불러오지 못했습니다 — {e}") from e
+        given = {name: given for name in legs}
+    for name, qty in given.items():
+        if qty <= 0:
+            raise StartRefused(f"{name} 최대 보유는 양의 정수여야 합니다: {qty!r}")
+    return dict(given)
+
+
 # 팀: 반드시 `def`(동기) — 준비(시세·잔고 조회)가 막는 입출력이라 스레드 풀에서 불려야 이벤트 루프가 안 막힌다.
 @router.post("/runs", status_code=201, dependencies=[Depends(require_json)])
 def start_run(body: StartBody) -> dict[str, Any]:
-    spec = SpreadSpec(body.file, body.mode, body.syms, body.max_qty, body.orders_per_min)  # type: ignore[arg-type]
     try:
+        spec = SpreadSpec(body.file, body.mode, body.syms, _max_qty(body), body.orders_per_min)  # type: ignore[arg-type]
         return registry().start(spec)
     except StartRefused as e:
         raise HTTPException(status_code=409, detail=str(e)) from None

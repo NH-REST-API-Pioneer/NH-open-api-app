@@ -30,6 +30,7 @@ import { StrategySettings } from './StrategySettings'
 import { StrategyVerify } from './StrategyVerify'
 // 팀: 전략주문 › 「파이썬 전략」 탭
 import { PyRunScreen } from '../team/PyRunScreen'
+import { SpreadScreen } from '../team/spread/SpreadScreen'
 import { StrategyRun } from './StrategyRun'
 import { StrategyAnalysis } from './StrategyAnalysis'
 import { LeaveGuard } from './LeaveGuard'
@@ -257,6 +258,9 @@ export function StrategyScreen() {
         ) : tab === '파이썬 전략' ? (
           /* 팀: 파이썬 전략 실행 화면(팀 코드) */
           <PyRunScreen />
+        ) : tab === '스프레드' ? (
+          /* 팀: 스프레드 실행 화면(팀 코드) */
+          <SpreadScreen />
         ) : (
           <StrategyAnalysis />
         )}

@@ -40,8 +40,17 @@ import type {
  * 답으로 채웁니다 — 지어낸 실행을 세우지 않습니다.
  */
 
-// 팀: 끝에 '파이썬 전략' 탭(전략 폴더의 파이썬 전략 실행 — `screens/team/PyRunScreen`)을 더함
-export const STRATEGY_TABS = ['전략 목록', '전략 설정', '전략 검증', '전략 진행', '전략 분석', '파이썬 전략'] as const
+// 팀: 끝에 '파이썬 전략' 탭(전략 폴더의 파이썬 전략 실행 — `screens/team/PyRunScreen`)과
+// '스프레드' 탭(여러 다리 실행기 — `screens/team/spread/SpreadScreen`)을 더함
+export const STRATEGY_TABS = [
+  '전략 목록',
+  '전략 설정',
+  '전략 검증',
+  '전략 진행',
+  '전략 분석',
+  '파이썬 전략',
+  '스프레드',
+] as const
 export type StrategyTab = (typeof STRATEGY_TABS)[number]
 
 /** 목록에서 「검증 화면으로」·「진행 화면으로」를 누를 때 함께 건너가는 것.

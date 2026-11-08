@@ -1,0 +1,73 @@
+/* 팀: 전략주문 › 「스프레드」만 쓰는 스타일. 자리·글자·색은 「파이썬 전략」(`../pyrun.css`)과 「전략 진행」을 빌리고,
+ * 여기에는 그 화면에 없는 조각(SVG 차트·다리 고르기·추정 표지)만 둡니다. 색은 기존 변수만 씁니다. */
+
+/* 차트가 넓어야 하므로 오른쪽 요약 열은 좁게 — 좁으면 위아래입니다. */
+.pyrun-mid.spread-mid {
+  grid-template-columns: minmax(0, 1fr) 360px;
+}
+
+@container stg (max-width: 1100px) {
+  .pyrun-mid.spread-mid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.spread-chart-svg {
+  display: block;
+  max-width: 100%;
+}
+
+.spread-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.spread-tick {
+  fill: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 체결 ● — 오름(매수)·내림(매도) 색은 앱 전체와 같은 변수. */
+.spread-fill-buy {
+  fill: var(--up);
+  stroke: var(--surface);
+  stroke-width: 1;
+}
+
+.spread-fill-sell {
+  fill: var(--down);
+  stroke: var(--surface);
+  stroke-width: 1;
+}
+
+.spread-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.spread-log-select {
+  height: 22px;
+  font-size: 12px;
+}
+
+/* 추정 표지 — 체결가를 몰라 기준가로 센 값. 경고색 바탕이라 확정 값과 한눈에 갈립니다. */
+.badge.spread-est {
+  margin-left: 4px;
+  background: var(--warn-bg, var(--hover));
+  color: var(--warn);
+}
+
+.spread-cur {
+  margin-right: 8px;
+}
+
+.spread-sym-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.spread-num-input {
+  width: 80px;
+}

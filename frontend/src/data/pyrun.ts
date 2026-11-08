@@ -461,7 +461,8 @@ export function scheduleTimeText(iso: string | null): string {
 
 /** `POLL_MS` 마다 `tick` 을 부릅니다. 앞 요청이 끝나기 전에는 다음을 보내지 않고, 화면을
  *  떠나면(언마운트) 멈춥니다. `tick` 이 바뀌면(=보는 대상이 바뀌면) 바로 한 번 부릅니다. */
-function usePolling(tick: (signal: AbortSignal) => Promise<void>) {
+// 팀: 스프레드 탭(`data/spread.ts`)도 씁니다.
+export function usePolling(tick: (signal: AbortSignal) => Promise<void>) {
   useEffect(() => {
     const control = new AbortController()
     let timer = 0

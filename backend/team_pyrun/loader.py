@@ -56,6 +56,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import inspect
+import math
 import os
 import re
 import sys
@@ -133,11 +134,19 @@ class Loaded:
     tick_value: float
     kind: str = "minute"                        # "minute"(1분봉) | "realtime"(실시간)
     params_missing: tuple[str, ...] = ()        # Params 에 없는 장 시간 칸 — `new(market)` 가 채운다
+    paper_fee: float | None = None              # 전략 모듈의 `PAPER_FEE`(종이 체결 수수료). 없으면 None
 
-    def new(self, market: Market | None = None) -> object:
-        """새 전략 인스턴스. `market` 을 주면 빠진 장 시간 칸을 그 시장 값으로 채운 Params 로 만든다."""
+    def params_for(self, market: Market | None, *, overnight: bool = False) -> type:
+        """Params 클래스. `market` 을 주면 빠진 장 시간 칸을 채우고, `overnight` 면 07:00 전 시각에 24시간을 더한다."""
         cls = self.params_cls if market is None else fill_params(self.params_cls, self.params_missing, market)
-        return self.strategy_cls(cls())
+        if overnight:
+            from backend.team_pyrun.tradeday import shifted_params   # tradeday 가 이 모듈을 import 한다
+            cls = shifted_params(cls)
+        return cls
+
+    def new(self, market: Market | None = None, *, overnight: bool = False) -> object:
+        """새 전략 인스턴스. `market` 을 주면 빠진 장 시간 칸을 그 시장 값으로 채운 Params 로 만든다."""
+        return self.strategy_cls(self.params_for(market, overnight=overnight)())
 
 
 def schedule_values(params: object, missing: tuple[str, ...], market: Market) -> dict[str, str]:
@@ -368,6 +377,7 @@ class _Checked:
     notes: list[str]
     kind: str
     params_missing: tuple[str, ...]
+    paper_fee: float | None = None
 
 
 def _check(module: ModuleType, file: str) -> _Checked:
@@ -391,6 +401,14 @@ def _check(module: ModuleType, file: str) -> _Checked:
         tick_value = float(getattr(module, "TICK_VALUE", getattr(module, "TICK_USD", DEFAULT_TICK_VALUE)))
     except (TypeError, ValueError) as e:
         raise LoadError(f"TICK·TICK_VALUE(또는 TICK_USD) 는 숫자여야 합니다: {e}") from e
+    paper_fee: float | None = None
+    if hasattr(module, "PAPER_FEE"):
+        try:
+            paper_fee = float(module.PAPER_FEE)
+        except (TypeError, ValueError) as e:
+            raise LoadError(f"PAPER_FEE 는 0 이상의 숫자여야 합니다: {e}") from e
+        if not math.isfinite(paper_fee) or paper_fee < 0:
+            raise LoadError(f"PAPER_FEE 는 0 이상의 숫자여야 합니다: {module.PAPER_FEE!r}")
     kind = _kind(strategy_cls)
     params_cls = _params_class(module, strategy_cls, PARAMS_NAMES[kind])
     notes: list[str] = []
@@ -424,7 +442,7 @@ def _check(module: ModuleType, file: str) -> _Checked:
         raise
     except Exception as e:
         raise LoadError(f"{type(e).__name__}: {e}") from e
-    return _Checked(strategy_cls, params_cls, instance, name, title, tick, tick_value, notes, kind, absent)
+    return _Checked(strategy_cls, params_cls, instance, name, title, tick, tick_value, notes, kind, absent, paper_fee)
 
 
 def load(folder: Path, file: str) -> Loaded:
@@ -442,6 +460,7 @@ def load(folder: Path, file: str) -> Loaded:
         tick_value=c.tick_value,
         kind=c.kind,
         params_missing=c.params_missing,
+        paper_fee=c.paper_fee,
     )
 
 

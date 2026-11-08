@@ -5,7 +5,9 @@
     Market      시장 값 — 통화·실행 끝 시각·장 시작·휴장·종이 수수료·종이 슬리피지·틱·하루 최소 봉 수 (바꿀 수 없음)
     market_of   종목코드로 시장 고르기 (`A75…` 국내, `MKU…` 해외, 그 밖은 ValueError)
     market_of_tick  종목을 안 줬을 때 전략 `TICK` 으로 시장 고르기 (MKU 틱이면 해외, 아니면 국내)
-    in_break    거래소 휴장 중인가 (해외 20:35~20:50, 국내는 없음)
+    in_break    거래소 휴장 중인가 (해외 20:35~20:50, 국내는 없음) — 장 판정(`opening`)을 안 꽂은 실행만 씀
+    run_end     1분봉 실행 끝 시각 (국내 15:31, 해외 `flatten_at` + 5분)
+    paper_fee_of  종이 체결 수수료 (전략 `PAPER_FEE`, 없으면 시장 값)
     adapter     그 시장의 `api.py` 함수들을 브로커·1분봉 실행이 부르는 **같은 이름**으로 잇는 객체
     adapter_for 이미 어댑터면 시장이 같을 때 그대로, 아니면 그 시장 어댑터로 (실행·registry 가 씀)
 
@@ -140,6 +142,20 @@ def market_of_tick(tick: float) -> Market:
 def in_break(market: Market, hhmmss: str) -> bool:
     """`hhmmss`(한국시간)가 그 시장의 휴장 [시작, 끝) 안인가."""
     return any(start <= hhmmss < end for start, end in market.breaks)
+
+
+def run_end(market: Market, flatten_at: str) -> str:
+    """1분봉 실행을 끝내는 시각 — 국내는 모든 품목 15:31(`DOMESTIC.end_time`), 해외는 `flatten_at` + 5분
+    (실시간 실행기와 같은 규칙. 24시를 넘으면 계속 셈 — `"235800"` → `"240300"`)."""
+    if market.id == "domestic":
+        return DOMESTIC.end_time
+    from backend.team_pyrun.tradeday import plus_minutes    # tradeday → loader → markets 순환이라 함수 안에서
+    return plus_minutes(flatten_at, 5)
+
+
+def paper_fee_of(market: Market, override: float | None) -> float:
+    """종이 체결 수수료(체결마다, 그 종목 통화) — 전략 `PAPER_FEE` 가 있으면 그것(0 도), 없으면 시장 값."""
+    return market.paper_fee if override is None else float(override)
 
 
 class PagesLeft(Exception):

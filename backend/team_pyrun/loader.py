@@ -46,7 +46,7 @@ week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 �
     session_end   = 시장 실행 끝 (국내 153100, 해외 235500)
 
 `hold_min` 은 시장이 채우지 않습니다(없으면 `LoadError`). 채우기 전(시장 없이 `new()`)에는 Params 그대로입니다 —
-칸을 지어내지 않습니다. 국내 1분봉 실행은 빠진 칸이 있으면 시작을 거부합니다(`live.prepare`).
+칸을 지어내지 않습니다. 채워 주는 품목은 MKU 뿐이고, 다른 품목의 1분봉 실행은 빠진 칸이 있으면 시작을 거부합니다(`live.prepare`).
 파일 하나가 잘못돼도 앱이나 다른 실행에는 번지지 않습니다(`LoadError` 로만 알림).
 """
 from __future__ import annotations
@@ -91,7 +91,7 @@ DEFAULT_TICK, DEFAULT_TICK_VALUE = 0.1, 1000
 #: 익절 목표가 없을 때 목록에 남기는 알림(오류가 아님). 청산 판단 함수(`exit_reason`)가 있으면 남기지 않는다.
 NO_TARGET_NOTE = "target·current_vwap 이 없어 익절 없이 돕니다"
 #: 장 시간 칸이 빠졌을 때 목록에 남기는 알림(오류가 아님).
-SCHEDULE_NOTE = "Params 에 없는 시간 칸({names})은 해외 실행을 시작할 때 시장 시간표로 채웁니다 (국내 실행은 이 칸이 있어야 합니다)"
+SCHEDULE_NOTE = "Params 에 없는 시간 칸({names})은 MKU 실행을 시작할 때만 시장 시간표로 채웁니다 (다른 품목은 이 칸이 있어야 합니다)"
 #: 기본 공용 모듈 폴더. 폴더에 같은 이름 파일이 없을 때만 쓰인다(`sys.path` 에서 전략 폴더 다음).
 BUILTIN_DIR = Path(__file__).resolve().parent / "builtin"
 

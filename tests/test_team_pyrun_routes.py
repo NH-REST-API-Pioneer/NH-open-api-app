@@ -27,11 +27,13 @@ from tests.test_team_pyrun_registry import FIXTURES, KRX_SYM, MKU, make_registry
 DATA = FIXTURES.parent / "bars_1m_A756B000_20261030.csv"
 BASE = "/api/team/pyrun"
 FINISHED = "20261030_bb_replay"
-STATUS_KEYS = ["id", "file", "name", "title", "mode", "sym", "state", "started_at", "ended_at", "ended_reason",
-               "bar_min", "next_decision_at", "position", "entry", "stop", "stop_ticks", "target", "time_exit_at",
-               "today_pnl", "stops", "max_stops", "halted", "last_signal", "params", "market", "currency", "kind"]
-#: 실시간 실행의 `status()` — 1분봉 칸 뒤에 실시간 칸 (화면 Task 10 이 쓴다)
-RT_STATUS_KEYS = STATUS_KEYS + ["signal_sym", "end_at", "side", "held_s", "krx", "bid", "ask", "mku_last",
+BASE_STATUS_KEYS = ["id", "file", "name", "title", "mode", "sym", "state", "started_at", "ended_at", "ended_reason",
+                    "bar_min", "next_decision_at", "position", "entry", "stop", "stop_ticks", "target", "time_exit_at",
+                    "today_pnl", "stops", "max_stops", "halted", "last_signal", "params", "market", "currency", "kind"]
+#: 1분봉 실행의 `status()` — 공통 칸 뒤에 종목·시계 칸 (모든 선물 설계 4.7)
+STATUS_KEYS = BASE_STATUS_KEYS + ["product", "exchange", "tick", "tick_value", "overnight", "trading_date", "end"]
+#: 실시간 실행의 `status()` — 공통 칸 뒤에 실시간 칸 (화면 Task 10 이 쓴다)
+RT_STATUS_KEYS = BASE_STATUS_KEYS + ["signal_sym", "end_at", "side", "held_s", "krx", "bid", "ask", "mku_last",
                                 "last_dk", "last_rho", "last_krx_at", "last_quote_at", "pending"]
 
 

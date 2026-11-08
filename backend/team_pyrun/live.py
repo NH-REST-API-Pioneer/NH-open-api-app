@@ -18,7 +18,7 @@ week02 와 다른 점
 
 - 시작할 때 이 종목 잔고가 있으면 **정리하지 않고 시작을 거부**합니다(누구의 잔고인지 모르므로).
 - 실시간 전략(`Loaded.kind == "realtime"`)은 조회·주문 없이 시작을 거부합니다. Params 에 장 시간 칸이 빠진 전략
-  (`Loaded.params_missing`)은 해외면 해외 시간표로 채우고(`Loaded.new(market)`), 국내면 week02 처럼 거부합니다.
+  (`Loaded.params_missing`)은 MKU 면 해외 시간표로 채우고(`Loaded.new(market)`), 다른 품목이면 week02 처럼 거부합니다.
 - 전략 파일의 sha256 과 Params 를 처음 기록에 남깁니다.
 - 계좌 잔고를 대조해 실행이 아는 보유와 다르면 **주문을 멈추고 「확인 필요」**로 둡니다: 보유 중 30초마다,
   보유가 바뀌고 5초 뒤, 체결을 못 받은 주문 바로 뒤. 결과를 모르는 주문이 있었으면 보유가 없어도 30초마다.
@@ -32,11 +32,27 @@ week02 와 다른 점
 시각은 생성자에 넣은 `now()`(한국시간)만 씁니다. 상태(`대기` `진행 중` `확인 필요` `끝` `오류`)가 바뀔 때마다
 `run.json` 을 새로 씁니다(임시 파일에 쓰고 바꿔 끼움).
 
-**시장 고르기** — `RunSpec.sym` 이 있으면 `markets.market_of(sym)`, 비었으면 전략 `TICK` 으로
+**시장 고르기** — 종목(`leg`, `products.find_product` 가 고른 `Leg`)을 주면 계좌는 종목을 따라(`account_market`),
+해외 조회는 그 종목의 거래소·통화(`exch_cd`·`cur_cd`)로 합니다. 틱은 종목 찾기가 품목 세부정보로 이미 확인했으므로
+`prepare` 는 최근월물 찾기(`nearest()`)·틱 확인(`spec()`)을 부르지 않고, 전략 `TICK`·`TICK_VALUE` 가 종목과 다르면
+조회·주문 없이 거부합니다(`strategy_tick_refusal` — MKU 틱 가치 전략을 HO 에 거는 것 등).
+종목을 안 주면 지금 길: `RunSpec.sym` 이 있으면 `markets.market_of(sym)`, 비었으면 전략 `TICK` 으로
 (`markets.market_of_tick`: MKU 틱 0.0001 이면 해외 → 해외 마스터의 MKU 최근월물 `nearest_mku`, 아니면 국내 →
 `nearest_usd`). **시장 가드**: 종목의 시장과 전략 TICK 의 시장이 다르면(MKU 틱 전략을 `A75…` 에, 또는 반대)
-조회·주문 없이 시작을 거부합니다. 끝 시각은 `market.end_time`(국내 15:31, 해외 23:55). `run.json`·`status()`·
-`summary.json` 에 `market`·`currency`(손익·수수료의 통화 — 값은 그 통화, TICK_VALUE 단위)를 둡니다.
+조회·주문 없이 시작을 거부합니다. `run.json`·`status()`·`summary.json` 에 `market`·`currency`(손익·수수료의 통화 —
+값은 그 통화, TICK_VALUE 단위)·`product`·`exchange`·`tick`·`tick_value`·`overnight`·`trading_date`·`end` 를 둡니다
+(종목 없는 실행은 A75·KRX / MKU·FSGX, 틱은 전략 값).
+
+**실행 끝·시작 검사** (`run_plan`) — 실행 끝은 국내 15:31(모든 품목), 해외 `flatten_at` + 5분(`markets.run_end`).
+장 시각 칸이 07:00 보다 이르거나 끝이 24시를 넘으면 자정 넘는 실행(`overnight`, Params 의 07:00 전 시각에 24시간을 더함).
+조회·주문 전에 거부하는 것: 국내인데 자정 넘는 전략(국내는 주간만), MKU 가 아닌 품목인데 Params 장 시간 칸이 빠짐,
+해외 실행 끝이 다음 날 07:00 을 넘음, 판정이 종목을 모름(`known`), 해외 거래일 마지막 장 끝(`day_end`)이 `flatten_at`
+보다 이름(전략 장 시작 시각으로 물어 모르면 건너뜀). 종이 수수료는 전략 `PAPER_FEE`, 없으면 시장 값(`paper_fee_of`).
+
+**장 판정(`judge`)** — 꽂으면 아래 「휴장」 규칙의 막힘이 `opening.order_open`(국내 `day` + 09:00 부터, 해외
+`open`·`open-2`·`next-day`) 이 아닌 모든 때가 됩니다(쉼·마감·국내 09:00 전·시간표 모름·판정 오류). 보내기 직전 관문
+(`may_send`)도 국내까지 꽂고, 기록 글의 까닭은 `opening.span_text`. 실행 중 판정이 종목을 모르게 되면 「장 시간표 모름 —
+주문 멈춤」 을 바뀔 때만 한 줄. 안 꽂으면(None) 지금 규칙 — 해외 고정 휴장 20:35~20:50, 국내는 막힘 없음.
 
 **휴장(해외 20:35~20:50)엔 주문이 하나도 나가지 않습니다.** 갈래마다:
 
@@ -83,15 +99,25 @@ from typing import Any, Literal
 
 from backend.sessions.hours import now_kst, to_kst
 from backend.team_pyrun import api as default_api
+from backend.team_pyrun import tradeday
 from backend.team_pyrun.apilog import ApiLog, bind, purpose
 from backend.team_pyrun.broker import MockAccountBroker, error_text
 from backend.team_pyrun.journal import Journal, summarize, write_summary
 from backend.team_pyrun.loader import Loaded
-from backend.team_pyrun.markets import DOMESTIC, Market, adapter_for, in_break, market_of, market_of_tick
+from backend.team_pyrun.markets import (DOMESTIC, Market, adapter_for, in_break, market_of, market_of_tick,
+                                        paper_fee_of, run_end)
+from backend.team_pyrun.opening import DayEnd, Judge, known, order_open, span_text
+from backend.team_pyrun.products import account_market, is_mku, strategy_tick_refusal
 from backend.team_pyrun.runner import Minute, PaperBroker, Runner, _entry_args, minute_of
+from backend.team_pyrun.tradeday import RunClock, clock_text, is_overnight
+from backend.team_spread.legs import Leg
 
-# 팀: 출처는 `markets.DOMESTIC` — 국내 15:30 정리 뒤 이 시각에 끝냄 (week02 와 같음). 해외는 `market.end_time`
+# 팀: 출처는 `markets.DOMESTIC` — 국내 15:30 정리 뒤 이 시각에 끝냄 (week02 와 같음). 실행 끝은 `run_plan(...).end`
 END_TIME = DOMESTIC.end_time
+#: 종목(`Leg`) 없이 세운 실행의 품목·거래소 — 빈 종목 칸·`A75…`·`MKU…` 만 받으므로 시장으로 정해진다
+LEGLESS_PRODUCT = {"domestic": ("A75", "KRX"), "overseas": ("MKU", "FSGX")}
+#: 실행 중 판정이 종목을 모르게 됐을 때(`unknown`·예외) 남기는 기록 — 그동안 주문은 판정 관문이 막는다
+TIMETABLE_LOST = "장 시간표 모름 — 주문 멈춤"
 WARMUP_BARS = 1500          # 준비 봉 개수
 LIVE_BARS = 10              # 장중 1분봉 조회 개수
 MINUTE_DELAY_SECONDS = 3    # 분이 바뀌고 이만큼 뒤에 막 끝난 1분봉을 받음
@@ -160,6 +186,46 @@ def _hhmmss(moment: datetime) -> str:
     return to_kst(moment).strftime("%H%M%S")
 
 
+@dataclass(frozen=True)
+class RunPlan:
+    """실행 하나의 시계 계획 — registry·autostart·replay 가 실행과 같은 값을 쓰게 한 곳(`run_plan`)에서 셈.
+
+    `params_cls` 는 빠진 장 시간 칸을 채우고(MKU), 자정 넘는 실행이면 07:00 전 시각에 24시간을 더한 Params.
+    `end` 는 실행 끝(거래일 시계 — 24시를 넘으면 `"240300"` 처럼)."""
+
+    params_cls: type
+    overnight: bool
+    end: str
+    clock: RunClock
+
+
+def _end_of(market: Market, params: object) -> str:
+    flatten = getattr(params, "flatten_at", None)
+    if not (isinstance(flatten, str) and len(flatten) == 6 and flatten.isdigit()):
+        return market.end_time      # flatten_at 이 없는 Params(실시간 전략) — 1분봉 실행은 prepare 가 거부한다
+    return run_end(market, flatten)
+
+
+def run_plan(loaded: Loaded, market: Market) -> RunPlan:
+    """채운 Params 기본값의 `flatten_at` 으로 실행 끝(`markets.run_end`) → 자정 넘는 실행인가(`tradeday.is_overnight`)
+    → 그렇다면 07:00 전 시각을 바꾼 Params 로 끝도 다시 (설계 4.4·4.5)."""
+    cls = loaded.params_for(market)
+    end = _end_of(market, cls())
+    overnight = is_overnight(cls(), end)
+    if overnight:
+        cls = loaded.params_for(market, overnight=True)
+        end = _end_of(market, cls())
+    return RunPlan(params_cls=cls, overnight=overnight, end=end, clock=RunClock(overnight))
+
+
+def _trading_clock(trading_date: str, moment: datetime) -> str:
+    """거래일 0시부터 센 시각(HHMMSS, 24시를 넘어 셈) — 다음 날 06:15 → `"301500"`, 다음 날 07:00 → `"310000"`.
+
+    거래일 시계(`RunClock(True).label`)와 07:00 전까지 같고, 07:00 이후(CME 겨울 07:00 끝 등)도 다음 거래일로 넘기지 않는다."""
+    secs = int((to_kst(moment) - RunClock(True).moment(trading_date, "000000")).total_seconds())
+    return f"{secs // 3600:02d}{secs % 3600 // 60:02d}{secs % 60:02d}"
+
+
 # ---------------------------------------------------------------- 1분봉·실시간 실행이 같이 쓰는 것 (주문과 무관)
 def write_run_json(folder: Path, data: dict) -> None:
     """`run.json` — 임시 파일에 쓰고 바꿔 끼운다(읽는 쪽이 덜 쓴 파일을 보지 않게)."""
@@ -204,29 +270,51 @@ class LiveRun:
     def __init__(self, run_id: str, folder: Path, loaded: Loaded, spec: RunSpec, *,
                  api_module: ModuleType | Any = default_api, now: Callable[[], datetime] = now_kst,
                  sleep: Callable[[float], None] = time.sleep, stops_before: int = 0,
-                 windows_before: tuple | list | set | frozenset = ()):
+                 windows_before: tuple | list | set | frozenset = (), leg: Leg | None = None,
+                 judge: Judge | None = None, day_end: DayEnd | None = None):
         self.run_id, self.folder, self.loaded, self.spec = run_id, Path(folder), loaded, spec
         self.now, self.sleep = now, sleep
         self.kind = "minute"
         self.stops_before = int(stops_before)
         #: 오늘 앞선 실행이 들어간 개장 — prepare 에서 「이미 진입함」으로 되살린다
         self.windows_before: tuple = tuple(sorted(windows_before, key=str))
+        #: 종목 찾기(`products.find_product`)가 고른 종목. 없으면 지금 길(`run_market`·`nearest()`·`spec()`)
+        self.leg = leg
+        #: 장 판정(`opening.Judge`)·해외 거래일 끝(`opening.DayEnd`). judge 가 None 이면 지금 규칙(고정 휴장 `in_break`)
+        self.judge, self.day_end = judge, day_end
         # 팀: 시장과 그 어댑터 — 1분봉·현재가·틱·브로커·예수금은 전부 이 어댑터로
-        self.market, self._market_refusal = run_market(spec.sym, loaded)
-        self.api = adapter_for(self.market, api_module)
+        if leg is not None:
+            # 계좌는 종목을 따라(국내/해외), 해외 조회는 그 종목의 거래소·통화로. 틱은 종목 찾기가 이미 확인했다
+            self.market = account_market(leg)
+            self._market_refusal = strategy_tick_refusal(leg, loaded)
+            self.api = (adapter_for(self.market, api_module) if self.market.id == "domestic" else
+                        adapter_for(self.market, api_module, exch_cd=leg.exchange, cur_cd=leg.currency))
+            self.product, self.exchange, self.currency = leg.product, leg.exchange, leg.currency
+            self.tick, self.tick_value = leg.tick, leg.tick_value
+        else:
+            self.market, self._market_refusal = run_market(spec.sym, loaded)
+            self.api = adapter_for(self.market, api_module)
+            self.product, self.exchange = LEGLESS_PRODUCT[self.market.id]
+            self.currency = self.market.currency
+            self.tick, self.tick_value = loaded.tick, loaded.tick_value
+        #: Params·자정 넘는 실행인가·실행 끝 (모듈 문서 「실행 끝」)
+        self.plan = run_plan(loaded, self.market)
+        self.trading_date: str | None = None
         self.folder.mkdir(parents=True, exist_ok=True)
         self.j = Journal(self.folder / "journal.jsonl")
         self.apilog = ApiLog(self.folder / "api_log.jsonl", run_id)
         self.orders = spec.mode == "orders"
-        # orders 의 MockAccountBroker 는 종목이 정해지는 prepare() 에서 만든다. 종이 체결 값은 시장 값
+        # orders 의 MockAccountBroker 는 종목이 정해지는 prepare() 에서 만든다. 종이 수수료는 전략 PAPER_FEE, 없으면 시장 값
         self.broker: MockAccountBroker | PaperBroker | None = None if self.orders else PaperBroker(
-            self.j, loaded.tick, fee=self.market.paper_fee, slip_ticks=self.market.paper_slip_ticks)
-        # 빠진 Params 장 시간 칸은 시장 값으로 채운다(국내면 prepare 가 거부)
-        self.runner = Runner(loaded.new(self.market), self.j, self.broker, loaded.tick, loaded.tick_value)
+            self.j, loaded.tick, fee=paper_fee_of(self.market, loaded.paper_fee),
+            slip_ticks=self.market.paper_slip_ticks)
+        # 빠진 Params 장 시간 칸은 시장 값으로 채운다(MKU 가 아니면 prepare 가 거부)
+        self.runner = Runner(loaded.new(self.market, overnight=self.plan.overnight), self.j, self.broker,
+                             loaded.tick, loaded.tick_value)
         self.runner.stops_before = self.stops_before   # 화면의 오늘 손절 수용(전략에 day 가 없을 때)
-        self.runner.currency = self.market.currency
-        self.runner.blocked = self._in_break    # 휴장 중엔 체결을 부르지 않음 (step 시각과 지금 시각 둘 다 봄)
-        self.sym: str | None = spec.sym
+        self.runner.currency = self.currency
+        self.runner.blocked = self._in_break    # 주문이 닫힌 동안엔 체결을 부르지 않음 (step 시각과 지금 시각 둘 다 봄)
+        self.sym: str | None = leg.sym if leg is not None else spec.sym
         self.state = "대기"
         self.started_at: str | None = None
         self.ended_at: str | None = None
@@ -249,6 +337,8 @@ class LiveRun:
         self._stop_deferred = False                    # 휴장 중 중지 요청을 미뤘음 — 풀리면 현재가를 받고 정리
         self._shutdown = False                         # 앱 종료 중지 — 휴장이어도 미루지 않고 바로 끝냄(정리는 안 함)
         self._break_noted: set[str] = set()            # 이번 휴장에 「요청을 미룬다」 기록을 남긴 요청 (stop·flatten)
+        self._clock_date = ""                          # step 시각(`clock`)의 날짜 — 판정에 넘길 시각을 되살림
+        self._timetable_lost = False                   # 실행 중 판정이 종목을 모름(`unknown`·예외) — 바뀔 때만 기록
 
     # ------------------------------------------------------------ 시작
     def prepare(self) -> None:
@@ -258,6 +348,7 @@ class LiveRun:
                 raise StartRefused("이미 시작했거나 끝난 실행입니다")
             now = to_kst(self.now())
             self.started_at = _iso(now)
+            self.trading_date = self.plan.clock.label(now)[0]
             self._write_run()
             try:
                 self._prepare(now)
@@ -272,25 +363,30 @@ class LiveRun:
             self._set_state("대기" if now.strftime("%H%M%S") < self.runner.p.session_start else "진행 중")
 
     def _prepare(self, now: datetime) -> None:
-        j, api, loaded, r = self.j, self.api, self.loaded, self.runner
+        j, api, loaded, r, plan = self.j, self.api, self.loaded, self.runner, self.plan
         today, clock = now.strftime("%Y%m%d"), now.strftime("%H%M%S")
         self._today = today
+        self._clock_date = today
+        market = self.market
         # 0. 이 실행기로 돌릴 수 있는 전략인가 — 조회·주문 전에 거부
         if loaded.kind != "minute":
             raise StartRefused("실시간 전략(on_krx·on_quote)은 1분봉 실행으로 시작할 수 없습니다")
-        if self._market_refusal:        # 시장 가드 — 조회 전에 (모듈 문서 「시장 고르기」)
+        if self._market_refusal:        # 시장 가드·틱 확인 — 조회 전에 (모듈 문서 「시장 고르기」)
             raise StartRefused(self._market_refusal)
-        if loaded.params_missing and self.market is DOMESTIC:
-            # 빠진 칸을 시장 시간표로 채우는 것은 해외 실행만 — 국내는 week02 처럼 Params 에 적힌 칸으로만 돈다
+        if market.id == "domestic" and plan.overnight:
+            raise StartRefused("국내는 주간(08:45~15:45)만 돕니다 — 07:00 전 시각이 있는 전략은 국내 종목에 걸 수 없습니다")
+        if loaded.params_missing and not is_mku(self.product):
+            # 빠진 칸을 시장 시간표로 채우는 것은 MKU 만(week03 ORB) — 다른 품목은 Params 에 적힌 칸으로만 돈다
             raise StartRefused(f"Params 에 장 시간 칸이 없습니다 ({', '.join(loaded.params_missing)}) — "
-                               "국내 1분봉 실행은 이 칸을 Params 에 적어야 합니다")
-        market = self.market
+                               "이 품목은 Params 에 적어야 합니다")
+        if market.id == "overseas" and plan.end > tradeday.DAY_ENDS:
+            raise StartRefused(f"실행 끝({clock_text(plan.end)})이 다음 날 07:00 을 넘습니다 — flatten_at 을 당기세요")
         # 1. 어디로·무엇을
         j.write("event", text=f"서버 paper · 주문 {'모의계좌' if self.orders else '종이'}")
         if market is not DOMESTIC:
-            j.write("event", text=f"시장 {market.id} · 통화 {market.currency} · 실행 끝 {market.end_time[:2]}:"
-                                  f"{market.end_time[2:4]} · 휴장 "
-                                  + (", ".join(f"{a[:2]}:{a[2:4]}~{b[:2]}:{b[2:4]}" for a, b in market.breaks) or "없음"))
+            breaks = ("장 시간표대로" if self.judge is not None else
+                      ", ".join(f"{a[:2]}:{a[2:4]}~{b[:2]}:{b[2:4]}" for a, b in market.breaks) or "없음")
+            j.write("event", text=f"시장 {market.id} · 통화 {self.currency} · 실행 끝 {clock_text(plan.end)} · 휴장 {breaks}")
         j.write("event", text=f"전략 {loaded.file} · sha256 {loaded.sha256[:12]} · Params {asdict(r.p)}")
         # 2. 종목과 틱 — registry 가 같은 종목 검사에 쓴 종목(`self.sym`)이 먼저. 다시 고르면 월물이 넘어가는 날
         #    검사한 종목과 주문하는 종목이 달라질 수 있다(RealtimeRun 과 같은 규칙)
@@ -299,21 +395,27 @@ class LiveRun:
             with purpose("종목 찾기"):
                 sym = api.nearest()
         self.sym = sym
-        with purpose("틱 확인"):
-            tick, value = api.spec()
-        if not (math.isclose(tick, loaded.tick, rel_tol=1e-9) and math.isclose(value, loaded.tick_value, rel_tol=1e-9)):
-            raise StartRefused(f"틱·틱가치가 전략 가정과 다릅니다 — 서버 {tick:g}·{value:g}, "
-                               f"전략 {loaded.tick:g}·{loaded.tick_value:g}")
+        self._check_timetable(sym, now)     # 장 판정 — NH 조회 없이 (종목 다리면 조회 0번)
+        if self.leg is not None:
+            tick, value = self.leg.tick, self.leg.tick_value   # 종목 찾기가 품목 세부정보로 이미 확인 (전략 값과도 같음)
+        else:
+            with purpose("틱 확인"):
+                tick, value = api.spec()
+            if not (math.isclose(tick, loaded.tick, rel_tol=1e-9)
+                    and math.isclose(value, loaded.tick_value, rel_tol=1e-9)):
+                raise StartRefused(f"틱·틱가치가 전략 가정과 다릅니다 — 서버 {tick:g}·{value:g}, "
+                                   f"전략 {loaded.tick:g}·{loaded.tick_value:g}")
         if market is DOMESTIC:
             j.write("event", text=f"종목 {sym} · 틱 {tick:g} · 틱가치 {value:,.0f}")
         else:
-            j.write("event", text=f"종목 {sym} · 틱 {tick:g} · 틱가치 {value:g} {market.currency}")
+            j.write("event", text=f"종목 {sym} · 틱 {tick:g} · 틱가치 {value:g} {self.currency}")
         self._write_run()
         # 3. 모의계좌: 시작 잔고가 0 이어야 한다
         if self.orders:
+            # 보내기 직전 관문 — 해외(고정 휴장), 판정을 꽂았으면 국내도(모의 주문 09:00 부터)
             broker = MockAccountBroker(api, sym, j, sleep=self.sleep, today=today,
                                        expected=r.expected_position, halt=r.halt,
-                                       may_send=self._may_send if market.breaks else None)
+                                       may_send=self._may_send if market.breaks or self.judge is not None else None)
             held = broker.position()
             if held is None:
                 raise StartRefused("시작 잔고를 확인하지 못했습니다")
@@ -373,6 +475,23 @@ class LiveRun:
             if day is not None and hasattr(day, "in_position"):
                 day.in_position = False     # 되살리기만 — 이 실행은 보유가 없다
 
+    def _check_timetable(self, sym: str, now: datetime) -> None:
+        """시작 때 장 판정 (설계 4.3) — 시간표가 이 종목을 모르면 거부(조용히 주문 안 하는 실행이 서지 않게).
+        해외는 그 거래일 마지막 장 끝이 `flatten_at` 보다 이르면 거부. 장 시작 시각이 거래 창 밖이라 끝을 모르면(None) 건너뜀."""
+        mid = self.market.id
+        if self.judge is not None and not known(self.judge, mid, sym, now):
+            raise StartRefused("장 시간표에 이 종목이 없습니다 — 화면 「장 시간」에서 확인하세요")
+        if mid != "overseas" or self.day_end is None:
+            return
+        p, date = self.runner.p, self.trading_date or self._today
+        # 지금(장 전 5분이면 창 밖)이 아니라 전략 장 시작 시각으로 묻는다
+        end_at = self.day_end(mid, sym, self.plan.clock.moment(date, str(p.session_start)))
+        if end_at is None:
+            return
+        flat, closes = tradeday.shift(str(p.flatten_at)), _trading_clock(date, end_at)
+        if closes < flat:
+            raise StartRefused(f"장이 정리 시각({clock_text(flat)}) 전에 닫힙니다(장 끝 {clock_text(closes)})")
+
     def _refuse(self, msg: str) -> None:
         self.j.write("event", text=f"시작 거부 · {msg}")
         self._finished = True
@@ -393,17 +512,20 @@ class LiveRun:
     def _step(self, now: datetime) -> None:
         r = self.runner
         clock = now.strftime("%H%M%S")
+        self._clock_date = now.strftime("%Y%m%d")
+        self._note_timetable(now, clock)
         in_brk = self._in_break(clock)
         held_in_break = in_brk and r.pos is not None and not r.halted
         if not in_brk and self._break_noted:
             self._break_noted = set()
-        if clock >= self.market.end_time:
+        if clock >= self.plan.end:
             self._finish("장 끝", now)
             return
         if self._stop_requested and held_in_break and not self._shutdown:
             # 팀: 휴장 중엔 정리 주문을 낼 수 없다 — 휴장이 끝난 첫 step 에서 현재가를 받고 정리한 뒤 끝낸다
             self._stop_deferred = True
-            self._note_break("stop", clock, "휴장 중 중지 요청 — 휴장이 끝나면 정리하고 끝냄")
+            self._note_break("stop", clock, "휴장 중 중지 요청 — 휴장이 끝나면 정리하고 끝냄",
+                             "중지 요청 — 장이 열리면 정리하고 끝냄")
         elif self._stop_requested:
             if self._stop_deferred and r.pos is not None and not r.halted:
                 self._fresh_price(clock)    # 정리 기준가를 휴장 전 가격이 아니라 지금 가격으로 (전략에는 안 넣음)
@@ -419,7 +541,8 @@ class LiveRun:
             self._reconcile(now, clock)     # 주문이 나갈 수 있는 현재가·정리 요청보다 먼저 대조
             self._feed_price(clock)
             if self._flatten_requested and self._in_break(clock) and r.pos is not None:
-                self._note_break("flatten", clock, "휴장 중 정리 요청 — 휴장이 끝난 첫 가격에 정리")   # 요청은 들고 있는다
+                self._note_break("flatten", clock, "휴장 중 정리 요청 — 휴장이 끝난 첫 가격에 정리",
+                                 "정리 요청 — 장이 열린 첫 가격에 정리")   # 요청은 들고 있는다
             elif self._flatten_requested:
                 self._flatten_requested = False
                 self.j.write("event", clock=clock, text="정리 요청 — 보유가 있으면 정리")
@@ -432,23 +555,59 @@ class LiveRun:
             self._set_state("확인 필요")
 
     def _in_break(self, clock: str) -> bool:
-        """휴장 중인가 — step 의 시각과 **지금** 시각(`now()`) 둘 다 본다. 20:34:5x 에 시작한 step 이 조회로 늦어져
-        실제 주문이 20:35 를 넘기지 않게(주문 직전 `Runner.blocked` 가 이걸 부름)."""
+        """주문이 닫혔는가(휴장) — step 의 시각과 **지금** 시각(`now()`) 둘 다 본다. 20:34:5x 에 시작한 step 이 조회로
+        늦어져 실제 주문이 20:35 를 넘기지 않게(주문 직전 `Runner.blocked` 가 이걸 부름).
+
+        판정(`judge`)을 꽂았으면 두 시각 모두 `opening.order_open` 이어야 열림(국내 09:00 전·쉼·마감·시간표 모름은 닫힘).
+        안 꽂았으면 지금 규칙 — 해외 고정 휴장(`in_break`), 국내는 막힘 없음."""
+        if self.judge is not None:
+            return not (self._order_open(self._moment(clock)) and self._order_open(self.now()))
         if not self.market.breaks:      # 국내 — 휴장이 없다(시계도 부르지 않음, week02 그대로)
             return False
         return in_break(self.market, clock) or in_break(self.market, _hhmmss(self.now()))
 
     def _may_send(self) -> bool:
-        """브로커가 주문을 보내기 **바로 직전** 묻는 것 — 지금 시각(`now()`)이 휴장이 아닌가(해외만 꽂음).
+        """브로커가 주문을 보내기 **바로 직전** 묻는 것 — 지금 시각(`now()`)에 주문이 열려 있는가
+        (판정이 있으면 `order_open`, 없으면 해외 고정 휴장이 아닌가 — 판정이 없으면 해외만 꽂음).
 
         `Runner.blocked` 는 판단 때 한 번 보지만, 그 뒤 브로커 관문의 조회(잔고·주문내역·재시도)로 20:35 를 넘길 수 있다."""
+        if self.judge is not None:
+            return self._order_open(self.now())
         return not in_break(self.market, _hhmmss(self.now()))
 
-    def _note_break(self, key: str, clock: str, text: str) -> None:
-        """휴장 중 미룬 요청 — 요청마다 휴장 하나에 한 번만 기록."""
+    def _order_open(self, at: datetime) -> bool:
+        return order_open(self.judge, self.market.id, self.sym or "", at)
+
+    def _moment(self, clock: str) -> datetime:
+        """step 시각(`clock`)을 판정에 넘길 한국시간으로 — 그 step 의 날짜(`_clock_date`)와 실행 시계로."""
+        return self.plan.clock.moment(self._clock_date or self._today, clock)
+
+    def _closed_text(self, clock: str) -> str:
+        """주문이 닫힌 까닭 글 — 판정이 있으면 닫힌 쪽 시각의 `opening.span_text`, 없으면 고정 휴장 시각."""
+        if self.judge is not None:
+            at = self._moment(clock)
+            if self._order_open(at):
+                at = self.now()         # step 시각엔 열렸고 지금 닫혔다
+            return f"장 닫힘({span_text(self.judge, self.market.id, self.sym or '', at)})"
+        now_t = _hhmmss(self.now())
+        span = next((f"{a[:2]}:{a[2:4]}~{z[:2]}:{z[2:4]}" for a, z in self.market.breaks
+                     if a <= clock < z or a <= now_t < z), "휴장")
+        return f"휴장 중({span})"
+
+    def _note_timetable(self, now: datetime, clock: str) -> None:
+        """실행 중 판정이 종목을 모르게 되거나(`unknown`·예외) 다시 알게 될 때만 기록 한 줄. 그동안 주문은 관문이 막는다."""
+        if self.judge is None:
+            return
+        lost = not known(self.judge, self.market.id, self.sym or "", now)
+        if lost != self._timetable_lost:
+            self._timetable_lost = lost
+            self.j.write("event", clock=clock, text=TIMETABLE_LOST if lost else "장 시간표 다시 확인 — 주문 받음")
+
+    def _note_break(self, key: str, clock: str, text: str, judged: str) -> None:
+        """휴장 중 미룬 요청 — 요청마다 휴장 하나에 한 번만 기록. 판정이 있으면 「장 닫힘(까닭) 중 {judged}」."""
         if key not in self._break_noted:
             self._break_noted.add(key)
-            self.j.write("event", clock=clock, text=text)
+            self.j.write("event", clock=clock, text=text if self.judge is None else f"{self._closed_text(clock)} 중 {judged}")
 
     def _feed_minutes(self, now: datetime, clock: str) -> None:
         """분이 바뀌고 3초 뒤: 막 끝난 1분봉(들)을 시각순으로 한 번씩 전략에 넣는다."""
@@ -581,6 +740,7 @@ class LiveRun:
             return
         self._finished = True
         clock = now.strftime("%H%M%S")
+        self._clock_date = now.strftime("%Y%m%d")
         try:
             if self._prepared:
                 reason = self._wrap_up(reason, clock)
@@ -598,15 +758,13 @@ class LiveRun:
         r, b, j = self.runner, self.broker, self.j
         paper_left = None
         if not r.halted and r.pos is not None and self._in_break(clock):
-            now_t = _hhmmss(self.now())
-            span = next((f"{a[:2]}:{a[2:4]}~{z[:2]}:{z[2:4]}" for a, z in self.market.breaks
-                         if a <= clock < z or a <= now_t < z), "휴장")
+            closed = self._closed_text(clock)      # 「휴장 중(20:35~20:50)」 · 판정이면 「장 닫힘(휴장 05:00~06:00)」
             if isinstance(b, MockAccountBroker):
                 # 팀: 휴장 중 끝남(오류·앱 종료) — 정리 주문을 내지 않는다. 보유는 계좌에 남으니 확인 필요
-                r.halt(f"휴장 중({span}) 끝 — 정리 주문을 내지 않음 · 보유 {r.expected_position():+d}")
+                r.halt(f"{closed} 끝 — 정리 주문을 내지 않음 · 보유 {r.expected_position():+d}")
             else:
                 # 종이: 계좌가 없어 「확인 필요」가 아니다. 휴장 중엔 종이 체결도 안 하므로 보유는 정리하지 않고 끝낸다
-                paper_left = f"휴장 중({span}) 끝 — 종이 보유 {r.expected_position():+d} 는 마지막 가격으로 정리 안 함"
+                paper_left = f"{closed} 끝 — 종이 보유 {r.expected_position():+d} 는 마지막 가격으로 정리 안 함"
                 j.write("event", clock=clock, text=paper_left + " (계좌 없음 · 거래 기록에 넣지 않음)")
         if paper_left is None and not r.halted and r.pos is not None:
             try:
@@ -645,7 +803,7 @@ class LiveRun:
         if isinstance(b, MockAccountBroker):
             self.account_end = b.account(clock, "끝 (수수료·확정손익은 하루 누적)")
         data: dict[str, Any] = {
-            "sym": self.sym, "market": self.market.id, "currency": self.market.currency,
+            "sym": self.sym, "market": self.market.id, "currency": self.currency, **self._product_fields(),
             "trades": r.trades, "summary": summarize(r.trades),
             "account_start": self.account_start, "account_end": self.account_end,
             "api": self.apilog.stats(),
@@ -727,8 +885,13 @@ class LiveRun:
             "bar_min": bar_min, "next_decision_at": self._next_decision(bar_min),
             **{k: snap.get(k) for k in SNAPSHOT_KEYS},
             "params": asdict(p),
-            "market": self.market.id, "currency": self.market.currency, "kind": self.kind,
+            "market": self.market.id, "currency": self.currency, "kind": self.kind, **self._product_fields(),
         }
+
+    def _product_fields(self) -> dict:
+        """`run.json`·`status()`·`summary.json` 의 종목·시계 칸 (설계 4.7). 다리 없는 실행은 A75·KRX / MKU·FSGX."""
+        return {"product": self.product, "exchange": self.exchange, "tick": self.tick, "tick_value": self.tick_value,
+                "overnight": self.plan.overnight, "trading_date": self.trading_date, "end": self.plan.end}
 
     def _set_state(self, state: str) -> None:
         if state != self.state:
@@ -741,7 +904,7 @@ class LiveRun:
             **run_head(self.run_id, self.loaded, self.spec.mode, self.sym, self.state, self.started_at,
                        self.ended_at, self.ended_reason),
             "sha256": self.loaded.sha256,
-            "market": self.market.id, "currency": self.market.currency, "kind": self.kind,
+            "market": self.market.id, "currency": self.currency, "kind": self.kind, **self._product_fields(),
         }
         if self.runner.halted:
             data["halted"] = self.runner.halted

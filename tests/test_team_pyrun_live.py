@@ -626,7 +626,8 @@ def test_status_칸(tmp_path):
     assert list(s) == ["id", "file", "name", "title", "mode", "sym", "state", "started_at", "ended_at",
                        "ended_reason", "bar_min", "next_decision_at", "position", "entry", "stop",
                        "stop_ticks", "target", "time_exit_at", "today_pnl", "stops", "max_stops", "halted",
-                       "last_signal", "params", "market", "currency", "kind"]
+                       "last_signal", "params", "market", "currency", "kind",
+                       "product", "exchange", "tick", "tick_value", "overnight", "trading_date", "end"]
     assert (s["market"], s["currency"], s["kind"]) == ("domestic", "KRW", "minute")
     assert (s["id"], s["mode"], s["sym"], s["state"], s["bar_min"]) == (
         "20261103_fake_orders", "orders", SYM, "진행 중", 1)

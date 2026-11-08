@@ -128,3 +128,70 @@ def test_코드를_안_주면_지금처럼_기본값을_쓴다():
     plain = FakeOvsApi()                                     # exch_cd 를 모르는 가짜도 그대로 동작
     adapter(OVERSEAS, plain).price(MKU)
     assert plain.calls[-1] == ("ovs_price", MKU)
+
+
+def _cancelled_after(fake, exec_qty, held):
+    """주문이 들어가면 주문내역 줄을 취소(8) + 체결 수량 exec_qty 로 고치고 잔고를 held 로 둔다."""
+    orig = fake.ovs_market_order
+
+    def order(sym, side, qty=1):
+        res = orig(sym, side, qty)
+        fake.history[0]["exec_qty"] = exec_qty
+        fake.held = held
+        return res
+    fake.ovs_market_order = order
+
+
+def test_수량_2계약_일부_체결_뒤_자동취소는_체결_안_됨이_아니다(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "8"
+    _cancelled_after(fake, "1", 1)
+    halts: list = []
+    b = ovs_broker(tmp_path, fake, exp=[0], halts=halts)
+    assert b.fill("buy", 0.7447, "101500", "진입", qty=2) is None
+    assert b.had_unknown and b.unknown
+    assert b.blind is not None and b.blind["pre"] == 0 and b.blind["post"] is None
+    assert len(halts) == 1
+    # 이후 주문은 모두 막힌다(재전송 없음)
+    assert b.fill("buy", 0.7447, "101501", "진입", qty=2) is None
+    assert len(fake.orders) == 1
+
+
+def test_수량_2계약_취소인데_체결_수량을_못_읽어도_결과_모름(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "8"
+    _cancelled_after(fake, "", 0)
+    b = ovs_broker(tmp_path, fake, exp=[0])
+    assert b.fill("buy", 0.7447, "101500", "진입", qty=2) is None
+    assert b.blind is not None and b.had_unknown
+
+
+def test_수량_2계약_체결_0_취소는_깨끗한_거절(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "8"
+    _cancelled_after(fake, "0", 0)
+    b = ovs_broker(tmp_path, fake, exp=[0])
+    assert b.fill("buy", 0.7447, "101500", "진입", qty=2) is None
+    assert b.blind is None and b.unresolved is None and not b.unknown
+
+
+def test_수량_2계약_접수_미확인이_나중에_일부체결_취소로_보이면_지우지_않고_막는다(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "2"
+    halts: list = []
+    b = ovs_broker(tmp_path, fake, exp=[0], halts=halts)
+    assert b.fill("buy", 0.7447, "101500", "진입", qty=2) is None
+    fake.history[0].update(ord_sts="8", exec_qty="1")
+    fake.held = 1
+    assert b.fill("sell", 0.7447, "101501", "청산", qty=2) is None
+    assert b.unresolved is None and b.blind is not None and halts
+    assert len(fake.orders) == 1
+
+
+def test_수량_1계약_취소는_예전처럼_체결_수량을_보지_않는다(tmp_path):
+    fake = FakeOvsApi()
+    fake.status = "8"
+    _cancelled_after(fake, "1", 0)      # 1계약은 exec_qty 가 뭐든 예전 동작
+    b = ovs_broker(tmp_path, fake, exp=[0])
+    assert b.fill("buy", 0.7447, "101500", "진입") is None
+    assert b.blind is None and not b.unknown

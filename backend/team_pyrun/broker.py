@@ -95,6 +95,7 @@ class MockAccountBroker:
         self.unresolved: str | None = None  # 접수됐지만 체결·거부가 확인 안 된 주문번호
         self.unresolved_checks = 0          # 그 주문을 다시 봤는데도 결과를 모른 횟수
         self.unresolved_side: str | None = None
+        self.unresolved_qty = 1                     # 그 주문의 계약 수
         self.unresolved_pre: int | None = None      # 그 주문 전 보유
         self.unresolved_post: int | None = None     # 그 주문이 체결된 뒤 보유
         #: 번호 없이 결과를 모르는 주문 {"side","pre","post"} — 잔고가 post 를 보일 때까지 모든 주문을 막는다
@@ -170,6 +171,29 @@ class MockAccountBroker:
         """주문 전 보유 pre 에서 side qty계약이 체결되면 될 보유."""
         return None if pre is None else pre + (qty if side == "buy" else -qty)
 
+    def _clean_reject(self, row: dict, qty: int) -> bool:
+        """거부·취소(8·9) 줄이 「하나도 체결 안 됨」의 증거인가. 1계약이면 예전 그대로 늘 True.
+
+        qty>1 이면 일부 체결 뒤 나머지가 취소(자동취소)될 수 있어 체결 수량 `exec_qty` 가 정확히 0 일 때만 True —
+        0 보다 크거나 못 읽으면 결과를 모르는 것으로 본다."""
+        if qty <= 1:
+            return True
+        try:
+            done = self.api.num(row.get("exec_qty"))
+        except Exception:
+            return False
+        return done is not None and done == 0
+
+    def _partial_reject(self, side: str, pre: int | None, no: str, clock: str, row: dict) -> None:
+        """qty>1 주문이 취소·거부로 끝났는데 일부 체결이 있거나 못 읽음 — 잔고가 설명해야 하는 결과 모름.
+        post 를 알 수 없는 blind 표시로 모든 주문을 막고 실행을 멈춘다(잔고만 보고는 풀지 않음)."""
+        self._mark_unknown()
+        self.blind = {"side": side, "pre": pre, "post": None, "ord_no": no}
+        self.unresolved = None
+        self.j.write("event", clock=clock, ord_no=no, raw=self.api.log_row(row),
+                     text=f"주문 {self.api.status_name(row)} 인데 체결 수량이 0 이 아니거나 읽지 못함 — 일부 체결 가능, 새 주문 안 냄")
+        self._halt(f"{side} 주문 {no} 가 {self.api.status_name(row)} 인데 일부 체결됐을 수 있음 — 잔고 확인 필요")
+
     def _halt(self, reason: str) -> None:
         """실행을 멈추게 한다(실행이 `halt` 를 꽂아 둔 경우). 없으면 기록만."""
         if self.halt is not None:
@@ -239,6 +263,9 @@ class MockAccountBroker:
             row = self._row_of(mine)
             sts = str(row.get("ord_sts", "")).strip()
             if sts in self.api.rejected:
+                if not self._clean_reject(row, self.unresolved_qty):
+                    self._partial_reject(self.unresolved_side or "", self.unresolved_pre, no, clock, row)
+                    return True
                 self.unresolved = None
                 self.j.write("event", clock=clock, ord_no=no,
                              text=f"앞선 주문 {self.api.status_name(row)} 확인 — 체결 안 됨")
@@ -411,12 +438,16 @@ class MockAccountBroker:
                              text="모의계좌 체결" if price_read else "모의계좌 체결 · 가격은 기준가")
                 return px
             if sts in self.api.rejected:
+                if not self._clean_reject(last, qty):
+                    self._partial_reject(side, pre, ord_no, clock, last)
+                    return None
                 self.j.write("event", clock=clock, ord_no=ord_no, text=f"주문 {self.api.status_name(last)}",
                              reject=self.api.reject_reason(last), raw=self.api.log_row(last))
                 return None
         self._mark_unknown()
         self.unresolved, self.unresolved_side, self.unresolved_checks = ord_no, side, 0
         self.unresolved_pre, self.unresolved_post = pre, self._post(pre, side, qty)
+        self.unresolved_qty = qty
         self.j.write("event", clock=clock, ord_no=ord_no, text="15초 안에 전체체결 확인 안 됨 — 잔고로 확인",
                      raw=self.api.log_row(last))
         return None

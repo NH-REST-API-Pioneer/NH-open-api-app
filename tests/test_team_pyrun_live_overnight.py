@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from backend.sessions.hours import KST
 from backend.team_pyrun.journal import Journal
-from backend.team_pyrun.live import LiveRun, RunSpec
+from backend.team_pyrun.live import LiveRun, RunSpec, _trading_clock
 from backend.team_pyrun.runner import Runner, _plus_minute
 from tests.test_team_pyrun_live_any import HO, FakeHO, FakeJudge, write
 from tests.test_team_pyrun_live_overseas import MKU_SRC, FakeLive, journal, ovs_bar, read_json, texts
@@ -314,6 +314,54 @@ def test_자정_넘지_않는_실행도_날이_지나_온_step_은_대기_없이
     tick(run, fake, clock, when(TUE, "083004"))      # 다음 장이 열려도 끝난 실행은 그대로
     assert run.state == "끝" and fake.orders == [] and "대기" not in states
     assert read_json(out / "run.json")["state"] == "끝"
+
+
+def _record_states(run) -> list[str]:
+    states: list[str] = []
+    set_state = run._set_state
+    run._set_state = lambda s: (states.append(s), set_state(s))
+    return states
+
+
+def test_거래일에서_이어_센_시각은_6자리를_넘지_않는다():
+    assert _trading_clock(MON, when("20261113", "035959")) == "995959"      # 99시간 59분 59초
+    assert _trading_clock(MON, when("20261113", "040000")) == "995959"      # 100시간 — 묶음
+    assert _trading_clock(MON, when("20261120", "120000")) == "995959"
+    assert _trading_clock(MON, when("20261108", "230000")) == "000000"      # 날짜보다 이르면 0
+    assert _trading_clock(MON, when(TUE, "070000")) == "310000"
+
+
+def test_100시간_넘게_지나_온_step_도_자정_넘는_보유_실행을_끝낸다(tmp_path):
+    """금요일 08:00(월요일 0시부터 104시간)에 깨어도 「대기」로 빠지지 않고 「장 끝」 — 시각 문자열이 넘쳐 비교가 틀리지 않게."""
+    src = NIGHT_SRC.replace("hold_min: int = 45", "hold_min: int = 600")
+    run, fake, out, clock = make_night(tmp_path, src=src)
+    run.prepare()
+    walk(run, fake, clock, when(MON, "223004"), when(TUE, "000004"))
+    assert run.runner.pos is not None
+    states = _record_states(run)
+    tick(run, fake, clock, when("20261113", "080000"), bar=False)
+    assert run.state == "끝" and run.ended_reason == "장 끝" and "대기" not in states
+    t = run.runner.trades[-1]
+    assert (t["reason"], t["exit_time"], t["exit_date"]) == ("실행 종료 정리", "995959", MON)
+    assert run.runner.pos is None and fake.orders == []
+    assert all(len(r["clock"]) == 6 for r in journal(out) if "clock" in r)
+
+
+def test_100시간_넘게_지나_온_step_도_자정_넘지_않는_모의_계좌_실행을_끝낸다(tmp_path):
+    run, fake, out, clock = make_night(tmp_path, src=MKU_SRC, file="fakemku.py", leg=None, mode="orders",
+                                       start=(MON, "082000"))
+    run.prepare()
+    tick(run, fake, clock, when(MON, "230004"))
+    assert run.state == "진행 중"
+    states = _record_states(run)
+    calls = len(fake.calls)
+    tick(run, fake, clock, when("20261113", "083004"))
+    assert run.state == "끝" and run.ended_reason == "장 끝" and "대기" not in states
+    assert fake.orders == []
+    # 끝내기 확인(끝 잔고·예수금)만 — 1분봉·현재가로 전략을 돌리지 않음
+    assert {c[0] for c in fake.calls[calls:]} <= {"ovs_open_interest_page", "ovs_deposit"}
+    tick(run, fake, clock, when("20261113", "083104"))
+    assert run.state == "끝" and fake.orders == []
 
 
 # ---------------------------------------------------------------- Runner: 24시를 넘는 시각 셈

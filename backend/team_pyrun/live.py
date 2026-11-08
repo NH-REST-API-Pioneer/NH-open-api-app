@@ -52,8 +52,9 @@ week02 와 다른 점
 **자정을 넘는 실행(`plan.overnight`, 설계 4.4)** — 전략과 실행기가 비교하는 시각·날짜를 거래일 시계(`plan.clock`)로 적습니다.
 07:00 전 시각은 24를 더하고(00:01 → `"240100"`), 날짜는 그 거래일(자정 뒤 봉도 앞 날짜). 준비 봉·장중 봉(`RunClock.bar`),
 준비 봉 자르기, step·끝내기의 시각(진입 창·`hold_min`·재시도·정리·실행 끝 비교, 기록의 `clock`)이 모두 이 시계라 자정을 넘어
-한 실행으로 이어집니다. 거래일이 지난 뒤(다음 날 07:00 이후) 온 step 은 그 거래일에서 이어 센 시각(`"310000"` …, `_label`)이라
-「장 끝」으로 끝납니다(끝 `"310000"` 에도 닿음). 실제 시각 그대로인 것: 분 바뀜 감지(`_seen_minute`)·잔고 대조 간격,
+한 실행으로 이어집니다. 거래일이 지난 뒤(다음 날 07:00 이후) 온 step 은 시각을 비교하기 전에 날짜로(`_date_passed`)
+「장 끝」으로 끝나고(끝 `"310000"` 에도 닿음, 며칠 잠들었다 깨도), 끝내기 기록의 시각은 그 거래일에서 이어 센 값(`"310000"` …,
+6자리를 넘으면 `CLOCK_MAX` 로 묶음 — `_label`)입니다. 실제 시각 그대로인 것: 분 바뀜 감지(`_seen_minute`)·잔고 대조 간격,
 장 판정(`order_open`·`known`·`day_end` — 거래일 시계는 `plan.clock.moment` 로 되돌려 넘김)·고정 휴장의 지금 시각,
 기록의 `at`, 예수금 날짜(`biz_dt` — 시작 때 달력 날짜, 설계 6장 모름). 기록 첫머리에 거래일과 바꾼 Params 를 한 줄 남깁니다.
 자정을 넘지 않는 실행은 `RunClock(False)` 라 달력 날짜·실제 시각 그대로입니다. 실행 하나 = 하루라서, 자정 넘지 않는 실행도
@@ -228,11 +229,17 @@ def run_plan(loaded: Loaded, market: Market) -> RunPlan:
     return RunPlan(params_cls=cls, overnight=overnight, end=end, clock=RunClock(overnight))
 
 
+#: 거래일에서 이어 센 시각의 끝 — 6자리를 넘지 않게(100시간 넘게 지난 step 은 여기로 묶음, `_trading_clock`)
+CLOCK_MAX = "995959"
+
+
 def _trading_clock(trading_date: str, moment: datetime) -> str:
     """거래일 0시부터 센 시각(HHMMSS, 24시를 넘어 셈) — 다음 날 06:15 → `"301500"`, 다음 날 07:00 → `"310000"`.
 
-    거래일 시계(`RunClock(True).label`)와 07:00 전까지 같고, 07:00 이후(CME 겨울 07:00 끝 등)도 다음 거래일로 넘기지 않는다."""
+    거래일 시계(`RunClock(True).label`)와 07:00 전까지 같고, 07:00 이후(CME 겨울 07:00 끝 등)도 다음 거래일로 넘기지 않는다.
+    언제나 6자리 — 거래일 0시보다 이르면 `"000000"`, 100시간 이상이면 `CLOCK_MAX`(문자열 비교·기록이 틀리지 않게)."""
     secs = int((to_kst(moment) - RunClock(True).moment(trading_date, "000000")).total_seconds())
+    secs = min(max(secs, 0), 99 * 3600 + 59 * 60 + 59)
     return f"{secs // 3600:02d}{secs % 3600 // 60:02d}{secs % 60:02d}"
 
 
@@ -472,14 +479,18 @@ class LiveRun:
         """실행의 (날짜, 시각) — 거래일 시계(`plan.clock.label`, 자정 넘지 않는 실행은 달력 그대로).
 
         실행 하나 = 하루. 실행의 날짜(`trading_date` — 자정 넘는 실행은 거래일, 아니면 시작 때 달력 날짜)가 지난 뒤면
-        그 날짜에서 이어 센 시각(`_trading_clock` — 자정 넘는 실행의 다음 날 07:00 → `"310000"`, 자정 넘지 않는 실행의
-        다음 날 00:10 → `"241000"`). 실행 끝은 언제나 그보다 이르므로 그 step 에서 「장 끝」으로 끝나고(잠들었다 깨어도
-        「대기」로 다음 장을 기다리지 않음), 끝내기 정리·기록이 다음 날 이른 시각으로 되감기지 않는다.
-        날짜는 실행의 날짜라 `_moment` 가 실제 시각으로 되돌린다."""
+        (`_date_passed` — 그 step 은 시각을 비교하기 전에 「장 끝」으로 끝남) 끝내기 정리·기록의 시각은 그 날짜에서 이어 센
+        시각(`_trading_clock` — 자정 넘는 실행의 다음 날 07:00 → `"310000"`, 자정 넘지 않는 실행의 다음 날 00:10 →
+        `"241000"`, 100시간 넘게 지나면 `CLOCK_MAX`). 다음 날 이른 시각으로 되감기지 않고, 날짜는 실행의 날짜라
+        `_moment` 가 실제 시각으로 되돌린다."""
         date, clock = self.plan.clock.label(now)
-        if self.trading_date and date > self.trading_date:
+        if self._date_passed(date):
             return self.trading_date, _trading_clock(self.trading_date, now)
         return date, clock
+
+    def _date_passed(self, date: str) -> bool:
+        """`date`(실행 시계의 날짜)가 실행의 날짜(`trading_date`)보다 늦은가 — 실행 하나 = 하루, 지났으면 끝낸다."""
+        return bool(self.trading_date) and date > self.trading_date
 
     def _overnight_text(self, trading_date: str) -> str:
         """기록 첫머리 한 줄 — 자정 넘는 실행의 거래일과 07:00 전이라 24시간을 더한 Params 칸(원래 값→바꾼 값)."""
@@ -545,13 +556,17 @@ class LiveRun:
 
     def _step(self, now: datetime) -> None:
         r = self.runner
+        if self._date_passed(self.plan.clock.label(now)[0]):
+            # 실행의 날짜가 지났다(자정 넘는 실행은 다음 날 07:00, 아니면 자정 — 며칠 잠들었다 깬 것 포함). 시각 문자열을
+            # 비교하기 전에 날짜로 정해 「장 끝」 — 「대기」로 다음 장을 기다리지 않는다
+            self._finish("장 끝", now)
+            return
         self._clock_date, clock = self._label(now)     # 거래일 시계 — 판정엔 `_moment` 로 실제 시각을 되살려 넘김
         self._note_timetable(now, clock)
         in_brk = self._in_break(clock)
         held_in_break = in_brk and r.pos is not None and not r.halted
         if not in_brk and self._break_noted:
             self._break_noted = set()
-        # 실행 끝 — 실행의 날짜가 지나면(자정 넘는 실행은 다음 날 07:00, 아니면 자정) 시각이 끝보다 늦게 이어져(`_label`) 여기서 끝남
         if clock >= self.plan.end:
             self._finish("장 끝", now)
             return
@@ -613,7 +628,10 @@ class LiveRun:
         return order_open(self.judge, self.market.id, self.sym or "", at)
 
     def _moment(self, clock: str) -> datetime:
-        """step 시각(`clock`)을 판정에 넘길 한국시간으로 — 그 step 의 날짜(`_clock_date`)와 실행 시계로."""
+        """step 시각(`clock`)을 판정에 넘길 한국시간으로 — 그 step 의 날짜(`_clock_date`)와 실행 시계로.
+        100시간 넘게 지나 묶인 시각(`CLOCK_MAX`)은 되살릴 수 없으므로 지금 시각(`now()`)."""
+        if clock >= CLOCK_MAX:
+            return to_kst(self.now())
         return self.plan.clock.moment(self._clock_date or self._today, clock)
 
     def _closed_text(self, clock: str) -> str:

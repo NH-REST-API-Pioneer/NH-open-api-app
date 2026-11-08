@@ -251,3 +251,14 @@ def _파이썬_전략_실행은_임시_자리로(tmp_path_factory, monkeypatch):
     from backend.team_pyrun import autostart as autostart_lib
     monkeypatch.setattr(autostart_lib, "_schedules", autostart_lib.Schedules(
         자리 / "pyrun_schedules.json", registry_lib._registry))
+
+
+@pytest.fixture(autouse=True)
+def _스프레드_실행은_임시_자리로(tmp_path_factory, monkeypatch):
+    """팀: 스프레드 `registry()` 싱글턴을 시험마다 임시 폴더의 `SpreadRegistry` 로 둡니다(스레드 없음, api 는 부르면 실패)."""
+    from backend.team_spread import registry as spread_lib
+
+    자리 = tmp_path_factory.mktemp("spread")
+    monkeypatch.setattr(spread_lib, "_registry", spread_lib.SpreadRegistry(
+        자리 / "spreads", 자리 / "runners", start_thread=False, api_module=_파이썬_전략_api_막힘(),
+        sleep=lambda _초: None))

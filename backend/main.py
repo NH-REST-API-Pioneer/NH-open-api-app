@@ -56,6 +56,8 @@ from backend.strategy import store as strategy_store
 from backend.strategy.strategy_routes import router as strategy_router
 from backend.strategy.strategy_routes import runs_router as strategy_runs_router
 from backend.team_pyrun.routes import pyrun_shutdown, pyrun_startup  # 팀: 파이썬 전략 실행 — 앱을 켜고 끌 때 부른다
+from backend.team_spread.routes import router as spread_router  # 팀: 스프레드 실행 라우트
+from backend.team_spread.routes import spread_shutdown, spread_startup  # 팀: 스프레드 실행 — 앱을 켜고 끌 때 부른다
 from backend.team_pyrun.routes import router as pyrun_router  # 팀: 파이썬 전략 실행 라우트
 from backend.ui.ui_routes import router as ui_router
 
@@ -113,10 +115,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await engine.start()
     # 팀: 파이썬 전략 실행 — NH 호출 관찰자를 꽂고, 끝나지 않고 남은 실행 폴더를 닫는다(따로 돌며 기다리지 않음).
     pyrun_recover = pyrun_startup()
+    # 팀: 스프레드 실행 — 파이썬 전략 복구가 끝난 뒤 남은 실행 폴더를 닫는다(따로 돌며 기다리지 않음).
+    spread_recover = asyncio.create_task(spread_startup(pyrun_recover))
     try:
         yield
     finally:
         # 팀: 돌던 파이썬 전략 실행에 모두 중지를 요청한다(스레드에서 — 이벤트 루프를 막지 않게).
+        await spread_shutdown(spread_recover)  # 팀: 스프레드 실행 — 새 시작을 막고 모두 중지
         await pyrun_shutdown(pyrun_recover)
         await engine.stop()
         task.cancel()
@@ -207,6 +212,7 @@ app.include_router(stream_router)
 app.include_router(session_router)
 app.include_router(strategy_router)
 app.include_router(strategy_runs_router)
+app.include_router(spread_router)  # 팀: 스프레드 실행 `/api/team/spread`
 app.include_router(pyrun_router)  # 팀: 파이썬 전략 실행 `/api/team/pyrun`
 
 

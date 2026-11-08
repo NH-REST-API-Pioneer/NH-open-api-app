@@ -92,27 +92,63 @@ def test_다음_월물이_없으면_LegError():
         next_month(leg, overseas_rows=[r for r in ROWS["overseas_rows"] if r["code"] != "HOG27"], domestic_rows=[])
 
 
-def _write(base: Path, name: str, rows: list[dict]) -> None:
-    folder = base / "20261104"
+def _write(base: Path, name: str, rows: list[dict], stamp: str = "20261104") -> None:
+    folder = base / stamp
     folder.mkdir(parents=True, exist_ok=True)
     fields = MASTER_FILES_BY_NAME[name].fields
     (folder / f"{name}.mst").write_text(
         "\n".join(";".join(r[f] for f in fields) for r in rows) + "\n", encoding="utf-8")
 
 
-def test_master_rows_는_해외_선물과_국내_선물_줄을_읽는다(tmp_path):
+def _write_all(base: Path, skip: str = "", stamps: dict | None = None) -> None:
     ov = ROWS["overseas_rows"]
-    _write(tmp_path, "cme_fut", [r for r in ov if r["comd"] != "MKU"])
-    _write(tmp_path, "etc_fut", [r for r in ov if r["comd"] == "MKU"])
-    _write(tmp_path, "idx_fut_opt", ROWS["domestic_rows"])
+    parts = {
+        "cme_fut": [r for r in ov if r["comd"] != "MKU"], "etc_fut": [r for r in ov if r["comd"] == "MKU"],
+        "idx_fut_opt": ROWS["domestic_rows"], "fut_opt": [], "stk_fut_opt": [],
+    }
+    for name, rows in parts.items():
+        if name != skip:
+            _write(base, name, rows, (stamps or {}).get(name, "20261104"))
+
+
+def test_master_rows_는_해외_선물과_국내_선물_줄을_읽는다(tmp_path):
+    _write_all(tmp_path)
     o, d = master_rows(tmp_path)
-    assert {r["code"] for r in o} == {r["code"] for r in ov}
+    assert {r["code"] for r in o} == {r["code"] for r in ROWS["overseas_rows"]}
     assert {r["series"] for r in d} == {"A756B000", "A756C000"}
 
 
 def test_master_rows_마스터가_없으면_LegError(tmp_path):
     with pytest.raises(LegError, match="마스터"):
         master_rows(tmp_path)
+
+
+def test_master_rows_파일_하나가_빠지면_그_이름을_담아_LegError(tmp_path):
+    _write_all(tmp_path, skip="cme_fut")
+    with pytest.raises(LegError, match="cme_fut"):
+        master_rows(tmp_path)
+
+
+def test_master_rows_파일마다_날짜가_다르면_LegError(tmp_path):
+    _write_all(tmp_path, stamps={"cme_fut": "20261103"})
+    with pytest.raises(LegError, match="날짜"):
+        master_rows(tmp_path)
+
+
+def test_국내_주야간_줄이_함께_있어도_늘_같은_값():
+    rows = ROWS["domestic_rows"]
+    assert {r["cme_tp"] for r in rows} == {"day", "night"}
+    for order in (rows, rows[::-1]):
+        for spec in ("A75", "A756B000"):
+            leg = resolve("usd", spec, today=TODAY, **{**ROWS, "domestic_rows": order})
+            assert (leg.exchange, leg.sym) == ("KRX", "A756B000")
+
+
+def test_해외_근월_표지가_낡아_만기_지난_월물이면_다음_월물():
+    rows = [{**r, "lmon_my": "1" if r["code"] == "HOZ26" else "0"} for r in ROWS["overseas_rows"]]
+    assert resolve("ho", "HO", today="20261215", **{**ROWS, "overseas_rows": [r for r in rows if r["code"] != "x"]}).sym == "HOZ26"
+    stale = [{**r, "yymm": "202610", "lmon_my": "1"} if r["code"] == "HOZ26" else {**r, "lmon_my": "0"} for r in ROWS["overseas_rows"]]
+    assert resolve("ho", "HO", today=TODAY, **{**ROWS, "overseas_rows": stale}).sym == "HOF27"
 
 
 def test_Leg_는_불변이다():

@@ -31,7 +31,7 @@ class Leg:
     sym: str           # 종목 코드
     product: str       # 품목 뿌리 (HO · A75 …)
     market: Literal["domestic", "overseas"]
-    exchange: str      # 해외 거래소 코드(FCME …), 국내는 마스터 거래소 코드
+    exchange: str      # 해외 거래소 코드(FCME …), 국내는 고정값 "KRX" (마스터 kospi_key 는 주야간 상품 코드라 거래소가 아님)
     currency: str
     tick: float
     tick_value: float  # 1틱의 가치(통화 단위)
@@ -73,6 +73,11 @@ def _dom_root(row: dict) -> str:
     return _s(row, "series")[:3]
 
 
+def _day_first(row: dict) -> tuple:
+    """같은 종목의 주간(day)·야간(night) 줄이 함께 있어도 늘 같은 줄이 뽑히게 — 만기, 주간 먼저, 종목 코드 순."""
+    return (_s(row, "exp_ym"), _s(row, "cme_tp") != "day", _s(row, "series"))
+
+
 def _today() -> str:
     return date.today().strftime("%Y%m%d")
 
@@ -90,10 +95,12 @@ def resolve(
     spec = _check_spec(spec)
     today = today or _today()
     ovs = _ovs_tradable(overseas_rows)
+    month = today[:6]
     by_code = [r for r in ovs if _s(r, "code") == spec]
     if by_code:
         return _overseas(name, by_code[0], overseas_details)
-    by_root = [r for r in ovs if _s(r, "comd") == spec]
+    # 옛 마스터의 낡은 근월 표지가 이미 만기 지난 월물을 고르지 않게, 이번 달 이전 만기는 뺀다
+    by_root = [r for r in ovs if _s(r, "comd") == spec and _s(r, "yymm") >= month]
     if by_root:
         flagged = [r for r in by_root if _s(r, "lmon_my") == "1"]
         return _overseas(name, min(flagged or by_root, key=lambda r: _s(r, "yymm")), overseas_details)
@@ -101,10 +108,10 @@ def resolve(
     dom = _dom_live(domestic_rows, today)
     by_code = [r for r in dom if _s(r, "series") == spec]
     if by_code:
-        return _domestic(name, by_code[0], domestic_details)
+        return _domestic(name, min(by_code, key=_day_first), domestic_details)
     by_root = [r for r in dom if len(spec) == 3 and _dom_root(r) == spec]
     if by_root:
-        return _domestic(name, min(by_root, key=lambda r: _s(r, "exp_ym")), domestic_details)
+        return _domestic(name, min(by_root, key=_day_first), domestic_details)
     raise LegError(f"종목 「{spec}」 을 마스터에서 찾지 못했습니다 — 품목 뿌리(HO)나 거래 가능한 종목 코드(HOZ26)로 적으세요")
 
 
@@ -132,7 +139,7 @@ def _domestic(name: str, row: dict, details: list[dict]) -> Leg:
     value = tick * size
     if abs(value - detail_value) > 1e-6:
         raise LegError(f"{_s(row, 'series')} 의 틱 가치가 마스터({value:g})와 품목 세부정보({detail_value:g})가 다릅니다")
-    return Leg(name, _s(row, "series"), root, "domestic", _s(row, "kospi_key"), "KRW", tick, value, _s(row, "exp_ym"))
+    return Leg(name, _s(row, "series"), root, "domestic", "KRX", "KRW", tick, value, _s(row, "exp_ym"))
 
 
 def next_month(leg: Leg, *, overseas_rows: list[dict], domestic_rows: list[dict]) -> str:
@@ -152,14 +159,14 @@ def master_rows(base_dir: Any = None) -> tuple[list[dict], list[dict]]:
     """받아 둔 마스터(가장 최근 날짜)의 (해외 선물 줄, 국내 선물 줄). 파일 읽기라 재시도가 없다.
 
     해외는 `MASTER_FILES_BY_NAME` 의 읽는 해외 선물 파일(`cme_fut`·`etc_fut`), 국내는 `fut_opt`·`idx_fut_opt`·`stk_fut_opt`
-    의 선물 줄(`fo_tp` F). 일부 파일이 없어도 읽은 것만 쓰고, 한쪽이 통째로 비면 `LegError`.
+    의 선물 줄(`fo_tp` F). 한 파일이라도 못 읽거나 파일마다 날짜 폴더가 다르면 `LegError`(파일 이름과 까닭을 담아).
     """
     from backend.master import master_store
     from backend.master.master_files import MASTER_FILES
 
     overseas: list[dict] = []
     domestic: list[dict] = []
-    errors: list[str] = []
+    stamps: dict[str, str | None] = {}
     for m in MASTER_FILES:
         if not m.parsed:
             continue
@@ -169,14 +176,13 @@ def master_rows(base_dir: Any = None) -> tuple[list[dict], list[dict]]:
             continue
         got = master_store.load_master(m, base_dir)
         if not got.ok or got.table is None:
-            errors.append(f"{m.name}: {got.error or '표 없음'}")
-            continue
+            raise LegError(f"종목 마스터 {m.name} 를 읽지 못했습니다 — {got.error or '표 없음'}")
+        stamps[m.name] = got.stamp
         rows = list(got.table.rows_as_dicts())
         if is_ovs:
             overseas += [r for r in rows if _s(r, "type") == "F"]
         else:
             domestic += [r for r in rows if _s(r, "fo_tp") == "F"]
-    if not overseas or not domestic:
-        side = "해외" if not overseas else "국내"
-        raise LegError(f"{side} 선물 종목 마스터를 읽지 못했습니다 — {'; '.join(errors) or '선물 줄 없음'}")
+    if len(set(stamps.values())) > 1:
+        raise LegError("종목 마스터 파일의 날짜가 서로 다릅니다 — " + ", ".join(f"{k} {v}" for k, v in stamps.items()))
     return overseas, domestic

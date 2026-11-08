@@ -159,6 +159,18 @@ def test_품목_세부정보에서_MKU_틱과_틱가치(config):
     assert api.num(next(r for r in 줄 if r["prd_cd"] == "MKU")["ctr_unt"]) == 25000.0
 
 
+def test_품목_세부정보_한_쪽은_그룹과_다음_쪽_키를_보낸다(config):
+    # 근거: 기록 FG3(지수) 조회는 100줄에서 `nxt_key` H_ZVV 로 쪽이 나뉜다
+    본문 = 기록("overseas_product-detail", "real", {"prd_grp_cd": "FG3"})
+    client, 서버_ = 만들기(config, {DETAIL: httpx.Response(200, json=본문)})
+    줄, 다음 = api.ovs_product_detail_page("FG3", "K1", client=client)
+    assert 보낸본문(서버_, DETAIL) == [{
+        "sett_cd": "", "fut_opt_div_cd": "F", "cur_cd": "", "prd_grp_cd": "FG3",
+        "exch_cd": "", "nxt_key": "K1", "prd_nm": "", "prd_cd": "",
+    }]
+    assert 다음 == "H_ZVV" and len(줄) == 100 and "prd_cd" in 줄[0]
+
+
 def test_MKU_줄이_없으면_ValueError():
     with pytest.raises(ValueError):
         api.mku_spec([{"prd_cd": "KU", "tick_unt": "0.00005", "tick_val": "6.25"}])

@@ -290,6 +290,21 @@ def ovs_product_detail(*, client: TradeClient | None = None) -> list[dict]:
     }, client))
 
 
+def ovs_product_detail_page(prd_grp_cd: str, nxt_key: str = "", *,
+                            client: TradeClient | None = None) -> tuple[list[dict], str]:
+    """해외 선물 품목별 세부정보 한 쪽 — (줄, 다음 쪽 키). 요청은 `ovs_product_detail` 과 같고 품목 그룹·`nxt_key` 만 바뀝니다.
+
+    스프레드 다리(HO·RB 는 에너지 FG6, MKU 는 통화 FG2)처럼 통화 그룹 밖의 품목을 찾을 때 씁니다. 그룹 코드는 운영자
+    `overseas_hours.PRODUCT_GROUPS`, 그룹별 줄은 기록 `tests/fixtures/nh/overseas_product-detail`(FG3 지수는 100줄에서
+    `nxt_key` 로 쪽이 나뉨). 다음 쪽 키는 본문의 `nxt_key`.
+    """
+    body = _query("overseas_product-detail", {
+        "sett_cd": "", "fut_opt_div_cd": "F", "cur_cd": "", "prd_grp_cd": prd_grp_cd,
+        "exch_cd": "", "nxt_key": nxt_key, "prd_nm": "", "prd_cd": "",
+    }, client)
+    return rows(body), _next_key(body)
+
+
 def mku_spec(details: list[dict]) -> tuple[float, float]:
     """MKU 의 (호가 단위, 1틱 가치 USD). 품목코드 `MKU` 줄을 읽습니다 — 큰 계약 `KU`(0.00005, 6.25) 줄이 아닙니다.
 

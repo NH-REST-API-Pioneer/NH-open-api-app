@@ -126,10 +126,11 @@ FINISHED_STATES = ("끝", "오류")
 Run = LiveRun | RealtimeRun
 
 
-def _today_code(sym: str) -> bool:
+def legacy_code(sym: str) -> bool:
     """정확한 미국달러선물(`A75…`)·MKU(`MKU…`) 종목 코드인가 — 1분봉 실행이 지금 길(다리 없음)로 도는 종목 칸.
 
-    세 글자 품목 뿌리(`A75`·`MKU`)는 아니다(뿌리는 `resolve_product` 가 그날의 최근월물로 고른다)."""
+    세 글자 품목 뿌리(`A75`·`MKU`)는 아니다(뿌리는 `resolve_product` 가 그날의 최근월물로 고른다). 매일 자동 시작
+    (`autostart.Schedules.create`)도 이 함수로 같은 갈래를 고른다 — 두 곳이 갈라지지 않게 하나만 둔다."""
     if len(sym) <= len(USD_PREFIX):
         return False
     try:
@@ -313,12 +314,12 @@ class Registry:
         """1분봉 실행의 (종목 다리, 주문 종목, 최근월물, 실행의 날짜) — 설계 4.1·4.4·4.5.
 
         지금 길(다리 없음 — `run_market`·`_nearest`, 틱은 `prepare` 의 서버 틱 확인): 종목 칸이 비었거나(전략 TICK 의 시장)
-        정확한 미국달러선물·MKU 종목 코드(`_today_code` — 지금 종목 고르기가 보내는 것. 마스터·품목 세부정보를 새로 읽지
+        정확한 미국달러선물·MKU 종목 코드(`legacy_code` — 지금 종목 고르기가 보내는 것. 마스터·품목 세부정보를 새로 읽지
         않게). 그 밖(품목 뿌리 — `A75`·`MKU` 포함 — 와 다른 종목 코드)은 `resolve_product` 로 찾은 `Leg` 가 실행의 종목이고,
         전략 `TICK`·`TICK_VALUE` 가 그 종목과 다르면 거부한다. 주말·「끝 시각 뒤」는 실행의 시계(`run_plan(...).clock`)
         — 자정을 넘는 전략은 거래일(07:00 에 바뀜)과 거래일 시계(07:00 전 +24)로, 아니면 달력 그대로."""
         leg: Leg | None = None
-        if spec.sym and not _today_code(spec.sym):
+        if spec.sym and not legacy_code(spec.sym):
             leg = self.resolve_product(spec.sym)        # 마스터·품목 세부정보 조회 (주문과 무관)
             if (refusal := strategy_tick_refusal(leg, loaded)):
                 raise StartRefused(refusal)

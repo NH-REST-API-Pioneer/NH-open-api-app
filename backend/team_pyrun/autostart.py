@@ -4,10 +4,28 @@
 **이어 돌리지 않고**, 날마다 `Registry.start()` 를 한 번 더 부를 뿐입니다. 그래서 시작 거부 규칙(주말·모의 환경 아님·
 시작 잔고 0 아님·같은 종목 모의 계좌 실행·끝 시각 뒤)과 주문 안전 규칙은 손으로 누른 시작과 똑같이 걸립니다.
 
-    예약 하나     = (전략 파일, 방식 orders|paper). 종목은 날마다 그날의 최근월물(실시간은 KRX 신호 종목도 최근월물)
-    시작 시각     = 전략 시장의 장 시작 5분 전 — 해외 08:20, 국내 08:55 (장 전에 세우면 실행은 「대기」로 기다림)
+    예약 하나     = (전략 파일, 방식 orders|paper, 종목 칸). 종목 칸은 받은 표기 그대로 남겨 날마다 `RunSpec.sym` 으로
+                   넘긴다 — 빈칸은 전략 TICK 의 시장(A75·MKU) 최근월물, 품목 뿌리(`HO`)는 그날의 최근월물, 종목 코드는 그 종목
+                   (실시간은 KRX 신호 종목도 최근월물)
+    시작 시각     = 전략 `session_start` 5분 전, 실행의 시계로(07:00 보다 이르면 07:00) — week02 09:00 → 08:55,
+                   MKU(빠진 칸은 08:25 로 채움) → 08:20, 새벽 01:00 → `"245500"`. 장 전에 세우면 실행은 「대기」로 기다림
+                   (실시간 전략은 지금처럼 시장의 장 시작 5분 전 — `fire_time`)
     시도         = 그날 시작 시각 뒤 한 번, 거부되면 5분 뒤 다시 — 하루 3번까지. 끝 시각이 지나면 그날은 건너뜀
     저장         = `state_dir()/pyrun_schedules.json` (앱을 다시 켜도 남음)
+
+**종목 칸(설계 4.6)** — 실행 관리(`registry._minute_target`)와 같은 세 갈래로 시장·품목을 정합니다(만들 때 한 번).
+빈칸은 `live.run_market`, 정확한 `A75…`·`MKU…` 코드(`registry.legacy_code`)는 지금 길(`run_market` 의 시장 가드 — 품목은 A75·MKU), 그 밖(품목
+뿌리·다른 종목 코드)은 `Registry.resolve_product` 로 찾은 `Leg` 와 틱 확인(`products.strategy_tick_refusal`). 실시간 전략은
+실행 관리처럼 빈칸·`MKU…` 코드만 받습니다. 국내 종목에 자정을 넘는 전략, MKU 아닌 품목에 장 시간 칸이 빠진 전략은
+실행 준비와 같은 글로 만들 때 거부합니다(`live.plan_refusal` — 아침마다 소리 없이 거부되지 않게).
+
+**「그날」은 실행의 거래일** — 예약에 `overnight`·`end`(= `live.run_plan` 의 값)를 남겨 `tradeday.RunClock(overnight)` 로
+요일·「그날 이미 세움」·「그날 건너뜀」·늦음을 셉니다. 자정을 넘는 전략은 07:00 에 거래일이 바뀌어, 금요일 거래일의 토요일
+00:55 시작은 서고 일요일 거래일의 월요일 00:55 는 서지 않습니다. 그 칸이 없는 옛 예약은 지금처럼 달력 날짜와 시장 끝 시각
+(국내 15:31·해외 23:55)으로 셉니다 — 읽을 때 고쳐 쓰지 않습니다.
+
+**모의 계좌 예약은 품목 하나에 하나** — 날마다 같은 종목을 주문하는 둘째 예약은 날마다 거부될 뿐이라 만들 때 막습니다.
+빈칸 예약의 품목은 시장으로 정합니다(국내 A75 · 해외 MKU) — 빈칸끼리는 지금처럼 「같은 시장」, 종목 칸 예약과는 같은 품목일 때.
 
 **안 하는 것 (주문 재전송 금지 원칙)**
 - 앞선 실행이 「확인 필요」·「오류」로 끝났거나, `summary.json` 에 결과 모름 주문(`unresolved_order`)·멈춤(`halted`)이
@@ -35,9 +53,12 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from backend.sessions.hours import now_kst, to_kst
-from backend.team_pyrun.live import RunSpec, StartRefused, run_market
-from backend.team_pyrun.loader import LoadError, load
+from backend.team_pyrun.live import LEGLESS_PRODUCT, RunSpec, StartRefused, plan_refusal, run_market, run_plan
+from backend.team_pyrun.loader import Loaded, LoadError, load
 from backend.team_pyrun.markets import DOMESTIC, OVERSEAS, Market
+from backend.team_pyrun.products import account_market, strategy_tick_refusal
+from backend.team_pyrun.tradeday import DAY_STARTS, RunClock, plus_minutes
+from backend.team_spread.legs import Leg
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +74,8 @@ RUNNING_STATES = ("대기", "진행 중")
 MODES = ("orders", "paper")
 _ID_SAFE = re.compile(r"[^0-9A-Za-z_]")
 _MARKETS = {DOMESTIC.id: DOMESTIC, OVERSEAS.id: OVERSEAS}
+#: 빈칸(또는 정확한 `A75…`·`MKU…` 코드) 예약의 품목 — 그 시장의 최근월물을 주문한다(실행의 `LEGLESS_PRODUCT` 와 같음)
+_MARKET_PRODUCT = {market: product for market, (product, _exchange) in LEGLESS_PRODUCT.items()}
 
 
 class ScheduleError(ValueError):
@@ -65,6 +88,7 @@ class RegistryLike(Protocol):
 
     def start(self, spec: RunSpec) -> dict: ...
     def get(self, run_id: str) -> Any: ...
+    def resolve_product(self, spec: str) -> Leg: ...
 
 
 def fire_time(market: Market) -> str:
@@ -95,6 +119,43 @@ def summary_reason(summary: dict | None) -> str | None:
     if summary.get("halted"):
         return f"앞선 실행이 멈춘 채 끝남 — 계좌를 확인한 뒤 다시 켜세요 ({summary.get('halted')})"
     return None
+
+
+def _timing(loaded: Loaded, market: Market, product: str) -> tuple[str, bool, str]:
+    """(시작 시각, 자정을 넘는 실행인가, 실행 끝) — 1분봉은 실행과 같은 계획(`live.run_plan`)으로: 시작 시각은 채운
+    Params 의 `session_start` 5분 전(실행의 시계, 07:00 보다 이르지 않게). 실시간은 지금처럼 시장 값(달력 날짜).
+
+    실행 준비가 날마다 거부할 것이 계획만으로 보이면(`live.plan_refusal` — 국내에 자정 넘는 전략, MKU 아닌 품목에 빠진
+    장 시간 칸) 만들 때 같은 글로 거부한다 — 예약이 아침마다 소리 없이 거부되지 않게."""
+    if loaded.kind != "minute":
+        return fire_time(market), False, market.end_time
+    try:
+        plan = run_plan(loaded, market)
+        start = plan.params_cls().session_start
+    except Exception as e:      # Params 시각 칸이 이상함 — 실행을 세울 때도 거부된다
+        raise ScheduleError(f"전략을 만들지 못했습니다 — {type(e).__name__}: {e}") from e
+    if (refusal := plan_refusal(loaded, market, product, plan)):
+        raise ScheduleError(refusal)
+    if not (isinstance(start, str) and len(start) == 6 and start.isdigit()):
+        raise ScheduleError(f"Params 의 session_start 가 HHMMSS 6자리가 아닙니다: {start!r}")
+    at = max(plus_minutes(start, -int(LEAD.total_seconds() // 60)), DAY_STARTS)
+    return at, plan.overnight, plan.end
+
+
+def _clock(s: dict) -> RunClock:
+    """예약의 시계 — 새 예약은 실행의 시계(`overnight`), 그 칸이 없는 옛 예약은 달력 그대로."""
+    return RunClock(bool(s.get("overnight")))
+
+
+def _weekend(key: str) -> bool:
+    return datetime.strptime(key, "%Y%m%d").weekday() >= 5
+
+
+def _product(s: dict) -> str:
+    """예약이 날마다 주문하는 품목 — 종목 칸 예약은 `product`, 빈칸(옛 예약 포함)은 시장의 품목(A75·MKU)."""
+    if s.get("sym") and s.get("product"):
+        return str(s["product"])
+    return _MARKET_PRODUCT.get(str(s.get("market")), _MARKET_PRODUCT[DOMESTIC.id])
 
 
 class Schedules:
@@ -133,7 +194,9 @@ class Schedules:
         now = to_kst(self._now())
         return [{**s, "next_start": self._next_start(s, now)} for s in items]
 
-    def create(self, file: str, mode: str, run_id: str | None = None) -> dict:
+    def create(self, file: str, mode: str, run_id: str | None = None, sym: str | None = None) -> dict:
+        """예약을 만든다. `sym` = 종목 칸(품목 뿌리·종목 코드, 빈칸 = 전략 TICK 의 시장 최근월물) — 안 주고 `run_id` 를
+        주면 그 실행의 종목 칸. 시장·품목·시작 시각·실행의 시계를 여기서 한 번 정해 예약에 남긴다(모듈 문서)."""
         if mode not in MODES:
             raise ScheduleError(f"실행 방식이 올바르지 않습니다: {mode!r} (orders 또는 paper)")
         if Path(file).name != file or not file.endswith(".py"):
@@ -142,9 +205,7 @@ class Schedules:
             loaded = load(self.registry.strategies, file)
         except LoadError as e:
             raise ScheduleError(f"전략 파일을 불러오지 못했습니다 — {e}") from e
-        market, refusal = run_market(None, loaded)
-        if refusal:
-            raise ScheduleError(refusal)
+        sym = str(sym or "").strip() or None
         if run_id is not None:
             run = self.registry.get(run_id)
             if run is None:
@@ -152,6 +213,15 @@ class Schedules:
             spec = getattr(run, "spec", None)
             if spec is None or spec.file != file or spec.mode != mode:
                 raise ScheduleError(f"이은 실행({run_id})이 다른 전략·방식입니다 — 같은 파일·방식의 실행만 이을 수 있습니다")
+            run_sym = getattr(spec, "sym", None) or None
+            if sym is None:
+                sym = run_sym
+            elif sym != run_sym:
+                raise ScheduleError(f"이은 실행({run_id})이 다른 종목입니다 ({run_sym or '빈칸 — 최근월물'}) "
+                                    "— 같은 종목 칸의 실행만 이을 수 있습니다")
+        market, product = self._target(loaded, sym)     # 종목 찾기(조회)는 잠금 밖
+        at, overnight, end = _timing(loaded, market, product)
+        clock = RunClock(overnight)
         now = to_kst(self._now())
         sid = _ID_SAFE.sub("_", f"{Path(file).stem}_{mode}")
         with self._lock:
@@ -159,15 +229,18 @@ class Schedules:
             for s in items:
                 if s["id"] == sid:
                     raise ScheduleError(f"이 전략·방식의 자동 시작이 이미 있습니다 ({s['file']} · {mode})")
-                if mode == "orders" and s.get("mode") == "orders" and s.get("market") == market.id:
-                    # 같은 시장의 모의 계좌 실행은 날마다 같은 최근월물을 주문한다 — 둘째는 날마다 거부될 뿐이다
-                    raise ScheduleError(f"같은 시장의 모의 계좌 자동 시작이 이미 있습니다 ({s['file']}) — 먼저 지우세요")
-            at = fire_time(market)
-            # 오늘 시작 시각이 이미 지났으면 첫 시작은 내일 — 만든 순간 실행이 서지 않게
-            today = now.strftime("%Y%m%d")
-            late = run_id is None and now.strftime("%H%M%S") >= at
+                if mode == "orders" and s.get("mode") == "orders" and _product(s) == product:
+                    # 같은 품목의 모의 계좌 실행은 날마다 같은 종목을 주문한다 — 둘째는 날마다 거부될 뿐이다
+                    if not sym and not s.get("sym"):
+                        raise ScheduleError(f"같은 시장의 모의 계좌 자동 시작이 이미 있습니다 ({s['file']}) — 먼저 지우세요")
+                    raise ScheduleError(f"같은 품목({product})의 모의 계좌 자동 시작이 이미 있습니다 ({s['file']}) "
+                                        "— 먼저 지우세요")
+            # 그날(실행의 거래일) 시작 시각이 이미 지났으면 첫 시작은 다음 장 날 — 만든 순간 실행이 서지 않게
+            today, hhmmss = clock.label(now)
+            late = run_id is None and hhmmss >= at
             item = {
-                "id": sid, "file": file, "mode": mode, "market": market.id, "at": at,
+                "id": sid, "file": file, "mode": mode, "market": market.id,
+                "sym": sym, "product": product, "overnight": overnight, "end": end, "at": at,
                 "created_at": self._stamp(), "blocked": None,
                 "last_day": today if run_id else None, "attempts": 0,
                 "last_run_id": run_id, "skip_day": today if late else None,
@@ -178,6 +251,26 @@ class Schedules:
             items.append(item)
             self._write(items)
         return {**item, "next_start": self._next_start(item, now)}
+
+    def _target(self, loaded: Loaded, sym: str | None) -> tuple[Market, str]:
+        """(실행의 시장, 날마다 주문하는 품목) — 실행 관리와 같은 세 갈래(모듈 문서 「종목 칸」). 거부는 `ScheduleError`."""
+        from backend.team_pyrun.registry import legacy_code     # registry 는 무거워 함수 안에서(`schedules()` 와 같음)
+
+        if not sym or legacy_code(sym):
+            market, refusal = run_market(sym, loaded)
+            if refusal:
+                raise ScheduleError(refusal)
+            return market, _MARKET_PRODUCT[market.id]
+        if loaded.kind != "minute":
+            # 실행 관리의 실시간 길은 품목을 찾지 않는다 — 뿌리를 그대로 주문 종목으로 쓰지 않게 여기서 막는다
+            raise ScheduleError(f"실시간 전략의 종목 칸은 MKU… 종목 코드만 됩니다 — {sym!r} (품목 뿌리·다른 종목은 1분봉 전략만)")
+        try:
+            leg = self.registry.resolve_product(sym)            # 마스터·품목 세부정보 조회 (주문과 무관)
+        except StartRefused as e:
+            raise ScheduleError(str(e)) from e
+        if (refusal := strategy_tick_refusal(leg, loaded)):
+            raise ScheduleError(refusal)
+        return account_market(leg), leg.product
 
     def delete(self, sid: str) -> None:
         with self._lock:
@@ -195,9 +288,9 @@ class Schedules:
                 if s["id"] == sid:
                     # 오늘 시작 시각이 이미 지났으면 오늘은 세우지 않는다 — 다시 켜는 순간 확인 없이 실행이 서지 않게
                     # (시작 도중 꺼진 날이면 같은 날 두 번째 실행이 되기도 한다). 장 전에 켜면 오늘 시작 시각에 선다
-                    now = to_kst(self._now())
-                    late = now.strftime("%H%M%S") >= str(s.get("at") or "")
-                    s.update(blocked=None, last_run_id=None, skip_day=now.strftime("%Y%m%d") if late else s.get("skip_day"),
+                    today, hhmmss = _clock(s).label(to_kst(self._now()))
+                    late = hhmmss >= str(s.get("at") or "")
+                    s.update(blocked=None, last_run_id=None, skip_day=today if late else s.get("skip_day"),
                              last_result=f"다시 켬 ({self._stamp()})" + (" — 오늘은 시작 시각이 지나 다음 장 날부터" if late else ""))
                     self._write(items)
                     return {**s, "next_start": self._next_start(s, to_kst(self._now()))}
@@ -213,17 +306,20 @@ class Schedules:
                                                  or int(s.get("attempts") or 0) >= MAX_ATTEMPTS)
 
     def _next_start(self, s: dict, now: datetime) -> str | None:
-        """다음 시작 예정(ISO 초). 막혔으면 None. 오늘 시작 시각이 지났지만 아직 안 세웠으면 오늘(곧) 시각."""
+        """다음 시작 예정(ISO 초, 한국시간). 막혔으면 None. 그날 시작 시각이 지났지만 아직 안 세웠으면 그날(곧) 시각.
+        「그날」·요일은 예약의 시계(`_clock`)로 — 자정을 넘는 예약의 금요일 거래일 `"245500"` 은 토요일 00:55."""
         if s.get("blocked"):
             return None
         at = str(s.get("at") or "")
-        naive = now.replace(tzinfo=None)
-        day = naive.date()
+        clock = _clock(s)
+        today, hhmmss = clock.label(now)
+        first = datetime.strptime(today, "%Y%m%d").date()
+        day = first
         for _ in range(8):
             key = day.strftime("%Y%m%d")
             if day.weekday() < 5 and not self._day_done(s, key):
-                if day > naive.date() or naive.strftime("%H%M%S") < self._end_of(s):
-                    t = datetime.strptime(key + at, "%Y%m%d%H%M%S")
+                if day > first or hhmmss < self._end_of(s):
+                    t = clock.moment(key, at).replace(tzinfo=None)
                     if s.get("last_day") == key and s.get("next_try"):
                         t = max(t, datetime.fromisoformat(s["next_try"]))
                     return t.isoformat(timespec="seconds")
@@ -231,6 +327,10 @@ class Schedules:
         return None
 
     def _end_of(self, s: dict) -> str:
+        """그날 더 시도하지 않는 시각 — 새 예약은 실행 끝(`end`, 실행의 시계), 옛 예약은 시장 끝 시각."""
+        end = s.get("end")
+        if isinstance(end, str) and len(end) == 6 and end.isdigit():
+            return end
         return _MARKETS.get(str(s.get("market")), DOMESTIC).end_time
 
     def _read_folder_json(self, run_id: str, name: str) -> dict | None:
@@ -265,26 +365,27 @@ class Schedules:
         """지금 시작할 예약을 시작하고, 세운 실행 id 들을 돌려준다. 예약 루프가 20초마다 부른다."""
         started: list[str] = []
         now = to_kst(self._now())
-        if now.weekday() >= 5:
-            return started
-        today, clock = now.strftime("%Y%m%d"), now.strftime("%H%M%S")
         with self._lock:
             ids = [s["id"] for s in self._read()]
         for sid in ids:
             if self._stop.is_set():                 # 앱을 끄는 중 — 새 실행을 세우지 않는다
                 break
-            run_id = self._tick_one(sid, today, clock, now)
+            run_id = self._tick_one(sid, now)
             if run_id:
                 started.append(run_id)
         return started
 
-    def _tick_one(self, sid: str, today: str, clock: str, now: datetime) -> str | None:
+    def _tick_one(self, sid: str, now: datetime) -> str | None:
         if self._stop.is_set():
             return None
         with self._lock:
             items = self._read()
             s = next((x for x in items if x["id"] == sid), None)
-            if s is None or s.get("blocked") or self._day_done(s, today):
+            if s is None or s.get("blocked"):
+                return None
+            # 「오늘」·요일·시각은 예약의 시계로 — 자정을 넘는 예약은 거래일(토요일 새벽 = 금요일), 옛 예약은 달력
+            today, clock = _clock(s).label(now)
+            if _weekend(today) or self._day_done(s, today):
                 return None
             if clock < str(s.get("at")) or clock >= self._end_of(s):
                 return None
@@ -308,7 +409,7 @@ class Schedules:
             s["last_result"] = f"시작 시도 {s['attempts']}/{MAX_ATTEMPTS} ({self._stamp()})"
             s["starting"] = True                    # 시작이 끝나면 `_record` 가 지운다. 남아 있으면 앱이 시작 도중 꺼진 것
             self._write(items)
-            spec = RunSpec(s["file"], s["mode"], None, None)
+            spec = RunSpec(s["file"], s["mode"], s.get("sym") or None, None)    # 종목 칸 그대로 — 뿌리면 그날 최근월물
         try:
             status = self.registry.start(spec)      # 잠금 밖 — 준비(조회)가 오래 걸려도 목록·바꾸기를 막지 않게
         except StartRefused as e:

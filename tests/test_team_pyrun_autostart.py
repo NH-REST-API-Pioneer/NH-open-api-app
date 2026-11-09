@@ -281,7 +281,7 @@ def test_라우트_만들기_목록_다시_켜기_지우기(api):
     sid = r.json()["id"]
     assert [s["id"] for s in c.get("/api/team/pyrun/schedules").json()["schedules"]] == [sid]
     assert c.post("/api/team/pyrun/schedules", json={"file": "mku.py", "mode": "orders"}).status_code == 409
-    assert c.post("/api/team/pyrun/schedules", json={"file": "mku.py", "mode": "orders", "sym": "X"}).status_code == 422
+    assert c.post("/api/team/pyrun/schedules", json={"file": "mku.py", "mode": "orders", "foo": "X"}).status_code == 422
     assert c.post(f"/api/team/pyrun/schedules/{sid}/resume").status_code == 200
     assert c.post("/api/team/pyrun/schedules/없음/resume").status_code == 404
     assert c.delete(f"/api/team/pyrun/schedules/{sid}").status_code == 204

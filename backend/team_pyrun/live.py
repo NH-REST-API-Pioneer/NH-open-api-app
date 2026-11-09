@@ -229,6 +229,20 @@ def run_plan(loaded: Loaded, market: Market) -> RunPlan:
     return RunPlan(params_cls=cls, overnight=overnight, end=end, clock=RunClock(overnight))
 
 
+def plan_refusal(loaded: Loaded, market: Market, product: str | None, plan: RunPlan) -> str | None:
+    """종목·계획으로 바로 알 수 있는 시작 거부 까닭(조회 없음), 없으면 None — `LiveRun` 준비와 매일 자동 시작
+    (`autostart.Schedules.create`)이 같은 글을 쓴다.
+
+    - 국내 종목에 자정을 넘는 계획(07:00 전 시각이 있는 전략) — 국내는 주간만
+    - Params 에 장 시간 칸이 빠졌는데 품목이 MKU 가 아님 — 빠진 칸을 시장 시간표로 채우는 것은 MKU 만(week03 ORB)"""
+    if market.id == "domestic" and plan.overnight:
+        return "국내는 주간(08:45~15:45)만 돕니다 — 07:00 전 시각이 있는 전략은 국내 종목에 걸 수 없습니다"
+    if loaded.params_missing and not is_mku(product):
+        return (f"Params 에 장 시간 칸이 없습니다 ({', '.join(loaded.params_missing)}) — "
+                "이 품목은 Params 에 적어야 합니다")
+    return None
+
+
 #: 거래일에서 이어 센 시각의 끝 — 6자리를 넘지 않게(100시간 넘게 지난 step 은 여기로 묶음, `_trading_clock`)
 CLOCK_MAX = "995959"
 
@@ -390,12 +404,8 @@ class LiveRun:
             raise StartRefused("실시간 전략(on_krx·on_quote)은 1분봉 실행으로 시작할 수 없습니다")
         if self._market_refusal:        # 시장 가드·틱 확인 — 조회 전에 (모듈 문서 「시장 고르기」)
             raise StartRefused(self._market_refusal)
-        if market.id == "domestic" and plan.overnight:
-            raise StartRefused("국내는 주간(08:45~15:45)만 돕니다 — 07:00 전 시각이 있는 전략은 국내 종목에 걸 수 없습니다")
-        if loaded.params_missing and not is_mku(self.product):
-            # 빠진 칸을 시장 시간표로 채우는 것은 MKU 만(week03 ORB) — 다른 품목은 Params 에 적힌 칸으로만 돈다
-            raise StartRefused(f"Params 에 장 시간 칸이 없습니다 ({', '.join(loaded.params_missing)}) — "
-                               "이 품목은 Params 에 적어야 합니다")
+        if (why := plan_refusal(loaded, market, self.product, plan)):
+            raise StartRefused(why)
         if market.id == "overseas" and plan.end > tradeday.DAY_ENDS:
             raise StartRefused(f"실행 끝({clock_text(plan.end)})이 다음 날 07:00 을 넘습니다 — flatten_at 을 당기세요")
         # 1. 어디로·무엇을

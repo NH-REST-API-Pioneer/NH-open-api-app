@@ -10,7 +10,7 @@
     GET  /runs/{id}/bars                         차트용 `{"kind": "minute"|"realtime", "bars": […], "marks": […]}`
     POST /runs/{id}/stop · /flatten              204 (요청만 하고 바로 돌아온다)
     GET  /runs/{id}/download                     결과 zip(`journal` `summary` `api_log` 만 — `run.json` 은 넣지 않는다)
-    GET  /schedules · POST /schedules            매일 자동 시작 목록 / 만들기 `{file, mode, run_id?}`(거부는 409) — `autostart.py`
+    GET  /schedules · POST /schedules            매일 자동 시작 목록 / 만들기 `{file, mode, run_id?, sym?}`(거부는 409) — `autostart.py`
     DELETE /schedules/{id} · POST /schedules/{id}/resume   지우기 204 / 막힌 예약 다시 켜기 (모르는 id 는 404)
 
 없는 실행·이상한 id 는 404. `stop`·`flatten` 은 **이 앱에서 세운 실행**에만 된다(이전 실행 폴더는 409).
@@ -419,13 +419,16 @@ def flatten_run(run_id: str) -> Response:
 
 # ---------------------------------------------------------------- 매일 자동 시작
 class ScheduleBody(BaseModel):
-    """자동 시작 만들기. `run_id` = 지금 막 세운 실행(그날은 그 실행으로 치고, 다음 날 그 끝을 본다). 모르는 칸은 422."""
+    """자동 시작 만들기. `run_id` = 지금 막 세운 실행(그날은 그 실행으로 치고, 다음 날 그 끝을 본다).
+    `sym` = 종목 칸(품목 뿌리 `HO` 또는 종목 코드, 빈칸 = 전략 TICK 의 시장 최근월물 — 안 주고 `run_id` 를 주면 그 실행의 칸).
+    모르는 칸은 422."""
 
     model_config = ConfigDict(extra="forbid")
 
     file: str
     mode: str
     run_id: str | None = None
+    sym: str | None = None
 
 
 @router.get("/schedules")
@@ -436,7 +439,7 @@ def list_schedules() -> dict[str, Any]:
 @router.post("/schedules", status_code=201, dependencies=[Depends(require_json)])
 def create_schedule(body: ScheduleBody) -> dict[str, Any]:
     try:
-        return schedules().create(body.file, body.mode, body.run_id)
+        return schedules().create(body.file, body.mode, body.run_id, sym=body.sym)
     except ScheduleError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
 

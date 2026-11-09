@@ -16,14 +16,15 @@ from backend.team_pyrun.live import LiveRun, RunSpec, StartRefused
 from backend.team_pyrun.realtime import RealtimeRun
 from backend.team_pyrun.registry import Registry
 from tests.test_team_pyrun_live import STRATEGY_SRC, SYM, TODAY, FakeApi, at, bar
-from tests.test_team_pyrun_live_overseas import MKU_SRC, FakeLive
+from tests.test_team_pyrun_live_overseas import MKU_SRC, FakeLive, no_master_find
 
 FIXTURES = Path(__file__).parent / "fixtures" / "team_pyrun" / "strategies"
 OTHER_SYM = "A756C000"
 KRX_SYM = SYM           # 실시간 전략이 시세로만 보는 KRX 종목 (국내 최근월물)
 
 
-def make_registry(tmp_path, *, now="085000", date=TODAY, env="paper", fake=None, start_thread=False, bb=False, sleep=None):
+def make_registry(tmp_path, *, now="085000", date=TODAY, env="paper", fake=None, start_thread=False, bb=False, sleep=None,
+                  find=no_master_find):
     """전략 폴더(시험 전략 `fake.py`, 원하면 `strategy_bb.py` 도)와 `Registry`. 시각은 `clock["now"]` 로 옮긴다."""
     folder = tmp_path / "strategies"
     folder.mkdir(parents=True, exist_ok=True)
@@ -34,7 +35,7 @@ def make_registry(tmp_path, *, now="085000", date=TODAY, env="paper", fake=None,
     fake = fake or FakeApi()
     clock = {"now": at(now, date)}
     reg = Registry(tmp_path / "pyruns", folder, now=lambda: clock["now"], active_env=lambda: env,
-                   start_thread=start_thread, api_module=fake, sleep=sleep or (lambda s: None))
+                   start_thread=start_thread, api_module=fake, sleep=sleep or (lambda s: None), find=find)
     return reg, fake, clock
 
 
@@ -283,11 +284,12 @@ def test_파일_이름과_종목_코드에_경로_문자가_있으면_거부(tmp
 
 
 def test_미국달러선물이_아닌_종목은_거부(tmp_path):
-    """틱·틱가치는 시장마다 그 품목 줄로만 확인하므로 미국달러선물(`A75…`)·MKU(`MKU…`)가 아닌 종목은 받지 않는다.
-    국내 틱 전략에 MKU 종목을 주면 시장 가드가 거부한다(해외는 `test_team_pyrun_live_overseas.py`)."""
+    """설계 4.1(의도한 바뀜): 미국달러선물(`A75…`)·MKU(`MKU…`) 코드가 아닌 종목은 종목 찾기(`find`)가 정한다 — 찾지 못하면
+    그 글로 거부(여기서는 마스터를 읽지 않는 가짜). 국내 틱 전략에 MKU 종목을 주면 시장 가드가 거부한다(해외는
+    `test_team_pyrun_live_overseas.py`)."""
     reg, fake, _ = make_registry(tmp_path)
     for sym in ("A016B000", "B756B000", "a756B000"):
-        with pytest.raises(StartRefused, match=r"미국달러선물\(A75…\)·SGX 미니 원달러\(MKU…\) 종목만 실행할 수 있습니다"):
+        with pytest.raises(StartRefused, match=f"종목 「{sym}」 을 마스터에서 찾지 못했습니다"):
             reg.start(RunSpec("fake.py", "paper", sym))
     with pytest.raises(StartRefused, match="종목의 시장과 전략 틱이 맞지 않습니다"):
         reg.start(RunSpec("fake.py", "paper", "MKUX26"))

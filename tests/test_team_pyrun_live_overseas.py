@@ -17,6 +17,7 @@ from backend.team_pyrun.live import LiveRun, RunSpec, StartRefused
 from backend.team_pyrun.loader import load
 from backend.team_pyrun.markets import DOMESTIC, OVERSEAS, in_break
 from backend.team_pyrun.registry import Registry
+from backend.team_spread.legs import Leg
 from tests.test_team_pyrun_live import STRATEGY_SRC, FakeApi, at
 from tests.test_team_pyrun_markets import FakeOvsApi
 
@@ -590,7 +591,12 @@ def test_ORB_처음_켠_날은_돌파에_들어간다(tmp_path):
 
 
 # ---------------------------------------------------------------- registry
-def make_reg(tmp_path, *, now="100000", fake=None, src=MKU_SRC, file="fakemku.py"):
+def no_master_find(spec, *, api_module, today):
+    """시험 `Registry` 의 종목 찾기 — 실제 마스터(`~/NHFutures/master`)·품목 세부정보를 읽지 않고 모르는 종목으로 거부."""
+    raise StartRefused(f"종목 「{spec}」 을 마스터에서 찾지 못했습니다 (시험)")
+
+
+def make_reg(tmp_path, *, now="100000", fake=None, src=MKU_SRC, file="fakemku.py", find=no_master_find):
     folder = tmp_path / "strategies"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / file).write_text(src, encoding="utf-8")
@@ -599,7 +605,7 @@ def make_reg(tmp_path, *, now="100000", fake=None, src=MKU_SRC, file="fakemku.py
     fake = fake or FakeLive(clock)
     fake.clock = clock
     reg = Registry(tmp_path / "pyruns", folder, now=lambda: clock["now"], active_env=lambda: "paper",
-                   start_thread=False, api_module=fake, sleep=lambda s: None)
+                   start_thread=False, api_module=fake, sleep=lambda s: None, find=find)
     return reg, fake, clock
 
 
@@ -630,11 +636,13 @@ def test_registry_주말은_그대로_거부(tmp_path):
 
 
 def test_registry_시장과_틱이_다르면_폴더_전에_거부(tmp_path):
-    reg, fake, clock = make_reg(tmp_path)
+    # 설계 4.1(의도한 바뀜): A75…·MKU… 밖의 코드(큰 계약 KU)는 종목 찾기로 품목을 알고, 틱 확인은 그 품목의 틱·틱가치와 비교
+    ku = Leg("main", "KUX26", "KU", "overseas", "FSGX", "USD", 0.00005, 6.25, "202611")
+    reg, fake, clock = make_reg(tmp_path, find=lambda spec, **kw: ku)
     for spec in (RunSpec("fakemku.py", "orders", "A756B000"), RunSpec("fake.py", "orders", MKU)):
         with pytest.raises(StartRefused, match="종목의 시장과 전략 틱이 맞지 않습니다"):
             reg.start(spec)
-    with pytest.raises(StartRefused, match=r"MKU…"):
+    with pytest.raises(StartRefused, match="틱·틱가치가 전략 가정과 다릅니다 — 종목 KUX26"):
         reg.start(RunSpec("fakemku.py", "paper", "KUX26"))
     assert fake.calls == [] and not (tmp_path / "pyruns").exists()
 

@@ -68,8 +68,8 @@ function autoCodeOf(refs: ContractRef[]): string | null {
 }
 
 /** 품목 뿌리인지 — 길이로 가르지 않습니다(해외 뿌리는 `NDOW`·`SAAPL` 처럼 4~5자). 마스터의 품목 코드이거나
- *  받아 둔 국내 품목 표의 뿌리이면서, 종목 코드로는 풀리지 않는 글입니다. */
-function isRootCode(code: string): boolean {
+ *  받아 둔 국내 품목 표의 뿌리이면서, 종목 코드로는 풀리지 않는 글입니다. 「매일 자동 시작」 글도 이것으로 가릅니다. */
+export function isRootCode(code: string): boolean {
   if (code === '' || resolve(code)) return false
   return (
     productOf('overseas', code) !== null ||

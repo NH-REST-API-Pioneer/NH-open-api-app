@@ -3,8 +3,10 @@ import { Modal } from '../../app/Modal'
 import {
   ORDERS_CONFIRM_TEXT,
   PY_FINISHED,
+  clockText,
   createSchedule,
   currencyOf,
+  dailyAt,
   dateDigits,
   deleteSchedule,
   deleteStrategy,
@@ -23,7 +25,7 @@ import {
   type PyStrategyFile,
 } from '../../data/pyrun'
 import { useMasterStatus } from '../../lib/useMaster'
-import { PySymbolPicker, symConfirmText, symText } from './PySymbolPicker'
+import { PySymbolPicker, isRootCode, symConfirmText, symText } from './PySymbolPicker'
 
 /* 팀: 「파이썬 전략」 왼쪽 열 — ① 전략 파일 ② 실행 목록, 그리고 「+ 실행 세우기」 폼.
  * 얼굴은 「전략 진행」의 실행 카드(`.run-runs` · `.run-row`)를 그대로 씁니다. */
@@ -558,11 +560,18 @@ export function PySchedulesCard({
 
 type StartMode = 'orders' | 'paper'
 
-/** 「매일 자동 시작」 설명. 모의 계좌는 날마다 **확인 없이** 주문이 나간다는 것과, 파일을 고치면 다음 날부터 고친 파일로
- *  돈다는 것을 분명히 적습니다(확인 얼굴은 오늘 한 번뿐). */
-function dailyText(mode: StartMode): string {
+/** 「매일 자동 시작」 설명. 시작 시각은 예약이 쓸 시각(`at` — `dailyAt`), 종목 글은 종목 칸에 따라 — 비었거나 품목
+ *  뿌리면 그날의 최근월물, 종목 코드면 그 월물로만(만기 뒤엔 날마다 시작이 거부됨). 모의 계좌는 날마다 **확인 없이**
+ *  주문이 나간다는 것과, 파일을 고치면 다음 날부터 고친 파일로 돈다는 것을 분명히 적습니다(확인 얼굴은 오늘 한 번뿐). */
+function dailyText(mode: StartMode, at: string | null, sym: string): string {
+  const code = sym.trim()
+  const when = at ? `장 시작 5분 전(${clockText(at)})` : '장 시작 5분 전'
+  const which =
+    code === '' || isRootCode(code)
+      ? '종목은 그날의 최근월물입니다.'
+      : `종목은 ${code} 그 월물로만 돕니다 — 만기 뒤엔 시작이 거부됩니다.`
   const base =
-    '다음 장 날부터 장 시작 5분 전(MKU 08:20 · 국내 08:55)에 같은 파일·방식으로 새 실행을 세웁니다. 종목은 그날의 최근월물입니다. ' +
+    `다음 장 날부터 ${when}에 같은 파일·방식으로 새 실행을 세웁니다. ${which} ` +
     '그날 전략 폴더에 있는 파일 그대로 돌므로, 파일을 고치거나 덮어쓰면 다음 날부터 고친 파일로 돕니다. ' +
     '앞선 실행이 「확인 필요」·「오류」로 끝났거나 결과를 모르는 주문이 남았으면 세우지 않고 멈춰 둡니다.'
   return mode === 'orders' ? `${base} 모의 계좌는 날마다 이 확인 없이 주문이 나갑니다.` : base
@@ -609,6 +618,8 @@ export function PyAddForm({
   const realtime = picked?.kind === 'realtime'
   /* 비워 둘 때 서버가 고를 시장 — 실시간은 주문이 늘 MKU, 1분봉은 전략 TICK 으로 정해집니다(모르면 국내). */
   const orderMarket = realtime ? 'overseas' : (picked?.market ?? 'domestic')
+  /* 「매일 자동 시작」 글 — 예약이 쓸 시작 시각과 종목 칸(실시간도 예약은 이 실행의 주문 종목 칸을 잇습니다). */
+  const dailyHint = dailyText(mode, dailyAt(picked, orderMarket), sym)
 
   async function send() {
     if (sending || !file) return
@@ -655,7 +666,7 @@ export function PyAddForm({
           {daily && (
             <div className="run-confirm-row">
               <dt>매일 자동 시작</dt>
-              <dd>{dailyText(mode)}</dd>
+              <dd>{dailyHint}</dd>
             </div>
           )}
         </dl>
@@ -724,7 +735,7 @@ export function PyAddForm({
         <input type="checkbox" checked={daily} onChange={(e) => setDaily(e.target.checked)} />
         <span>매일 자동 시작</span>
       </label>
-      {daily && <p className="run-hint">{dailyText(mode)}</p>}
+      {daily && <p className="run-hint">{dailyHint}</p>}
       <div className="run-add-acts">
         <button type="button" className="btn btn-quiet" aria-disabled={sending || undefined} onClick={() => !sending && onCancel()}>
           그만두기

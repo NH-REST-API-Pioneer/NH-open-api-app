@@ -123,6 +123,38 @@ export function clockText(hhmmss: string): string {
   return hour >= 24 ? `${text} (+1)` : text
 }
 
+/** 시장의 장 시작(HHMMSS) — 서버 `markets.DOMESTIC`·`OVERSEAS` 의 `session_start`. Params 장 시간 칸이 빠진 MKU 전략은
+ *  이 값으로 채워 돕니다. */
+const SESSION_START: Record<'domestic' | 'overseas', string> = { domestic: '090000', overseas: '082500' }
+/** 거래일이 바뀌는 시각(초) — 서버 `tradeday.DAY_STARTS`(07:00). */
+const DAY_STARTS_SECONDS = 7 * 3600
+/** 매일 자동 시작은 장 시작보다 이만큼(초) 먼저 세웁니다 — 서버 `autostart.LEAD`. */
+const DAILY_LEAD_SECONDS = 5 * 60
+
+function hhmmssSeconds(hhmmss: string): number {
+  return Number(hhmmss.slice(0, 2)) * 3600 + Number(hhmmss.slice(2, 4)) * 60 + Number(hhmmss.slice(4, 6))
+}
+
+function secondsHhmmss(total: number): string {
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${two(Math.floor(total / 3600))}${two(Math.floor((total % 3600) / 60))}${two(total % 60)}`
+}
+
+/** 「매일 자동 시작」이 실행을 세울 시각(HHMMSS — 자정을 넘으면 `245500`). 서버 `autostart._timing` 과 같은 규칙입니다:
+ *  1분봉 전략은 Params `session_start` 5분 전(07:00 전 시각은 다음 날이라 24시간을 더하고, 07:00 보다 이르지 않게),
+ *  그 칸이 빠졌으면 시장의 장 시작(MKU 08:25 · 국내 09:00) 5분 전. 실시간 전략은 시장의 장 시작 5분 전입니다.
+ *  확인 얼굴에 미리 보이는 값이고, 예약의 실제 시각은 만들 때 서버가 정합니다(`PySchedule.at`). 모르면 null. */
+export function dailyAt(file: PyStrategyFile | undefined, market: 'domestic' | 'overseas'): string | null {
+  if (!file) return null
+  if (file.kind === 'realtime') return secondsHhmmss(hhmmssSeconds(SESSION_START[market]) - DAILY_LEAD_SECONDS)
+  const given = file.params?.session_start
+  const start = given === undefined ? SESSION_START[market] : given
+  if (typeof start !== 'string' || !/^\d{6}$/.test(start)) return null
+  let seconds = hhmmssSeconds(start)
+  if (seconds < DAY_STARTS_SECONDS) seconds += 24 * 3600
+  return secondsHhmmss(Math.max(seconds - DAILY_LEAD_SECONDS, DAY_STARTS_SECONDS))
+}
+
 /* ── 금액·날짜 ────────────────────────────────────────── */
 
 /** 실행 통화. 이 기능 전 기록에는 없어 종목으로 정합니다(MKU 면 USD). */

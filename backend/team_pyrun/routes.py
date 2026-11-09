@@ -134,8 +134,8 @@ router = APIRouter(prefix="/api/team/pyrun", tags=["team-pyrun"], dependencies=[
 DOWNLOAD_FILES = ("journal.jsonl", "summary.json", "api_log.jsonl")
 #: 차트용 봉에서 신호 줄의 꼬리표 칸 — 봉 칸이 아니다.
 _ROW_TAGS = ("kind", "at", "clock", "bar", "date")
-#: 전략 파일 작성 규칙 문서. 저장소 뿌리(= 이 패키지의 두 단계 위) 기준이고, 부를 때마다 읽는다.
-CONVENTION_DOC = Path(__file__).resolve().parents[2] / "docs" / "team" / "strategy-file-convention.md"
+#: 전략 파일 작성 규칙 문서. 이 패키지의 `guide/` 에 있고(도커 이미지에도 backend/ 와 함께 들어감), 부를 때마다 읽는다.
+CONVENTION_DOC = Path(__file__).resolve().parent / "guide" / "strategy-file-convention.md"
 
 
 class StartBody(BaseModel):

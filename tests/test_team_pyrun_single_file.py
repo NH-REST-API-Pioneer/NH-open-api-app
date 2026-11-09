@@ -25,7 +25,7 @@ from tests.test_team_pyrun_live import FakeApi, at, bar
 FIX = Path(__file__).parent / "fixtures" / "team_pyrun"
 WEEK02 = FIX / "week02"
 DATA = FIX / "bars_1m_A756B000_20261030.csv"
-DOC = Path(__file__).resolve().parents[1] / "docs" / "team" / "strategy-file-convention.md"
+DOC = Path(__file__).resolve().parents[1] / "backend" / "team_pyrun" / "guide" / "strategy-file-convention.md"
 
 BB_GOLDEN = [("sell", 1339.6, 1337.7, "익절", "093500", "101700"),
              ("buy", 1334.9, 1336.7, "익절", "121000", "124000"),

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # 팀: 서버 배포용 이미지 — 화면(React)을 빌드하고, 백엔드(FastAPI) 하나가 화면과 API 를 함께 서빙한다(`just serve` 와 같은 모양).
-# 안내: docs/team/deploy.md. 키·토큰은 이미지에 넣지 않는다 — 앱이 /data/NHFutures/ (볼륨)에 쓴다.
+# 안내: 팀 배포 안내 문서(docs/team/deploy.md — 저장소에는 없고 팀 안에서 따로 나눔). 키·토큰은 이미지에 넣지 않는다 — 앱이 /data/NHFutures/ (볼륨)에 쓴다.
 
 # ---------------------------------------------------------------------------
 # 1) 화면 빌드 — 산출물은 /src/backend/static (vite 설정의 outDir 이 ../backend/static)
@@ -53,8 +53,7 @@ VOLUME /data
 WORKDIR /app
 COPY --from=deps /opt/venv /opt/venv
 COPY backend/ ./backend/
-# 전략 파일 작성 규칙 문서 — /api/team/pyrun/convention 이 읽는다.
-COPY docs/team/strategy-file-convention.md ./docs/team/strategy-file-convention.md
+# 전략 파일 작성 규칙 문서는 backend/team_pyrun/guide/ 에 있어 위 줄로 함께 들어간다.
 COPY --from=web /src/backend/static ./backend/static
 
 USER app

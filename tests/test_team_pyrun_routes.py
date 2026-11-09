@@ -820,7 +820,7 @@ def test_올리고_지워도_공용_모듈을_불러온_실행은_계속_돈다(
 def test_작성_규칙_문서를_돌려준다(client):
     from pathlib import Path
 
-    doc = Path(__file__).resolve().parents[1] / "docs" / "team" / "strategy-file-convention.md"
+    doc = Path(__file__).resolve().parents[1] / "backend" / "team_pyrun" / "guide" / "strategy-file-convention.md"
     r = client.get(f"{BASE}/convention")
     assert r.status_code == 200
     assert r.json() == {"markdown": doc.read_text(encoding="utf-8")}
@@ -836,7 +836,7 @@ def test_작성_규칙_문서_경로는_패키지_기준_저장소_안이다():
     from pathlib import Path
 
     root = Path(routes_mod.__file__).resolve().parents[2]
-    assert routes_mod.CONVENTION_DOC == root / "docs" / "team" / "strategy-file-convention.md"
+    assert routes_mod.CONVENTION_DOC == root / "backend" / "team_pyrun" / "guide" / "strategy-file-convention.md"
 
 
 def test_익절_목표가_없는_전략은_목록에_알림이_선다(client, reg):

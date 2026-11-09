@@ -7,6 +7,7 @@ import {
   USD_PRODUCT,
   autoSymGuess,
   autoSymLabel,
+  cachedProducts,
   rootAutoLabel,
   rootOf,
   symLabel,
@@ -66,11 +67,22 @@ function autoCodeOf(refs: ContractRef[]): string | null {
   return frontCode(refs) ?? refs[0]?.code ?? null
 }
 
+/** 품목 뿌리인지 — 길이로 가르지 않습니다(해외 뿌리는 `NDOW`·`SAAPL` 처럼 4~5자). 마스터의 품목 코드이거나
+ *  받아 둔 국내 품목 표의 뿌리이면서, 종목 코드로는 풀리지 않는 글입니다. */
+function isRootCode(code: string): boolean {
+  if (code === '' || resolve(code)) return false
+  return (
+    productOf('overseas', code) !== null ||
+    productOf('domestic', code) !== null ||
+    (cachedProducts()?.domestic.some((one) => one.root === code) ?? false)
+  )
+}
+
 /** 지금 고른 종목을 글로. 확인 얼굴과 입력칸이 같은 문장을 씁니다. `market` 은 비워 둘 때 서버가 고를 시장입니다. */
 export function symText(sym: string, market: Market = 'domestic'): string {
   const code = sym.trim()
   /* 품목 뿌리(`HO`)는 종목이 아니라 「뿌리 + 최근월물 (자동)」으로 적습니다. */
-  if (code !== '' && code.length <= 3 && !resolve(code)) return rootAutoLabel(code)
+  if (isRootCode(code)) return rootAutoLabel(code)
   return symLabel(code, code ? (resolve(code)?.name ?? null) : null, autoCodeOf(monthsOf(market)))
 }
 
@@ -97,7 +109,7 @@ export function PySymbolPicker({
   market?: Market
 }) {
   const master = useMasterStatus()
-  const products = usePyProducts()
+  const { products, failed } = usePyProducts()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   /** 펼쳐 둔 품목·상품군. **각각 한 번에 하나**입니다 — 상단 검색과 같은 규칙입니다. */
@@ -117,7 +129,7 @@ export function PySymbolPicker({
         .map((at) => ({ market: at, product: productOf(at, PRODUCT_OF[at]), months: monthsOf(at) }))
         .filter((head) => head.product !== null && head.months.length > 0)
     : []
-  const verdictOf = (code: string) => symVerdict(code, allow, products)
+  const verdictOf = (code: string) => symVerdict(code, allow, failed ? false : products)
 
   const term = query.trim().toLowerCase()
   const { groups, more } = searchInstruments(term, LIMIT)

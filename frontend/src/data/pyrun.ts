@@ -81,11 +81,11 @@ export function rootAutoLabel(root: string): string {
 
 /** 고를 수 있는 코드인지. 못 고르면 줄 오른쪽에 설 까닭이 함께 옵니다.
  *  `any`(1분봉 칸)는 해외 선물이면 OK, 국내 선물은 앞 세 자리가 `products.domestic` 의 뿌리면 OK 입니다.
- *  `products` 를 아직 못 받았으면 국내는 미국달러선물만 됩니다(예전 그대로). `usd`·`mku`(실시간 칸)는 예전 그대로입니다. */
+ *  `products` 를 받는 중(null)이거나 못 받았으면(false) 국내는 미국달러선물만 됩니다(예전 그대로). `usd`·`mku`(실시간 칸)는 예전 그대로입니다. */
 export function symVerdict(
   code: string,
   allow: SymAllow = 'any',
-  products?: PyProducts | null,
+  products?: PyProducts | null | false,
 ): { ok: true } | { ok: false; reason: string } {
   const usd = isUsdFutures(code)
   const mku = isMku(code)
@@ -101,6 +101,9 @@ export function symVerdict(
   if (inst.kind === 'spread') return { ok: false, reason: '스프레드 종목은 안 됩니다' }
   if (inst.market === 'overseas') return { ok: true }
   if (inst.name.includes('야간')) return { ok: false, reason: '야간 종목은 안 됩니다' }
+  if (products === false) {
+    return usd ? { ok: true } : { ok: false, reason: '국내 품목 표를 받지 못했습니다 — 화면을 다시 열어 보세요' }
+  }
   if (!products) return usd ? { ok: true } : { ok: false, reason: '국내 품목 표를 받는 중입니다' }
   if (products.domestic.some((one) => one.root === code.slice(0, 3))) return { ok: true }
   return { ok: false, reason: '틱 확인 표에 없는 품목입니다 (주식선물 등)' }
@@ -524,22 +527,41 @@ export function scheduleTimeText(iso: string | null): string {
   return m ? `${m[1]}/${m[2]} ${m[3]}:${m[4]}` : iso
 }
 
-/** 국내 품목 표를 한 번 받아 모든 종목 칸이 나눠 씁니다. 못 받으면 `null` 이고 다음에 다시 시도합니다. */
+/** 국내 품목 표를 한 번 받아 모든 종목 칸이 나눠 씁니다. 못 받으면 비워 두어 다음에 칸을 열 때 다시 시도합니다. */
 let productsCache: PyProducts | null = null
+let productsInflight: Promise<PyProducts | null> | null = null
 
-export function usePyProducts(): PyProducts | null {
-  const [products, setProducts] = useState<PyProducts | null>(productsCache)
+/** 이미 받은 국내 품목 표(없으면 null) — 화면 글(`symText`)이 뿌리인지 알아볼 때 씁니다. */
+export function cachedProducts(): PyProducts | null {
+  return productsCache
+}
+
+function fetchProducts(): Promise<PyProducts | null> {
+  productsInflight ??= loadProducts().then((got) => {
+    productsInflight = null
+    if (got.ok) productsCache = got.data
+    return got.ok ? got.data : null
+  })
+  return productsInflight
+}
+
+/** 국내 품목 표. `products` 는 받는 중이면 null, `failed` 는 받지 못했을 때 참(이때 `symVerdict` 에는 `false` 를 넘깁니다). */
+export function usePyProducts(): { products: PyProducts | null; failed: boolean } {
+  const [state, setState] = useState<{ products: PyProducts | null; failed: boolean }>({
+    products: productsCache,
+    failed: false,
+  })
   useEffect(() => {
     if (productsCache) return
-    const ctrl = new AbortController()
-    void loadProducts(ctrl.signal).then((got) => {
-      if (!got.ok) return
-      productsCache = got.data
-      setProducts(got.data)
+    let alive = true
+    void fetchProducts().then((data) => {
+      if (alive) setState({ products: data, failed: data === null })
     })
-    return () => ctrl.abort()
+    return () => {
+      alive = false
+    }
   }, [])
-  return products
+  return state
 }
 
 /* ── 화면이 쓰는 훅 ─────────────────────────────────────── */

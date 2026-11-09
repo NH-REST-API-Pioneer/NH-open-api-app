@@ -1,4 +1,4 @@
-# 팀: 서버 배포 — 앱 + Cloudflare Tunnel. 안내: docs/team/deploy.md
+# 팀: 서버 배포 — 앱 + Cloudflare Tunnel. 안내: 팀 배포 안내 문서(docs/team/deploy.md — 저장소에는 없고 팀 안에서 따로 나눔)
 #
 # 서버 포트는 하나도 열지 않는다(`ports:` 없음). 밖에서는 터널로만 들어오고, 접속은 Cloudflare Access 가 이메일로 막는다.
 # 앱에는 자체 로그인이 없다 — 여기에 `ports:` 를 넣으면 누구나 주문 화면에 들어온다.

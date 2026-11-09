@@ -12,8 +12,8 @@ from backend.team_spread.legs import Leg
 from backend.team_spread.runner_files import load_runner
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLES = ROOT / "docs" / "team" / "examples"
-DOC = ROOT / "docs" / "team" / "spread-runner-convention.md"
+EXAMPLES = ROOT / "backend" / "team_spread" / "guide" / "examples"
+DOC = ROOT / "backend" / "team_spread" / "guide" / "spread-runner-convention.md"
 PROMPT = ROOT / "docs" / "team" / "strategy-file-prompt.md"
 
 HO = Leg("ho", "HO", "HO", "overseas", "", "USD", 0.0001, 4.2, "")
@@ -77,6 +77,7 @@ def test_convention_mentions_public_names(name):
         else name in text
 
 
+@pytest.mark.skipif(not PROMPT.exists(), reason="AI 프롬프트 문서는 저장소 밖(docs/ 는 로컬에만)")
 def test_prompt_has_spread_section():
     text = PROMPT.read_text("utf-8")
     assert "스프레드 실행기" in text and "ctx.target" in text and "OrderRejected" in text

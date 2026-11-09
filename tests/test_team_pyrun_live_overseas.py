@@ -25,7 +25,7 @@ MKU = "MKUX26"
 TODAY = "20261103"
 HERE = Path(__file__).parent
 WEEK03 = HERE / "fixtures/team_pyrun/week03"
-ORB_APP = HERE.parent / "docs/team/examples/strategy_orb_app.py"
+ORB_APP = HERE.parent / "backend/team_pyrun/guide/examples/strategy_orb_app.py"
 
 #: 해외 시험 전략 — `script` 의 분에 (개장, 방향) 신호를 낸다. Params 에 장 시간 칸이 없다(해외 시간표로 채움).
 MKU_SRC = '''

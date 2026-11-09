@@ -3,7 +3,7 @@
 「전략주문 › 파이썬 전략」에 올리는 `.py` 파일 하나를 어떻게 쓰는지 적은 문서입니다.
 week02 의 `strategy.py`(VWAP)·`strategy_bb.py`(볼린저)는 **고치지 않고 그대로 하나만 올려도** 돕니다.
 week03 `ws_trader.py` 처럼 실행기(접속·주문)와 판단이 한 파일이어도 그대로 올리면 판단 부분만 씁니다(11장).
-새 전략을 쓸 때는 맨 아래 예제에서 시작하세요. AI 에게 쓰게 할 때는 `strategy-file-prompt.md` 를 붙여 넣으세요.
+새 전략을 쓸 때는 맨 아래 예제에서 시작하세요. AI 에게 쓰게 할 때는 팀이 따로 나누는 AI 프롬프트 문서(`strategy-file-prompt.md`)를 붙여 넣으세요.
 
 ## 1. 앱이 하는 일과 파일이 하는 일
 
@@ -395,7 +395,7 @@ class MeanRevertExit:
 
 week03 후보 B(세션 개장 돌파, ORB)를 앱 1분봉 실행기로 돌리는 파일이 저장소에 있습니다.
 
-- 예제: `docs/team/examples/strategy_orb_app.py`
+- 예제: `backend/team_pyrun/guide/examples/strategy_orb_app.py`
 - **파일 세 개를 같은 전략 폴더에 올립니다**(「파일 올리기」를 세 번): `strategy_orb.py`(week03 원본) · `common.py`(week03 원본) · `strategy_orb_app.py`(위 예제).
   앱 목록에는 `strategy_orb_app.py` 가 전략으로 보입니다. `strategy_orb.py`·`common.py` 는 **한 글자도 고치지 않습니다**(시험이 해시로 비교합니다).
 - **판정(진입 신호)은 옮기지 않고 물려받습니다.** `OrbApp(SessionBreakout)` — 기준 범위 쌓기·돌파 판정·진입 막기·`on_entry(window)`·`on_exit` 가 원본 그대로입니다.
@@ -465,7 +465,7 @@ ORB 의 Params 에는 장 시간 칸이 없으므로 해외 실행이 시장 시
 
 ### 예제와 ws_trader 에서 떼어 오기 (손으로 할 때)
 
-- 예제: `docs/team/examples/strategy_leadlag.py`. 이대로 올리면 됩니다(표준 라이브러리만 씁니다).
+- 예제: `backend/team_pyrun/guide/examples/strategy_leadlag.py`. 이대로 올리면 됩니다(표준 라이브러리만 씁니다).
 - 내 `ws_trader.py` 에서 직접 떼어 낼 때 **남길 것**(한 글자도 고치지 않음 — 시험이 원문과 글자 그대로 비교합니다):
   `TICK` · `TICK_USD` · `FEE_TICKS` · `LiveParams` · `Engine`.
 - **지울 것**:

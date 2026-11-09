@@ -479,7 +479,8 @@ def make_rt_registry(tmp_path, *, now="085000", date=TODAY, env="paper", start_t
         return feed
 
     reg = Registry(tmp_path / "pyruns", folder, now=lambda: clock["now"], active_env=lambda: env,
-                   start_thread=start_thread, api_module=fake, sleep=lambda s: None, feed_factory=factory)
+                   start_thread=start_thread, api_module=fake, sleep=lambda s: None, feed_factory=factory,
+                   find=no_master_find)
     return reg, fake, clock, feeds
 
 
@@ -523,6 +524,26 @@ def test_신호_종목·주문_종목이_틀리면_폴더_없이_거부(tmp_path
     with pytest.raises(StartRefused, match=why):
         reg.start(spec)
     assert feeds == [] and not (tmp_path / "pyruns").exists() and fake.orders == []
+
+
+@pytest.mark.parametrize("spec,why", [
+    (RunSpec("strategy_rt_fake.py", "orders", "MKU", KRX_SYM), "실시간 실행은 MKU 종목 코드"),       # 주문 종목이 뿌리
+    (RunSpec("strategy_rt_fake.py", "orders", MKU, "A75"), r"신호 종목\(KRX\)은 미국달러선물 종목 코드"),  # 신호 종목이 뿌리
+])
+def test_실시간_종목_칸의_품목_뿌리는_폴더_없이_거부(tmp_path, spec, why):
+    """뿌리(`MKU`)가 그대로 주문 종목이 되면 주문이 「MKU」로 나가고 잔고 줄(`MKUX26`)과 맞지 않아 잔고 관문이 눈이 먼다 —
+    실시간 실행은 품목을 찾지 않으므로 정확한 종목 코드만 받는다."""
+    reg, fake, _, feeds = make_rt_registry(tmp_path)
+    with pytest.raises(StartRefused, match=why) as e:
+        reg.start(spec)
+    assert "품목 뿌리는 받지 않습니다" in str(e.value)
+    assert feeds == [] and not (tmp_path / "pyruns").exists() and fake.orders == []
+
+
+def test_시험의_registry_싱글턴도_실제_마스터를_읽지_않는다():
+    """conftest 가 세우는 `registry()` 자리의 종목 찾기는 거부하는 가짜 — 사용자의 `~/NHFutures/master` 를 읽지 않게."""
+    from backend.team_pyrun import registry as registry_lib
+    assert registry_lib.registry()._find is no_master_find
 
 
 def test_같은_MKU_주문_실행은_1분봉·실시간_통틀어_하나(tmp_path):

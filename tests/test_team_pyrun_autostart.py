@@ -288,6 +288,24 @@ def test_라우트_만들기_목록_다시_켜기_지우기(api):
     assert c.delete(f"/api/team/pyrun/schedules/{sid}").status_code == 404
 
 
+def test_막히지_않은_예약을_다시_켜도_앞선_실행_연결은_그대로(api):
+    """「다시 켜기」는 막힌 예약에만 뜻이 있다 — 앞선 실행이 「확인 필요」로 끝났지만 다음 날 첫 시도 전이라 아직 안 막힌
+    예약에 눌러도 앞선 실행 연결(`last_run_id`)을 끊지 않는다. 다음 날 아침 첫 시도가 그 끝을 보고 막는다."""
+    c, sch, reg, clock = api
+    sid = c.post("/api/team/pyrun/schedules", json={"file": "mku.py", "mode": "orders"}).json()["id"]
+    move(clock, "082000", TUE)
+    assert sch.tick() == ["run1"]
+    reg.runs["run1"].state, reg.runs["run1"].ended_reason = "끝", "장 끝 · 정리 안 함 — 확인 필요: 잔고 불일치"
+    before = sch.list()[0]
+    assert before["blocked"] is None and before["last_run_id"] == "run1"
+    r = c.post(f"/api/team/pyrun/schedules/{sid}/resume")
+    assert r.status_code == 200 and r.json()["last_run_id"] == "run1"
+    assert sch.list()[0] == before                              # 아무것도 바꾸지 않음
+    move(clock, "082000", WED)
+    assert sch.tick() == [] and len(reg.calls) == 1             # 다음 날 첫 시도 — 앞선 실행의 끝을 보고 막음
+    assert sch.list()[0]["blocked"]
+
+
 def test_라우트는_다른_사이트_요청을_받지_않는다(api):
     c, *_ = api
     r = c.post("/api/team/pyrun/schedules", json={"file": "mku.py", "mode": "paper"},

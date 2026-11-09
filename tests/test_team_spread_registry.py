@@ -17,6 +17,7 @@ from backend.team_spread.registry import SpreadRegistry
 from backend.team_spread.run import SHUTDOWN_HOLDING, SpreadSpec
 from tests.test_team_pyrun_live import STRATEGY_SRC, SYM, at
 from tests.test_team_pyrun_live import FakeApi as PyFakeApi
+from tests.test_team_pyrun_live_overseas import no_master_find
 from tests.test_team_spread_run import FAST, NOW, ROWS, Api, Clock, FakeFeed, until
 
 PAIR = 'LEGS = {"ho": "HO", "rb": "RB"}\ndef run(ctx):\n    while ctx.running():\n        ctx.sleep(1)\n'
@@ -139,7 +140,8 @@ def test_파이썬_전략이_주문_중인_종목은_스프레드가_거부(tmp_
     (pfolder / "fake.py").write_text(STRATEGY_SRC, encoding="utf-8")
     cross = threading.RLock()
     py = PyRegistry(tmp_path / "pyruns", pfolder, now=lambda: at("085000"),
-                    active_env=lambda: "paper", start_thread=False, api_module=pyapi, sleep=lambda s: None, cross_lock=cross)
+                    active_env=lambda: "paper", start_thread=False, api_module=pyapi, sleep=lambda s: None, cross_lock=cross,
+                    find=no_master_find)
     reg, api = make(tmp_path, other_busy=lambda s: "파이썬 점유" if py.busy_sym(s) else None, cross=cross,
                     **{"u.py": USD})
     assert py.start(RunSpec("fake.py", "orders", None))["sym"] == SYM
@@ -166,7 +168,8 @@ def test_스프레드가_주문_중인_종목은_파이썬_전략이_거부(tmp_
     reg._runs["stub"] = Stub()
     py = PyRegistry(tmp_path / "pyruns", pfolder, now=lambda: at("085000"), active_env=lambda: "paper",
                     start_thread=False, api_module=pyapi, sleep=lambda s: None,
-                    other_busy=lambda s: "스프레드 점유" if reg.busy_sym(s) else None, cross_lock=reg._cross)
+                    other_busy=lambda s: "스프레드 점유" if reg.busy_sym(s) else None, cross_lock=reg._cross,
+                    find=no_master_find)
     with pytest.raises(StartRefused, match="스프레드 점유"):
         py.start(RunSpec("fake.py", "orders", None))
     assert not (tmp_path / "pyruns").exists() or list((tmp_path / "pyruns").iterdir()) == []
@@ -179,7 +182,7 @@ def test_pyrun_갈고리가_없으면_동작_그대로(tmp_path):
     pfolder.mkdir()
     (pfolder / "fake.py").write_text(STRATEGY_SRC, encoding="utf-8")
     py = PyRegistry(tmp_path / "pyruns", pfolder, now=lambda: at("085000"), active_env=lambda: "paper",
-                    start_thread=False, api_module=PyFakeApi(), sleep=lambda s: None)
+                    start_thread=False, api_module=PyFakeApi(), sleep=lambda s: None, find=no_master_find)
     assert py.start(RunSpec("fake.py", "orders", None))["state"] == "대기"
     assert py.busy_sym(SYM) and py.busy_sym("ZZZ") is None
 

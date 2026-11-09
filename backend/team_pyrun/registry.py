@@ -13,9 +13,10 @@
     resolve_product  종목 칸(품목 뿌리·종목 코드) → `Leg` (`find`, 기본 `products.find_product`). 매일 자동 시작도 씀
 
 시작 거부(`StartRefused`) — 폴더를 만들기 **전에** 걸리는 것(주말·끝 시각 뒤·모의 환경 아님·같은 종목 주문 실행·
-이상한 파일/종목 이름·찾지 못한 종목·종목의 시장(또는 틱·틱가치)과 전략 틱이 맞지 않음·신호 종목 규칙)은
-폴더를 남기지 않고 메시지만 돌려줍니다. 폴더를 만든 **뒤** `prepare()` 에서 걸리는 것(시작 잔고·틱 불일치 등)은 `run.json`
-(상태 「끝」, 까닭 「시작 거부: …」)이 남습니다.
+이상한 파일/종목 이름·찾지 못한 종목·종목의 시장(또는 틱·틱가치)과 전략 틱이 맞지 않음·신호 종목 규칙·실시간 종목 칸의
+품목 뿌리·계획만으로 보이는 거부 `live.plan_refusal`)은 폴더를 남기지 않고 메시지만 돌려줍니다. 폴더를 만든 **뒤**
+`prepare()` 에서 걸리는 것(시작 잔고·틱 불일치·07:00 에 걸친 시작 등)은 `run.json`(상태 「끝」, 까닭 「시작 거부: …」)이
+남습니다.
 
 | 규칙 | 1분봉(`LiveRun`) | 실시간(`RealtimeRun`) |
 |---|---|---|
@@ -23,8 +24,9 @@
 | 주말 | 거부 — 실행의 날짜로(자정 넘는 전략은 거래일: 토요일 새벽 = 금요일) | 거부 (달력 날짜) |
 | 모의 환경 아님 | `orders` 거부 (`paper` 는 됨) | 같음 |
 | 끝 시각 뒤 | 실행 끝(`run_plan(...).end`) — 국내 15:31 · 해외 `flatten_at` + 5분, 실행의 시계로 | 전략 `flatten_at` + 5분(해외 23:55 를 넘지 않음, 없으면 23:55) |
-| 주문 종목(`sym`) | 빈칸 · `A75…`/`MKU…` 코드(지금 길) · 품목 뿌리나 다른 코드(종목 찾기 — 아래) | `MKU…` 만 (전략 TICK 이 MKU 틱이어야) |
-| 신호 종목(`signal_sym`) | 주면 거부 (1분봉은 안 씀) | `A75…` 만, 빈칸(None·"") = 국내 최근월물 |
+| 주문 종목(`sym`) | 빈칸 · `A75…`/`MKU…` 코드(지금 길) · 품목 뿌리나 다른 코드(종목 찾기 — 아래) | `MKU…` 종목 코드만 — 뿌리 `MKU` 는 거부 (전략 TICK 이 MKU 틱이어야) |
+| 신호 종목(`signal_sym`) | 주면 거부 (1분봉은 안 씀) | `A75…` 종목 코드만(뿌리 `A75` 는 거부), 빈칸(None·"") = 국내 최근월물 |
+| 계획만으로 보이는 거부 | `live.plan_refusal` — 국내 자정 넘음·MKU 아닌 품목의 빠진 장 시간 칸·해외 끝 07:00 넘음 (끝 시각 검사 앞) | — |
 | 같은 종목 모의 계좌 실행 | 주문 종목 하나에 하나 — 두 종류를 통틀어 | 같음 (신호 종목은 키가 아님) |
 
 **1분봉 실행의 종목 칸(설계 4.1)** — 세 갈래, 모두 폴더·실행 조회 전에 정합니다.
@@ -44,8 +46,12 @@
 (손절 수·들어간 개장)이 이 날짜입니다. 자정을 넘지 않는 전략은 달력 그대로라 지금과 같습니다. 그래서 주말 거부는 전략을
 불러온 뒤에 봅니다. 실시간 실행은 달력 날짜 그대로입니다.
 
-**장 판정** — 1분봉 실행에 `judge`·`day_end` 를 그대로 넘깁니다(`LiveRun(judge=, day_end=)`). 시험이 직접 만드는
-`Registry` 는 None(지금 규칙), 앱의 `registry()` 만 운영자 판정(`opening.default_judge`·`default_day_end`)을 꽂습니다.
+**장 판정** — 1분봉 실행에 `judge`·`day_end`·`master_knows` 를 그대로 넘깁니다(`LiveRun(judge=, day_end=, master_knows=)`).
+시험이 직접 만드는 `Registry` 는 None(지금 규칙), 앱의 `registry()` 만 운영자 판정(`opening.default_judge`·`default_day_end`)과
+마스터 확인(`opening.default_master_knows` — 판정이 종목을 모를 때 거부 글을 가름)을 꽂습니다.
+
+**07:00 에 걸친 시작** — 폴더 이름·앞선 손절 수는 여기서 센 거래일로 정하고, 그 거래일을 `LiveRun(trading_date=)` 로
+넘깁니다. 실행 준비가 센 거래일이 다르면(06:59:58 에 시작해 준비가 07:00:01) 준비가 거부합니다.
 
 **같은 종목 모의 계좌 실행은 하나** — 키는 실행이 **주문하는 종목**(`order_sym`)이고 실행기 종류(1분봉·실시간)와
 상관없습니다. 실시간 실행이 시세로만 보는 종목(leadlag 의 KRX)은 키가 아닙니다.
@@ -99,10 +105,10 @@ from backend.team_pyrun import opening, products
 from backend.team_pyrun.apilog import ApiLog, bind, purpose
 from backend.team_pyrun.broker import error_text
 from backend.team_pyrun.journal import Journal, count_stops, entered_windows, summarize, write_summary
-from backend.team_pyrun.live import LiveRun, RunSpec, StartRefused, run_market, run_plan
+from backend.team_pyrun.live import LEGLESS_PRODUCT, LiveRun, RunSpec, StartRefused, plan_refusal, run_market, run_plan
 from backend.team_pyrun.loader import Loaded, LoadError, load, strategies_dir
 from backend.team_pyrun.markets import DOMESTIC, OVERSEAS, Market, MarketAdapter, adapter_for, market_of
-from backend.team_pyrun.opening import DayEnd, Judge
+from backend.team_pyrun.opening import DayEnd, Judge, MasterKnows
 from backend.team_pyrun.products import account_market, strategy_tick_refusal
 from backend.team_pyrun.realtime import RealtimeRun, _end_at, default_feed_factory
 from backend.team_pyrun.tradeday import clock_text
@@ -158,14 +164,15 @@ class Registry:
                  feed_factory: Callable[..., Any] = default_feed_factory,
                  other_busy: Callable[[str], str | None] | None = None, cross_lock: Any = None,
                  judge: Judge | None = None, day_end: DayEnd | None = None,
-                 find: Callable[..., Leg] = products.find_product):
+                 find: Callable[..., Leg] = products.find_product, master_knows: MasterKnows | None = None):
         # 팀: 스프레드 탭과 「같은 종목 모의 계좌 실행은 하나」를 통틀어 지키는 갈고리 — 없으면 동작은 그대로.
         #   other_busy(sym) = 다른 쪽이 그 종목을 주문 중이면 거부 글, 아니면 None (다른 쪽 잠금은 잡지 않는다)
         #   cross_lock = 두 쪽이 검사+등록을 한 줄로 서게 하는 공용 잠금 (자기 잠금 → 공용 잠금 순서)
         self._other_busy, self._cross = other_busy, cross_lock or contextlib.nullcontext()
-        # 1분봉 실행에 그대로 넘기는 장 판정·해외 거래일 끝(None = 지금 규칙, 앱의 `registry()` 는 운영자 판정)과
-        # 종목 칸 찾기(`products.find_product` — 시험은 가짜)
+        # 1분봉 실행에 그대로 넘기는 장 판정·해외 거래일 끝·판정이 모를 때 글을 가르는 마스터 확인(None = 지금 규칙,
+        # 앱의 `registry()` 는 운영자 판정·마스터)과 종목 칸 찾기(`products.find_product` — 시험은 가짜)
         self._judge, self._day_end, self._find = judge, day_end, find
+        self._master_knows = master_knows
         self.root, self.strategies = Path(root), Path(strategies)
         self._now, self._active_env, self._start_thread = now, active_env, start_thread
         self._api, self._sleep = api_module, sleep
@@ -212,6 +219,9 @@ class Registry:
                 signal_market = None
             if signal_market is not DOMESTIC:
                 raise StartRefused(f"신호 종목(KRX)은 미국달러선물(A75…)이어야 합니다: {signal_sym}")
+            if not legacy_code(signal_sym):     # 뿌리 `A75` 는 종목이 아니다 — 원문 구독·시세가 그 이름으로 가지 않게
+                raise StartRefused("신호 종목(KRX)은 미국달러선물 종목 코드(A756B000 등)를 적어야 합니다 — "
+                                   "품목 뿌리는 받지 않습니다")
         try:
             loaded = load(self.strategies, spec.file)
         except LoadError as e:
@@ -252,7 +262,8 @@ class Registry:
                 else:
                     run = LiveRun(run_id, self.root / run_id, loaded, spec, api_module=self._api, now=self._now,
                                   sleep=self._sleep, stops_before=stops_before, windows_before=windows_before,
-                                  leg=leg, judge=self._judge, day_end=self._day_end)
+                                  leg=leg, judge=self._judge, day_end=self._day_end,
+                                  master_knows=self._master_knows, trading_date=today)
             except Exception as e:
                 shutil.rmtree(self.root / run_id, ignore_errors=True)
                 raise StartRefused(f"전략을 만들지 못했습니다 — {type(e).__name__}: {e}") from e
@@ -296,6 +307,10 @@ class Registry:
                 market_of(spec.sym)
             except ValueError as e:
                 raise StartRefused("미국달러선물(A75…)·SGX 미니 원달러(MKU…) 종목만 실행할 수 있습니다") from e
+            if not legacy_code(spec.sym):
+                # 실시간 길은 품목을 찾지 않는다 — 뿌리 `MKU` 가 그대로 주문 종목이 되면 주문이 「MKU」로 나가고
+                # 잔고 줄(`MKUX26`)과 맞지 않아 잔고 관문이 보지 못한다
+                raise StartRefused("실시간 실행은 MKU 종목 코드(MKUX26 등)를 적어야 합니다 — 품목 뿌리는 받지 않습니다")
         market, refusal = run_market(spec.sym, loaded)
         if refusal:                                     # 시장 가드 — 폴더도 조회도 없이
             raise StartRefused(refusal)
@@ -316,8 +331,9 @@ class Registry:
         지금 길(다리 없음 — `run_market`·`_nearest`, 틱은 `prepare` 의 서버 틱 확인): 종목 칸이 비었거나(전략 TICK 의 시장)
         정확한 미국달러선물·MKU 종목 코드(`legacy_code` — 지금 종목 고르기가 보내는 것. 마스터·품목 세부정보를 새로 읽지
         않게). 그 밖(품목 뿌리 — `A75`·`MKU` 포함 — 와 다른 종목 코드)은 `resolve_product` 로 찾은 `Leg` 가 실행의 종목이고,
-        전략 `TICK`·`TICK_VALUE` 가 그 종목과 다르면 거부한다. 주말·「끝 시각 뒤」는 실행의 시계(`run_plan(...).clock`)
-        — 자정을 넘는 전략은 거래일(07:00 에 바뀜)과 거래일 시계(07:00 전 +24)로, 아니면 달력 그대로."""
+        전략 `TICK`·`TICK_VALUE` 가 그 종목과 다르면 거부한다. 계획만으로 보이는 거부(`live.plan_refusal`)를 주말·끝 시각
+        검사보다 먼저 본다. 주말·「끝 시각 뒤」는 실행의 시계(`run_plan(...).clock`) — 자정을 넘는 전략은 거래일(07:00 에
+        바뀜)과 거래일 시계(07:00 전 +24)로, 아니면 달력 그대로. 돌려준 거래일은 `LiveRun(trading_date=)` 로 넘긴다."""
         leg: Leg | None = None
         if spec.sym and not legacy_code(spec.sym):
             leg = self.resolve_product(spec.sym)        # 마스터·품목 세부정보 조회 (주문과 무관)
@@ -334,6 +350,11 @@ class Registry:
             plan = run_plan(loaded, market)
         except Exception as e:      # Params 시각 칸이 이상함 — 실행 생성에서와 같은 거부로, 폴더 전에
             raise StartRefused(f"전략을 만들지 못했습니다 — {type(e).__name__}: {e}") from e
+        # 계획만으로 보이는 거부(국내 자정 넘음·MKU 아닌 품목의 빠진 장 시간 칸·07:00 넘는 끝) — 실행 준비와 같은 글로,
+        # 끝 시각 검사보다 먼저(빠진 칸을 시장 값으로 채운 끝 시각 글이 진짜 까닭을 가리지 않게)·폴더 전에
+        product = leg.product if leg is not None else LEGLESS_PRODUCT[market.id][0]
+        if (why := plan_refusal(loaded, market, product, plan)):
+            raise StartRefused(why)
         today, clock = plan.clock.label(now)
         if datetime.strptime(today, "%Y%m%d").weekday() >= 5:
             raise StartRefused(self.WEEKEND)
@@ -589,15 +610,15 @@ _registry_lock = threading.Lock()
 def registry() -> Registry:
     """앱에 하나뿐인 `Registry`(`state_dir()/pyruns`, 전략 폴더). 처음 부를 때 만든다.
 
-    1분봉 실행의 장 판정은 여기서만 운영자 시간표(`opening.default_judge`·`default_day_end`)를 꽂는다 — 시험이 직접 만드는
-    `Registry` 는 판정 없이(지금 규칙) 돈다(판정 R2)."""
+    1분봉 실행의 장 판정은 여기서만 운영자 시간표(`opening.default_judge`·`default_day_end`)와 마스터 확인
+    (`opening.default_master_knows`)을 꽂는다 — 시험이 직접 만드는 `Registry` 는 판정 없이(지금 규칙) 돈다(판정 R2)."""
     global _registry
     with _registry_lock:
         if _registry is None:
             _registry = Registry(storage.state_dir() / "pyruns", strategies_dir(),
                                  other_busy=_spread_busy, cross_lock=CROSS_LOCK,
                                  judge=opening.default_judge, day_end=opening.default_day_end,
-                                 find=products.find_product)
+                                 find=products.find_product, master_knows=opening.default_master_knows)
         return _registry
 
 

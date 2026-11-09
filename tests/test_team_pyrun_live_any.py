@@ -9,7 +9,7 @@ import pytest
 
 from backend.sessions.hours import KST
 from backend.team_pyrun import tradeday
-from backend.team_pyrun.live import LiveRun, RunPlan, RunSpec, StartRefused, run_plan
+from backend.team_pyrun.live import LiveRun, RunPlan, RunSpec, StartRefused, plan_refusal, run_plan
 from backend.team_pyrun.loader import load
 from backend.team_pyrun.markets import DOMESTIC, OVERSEAS, paper_fee_of, run_end
 from backend.team_spread.legs import Leg
@@ -91,7 +91,7 @@ def write(tmp_path, src, file):
 
 
 def make_any(tmp_path, *, leg=HO, src=HO_SRC, file="fakeho.py", mode="paper", start="085000", fake=None,
-             judge=None, day_end=None, sym=None):
+             judge=None, day_end=None, sym=None, **kw):
     loaded = write(tmp_path, src, file)
     clock = {"now": at(start)}
     if fake is None:
@@ -102,7 +102,7 @@ def make_any(tmp_path, *, leg=HO, src=HO_SRC, file="fakeho.py", mode="paper", st
     out = tmp_path / "run"
     run = LiveRun(f"{TODAY}_{loaded.name}_{mode}", out, loaded, RunSpec(file=file, mode=mode, sym=sym),
                   api_module=fake, now=lambda: clock["now"], sleep=lambda s: None,
-                  leg=leg, judge=judge, day_end=day_end)
+                  leg=leg, judge=judge, day_end=day_end, **kw)
     return run, fake, out, clock
 
 
@@ -261,6 +261,35 @@ def test_판정이_종목을_모르면_시작_거부_조회_주문_없음(tmp_pa
         assert judge.calls and judge.calls[0][:2] == ("overseas", "HOZ26")
 
 
+def test_판정이_종목을_모르고_마스터에도_그_종목_줄이_없으면_마스터_글로_거부(tmp_path):
+    """국내 A75 를 앱이 뜬 직후(운영자 종목 마스터를 아직 못 읽음) 시작 — 판정은 `unknown`. 까닭을 「장 시간표」가 아니라
+    「종목 마스터」로 적는다. 어느 쪽이든 거부(모르면 거래하지 않는다)."""
+    asked = []
+
+    def unread(market, sym):
+        asked.append((market, sym))
+        return False
+
+    def boom(market, sym):
+        raise RuntimeError("마스터 깨짐")
+
+    for name, knows in (("unread", unread), ("boom", boom)):
+        judge = FakeJudge(source="unknown", state="closed")
+        run, fake, out, clock = make_any(tmp_path / name, leg=None, src=STRATEGY_SRC, file="fake.py", mode="orders",
+                                         fake=FakeApi(), sym="A756B000", judge=judge, master_knows=knows)
+        with pytest.raises(StartRefused, match="^종목 마스터를 아직 읽지 못했습니다 — 잠시 뒤 다시 시작하세요$"):
+            run.prepare()
+        assert fake.calls == [] and fake.orders == []
+        assert read_json(out / "run.json")["ended_reason"] == "시작 거부: 종목 마스터를 아직 읽지 못했습니다 — 잠시 뒤 다시 시작하세요"
+    assert asked == [("domestic", "A756B000")]
+    # 마스터는 그 종목을 아는데 시간표가 모르면 지금 글 그대로
+    judge = FakeJudge(source="unknown", state="closed")
+    run, fake, out, clock = make_any(tmp_path / "known", leg=None, src=STRATEGY_SRC, file="fake.py", fake=FakeApi(),
+                                     sym="A756B000", judge=judge, master_knows=lambda market, sym: True)
+    with pytest.raises(StartRefused, match="장 시간표에 이 종목이 없습니다"):
+        run.prepare()
+
+
 def test_판정이_예외면_시작_거부(tmp_path):
     judge = FakeJudge()
     judge.error = RuntimeError("시간표 없음")
@@ -401,6 +430,22 @@ def test_해외_실행_끝이_다음_날_07시를_넘으면_거부(tmp_path):
     with pytest.raises(StartRefused, match=r"실행 끝\(07:03 \(\+1\)\)이 다음 날 07:00 을 넘습니다 — flatten_at 을 당기세요"):
         run.prepare()
     assert fake.calls == []
+
+
+def test_plan_refusal_도_해외_실행_끝이_다음_날_07시를_넘으면_같은_글(tmp_path):
+    """registry·매일 자동 시작이 폴더·예약 전에 같은 글로 거부하게 — 실행 준비와 한 곳(`plan_refusal`)."""
+    late = (HO_SRC.replace('session_start: str = "090000"', 'session_start: str = "223000"')
+            .replace('session_end: str = "233500"', 'session_end: str = "065900"')
+            .replace('entry_start: str = "090000"', 'entry_start: str = "223000"')
+            .replace('entry_end: str = "230000"', 'entry_end: str = "040000"'))
+    loaded = write(tmp_path / "late", late.replace('flatten_at: str = "233000"', 'flatten_at: str = "065800"'), "f.py")
+    plan = run_plan(loaded, OVERSEAS)
+    assert plan.end == "310300"
+    assert plan_refusal(loaded, OVERSEAS, "HO", plan) == ("실행 끝(07:03 (+1))이 다음 날 07:00 을 넘습니다 — "
+                                                          "flatten_at 을 당기세요")
+    edge = write(tmp_path / "edge", late.replace('flatten_at: str = "233000"', 'flatten_at: str = "065500"'), "f.py")
+    assert run_plan(edge, OVERSEAS).end == "310000"
+    assert plan_refusal(edge, OVERSEAS, "HO", run_plan(edge, OVERSEAS)) is None     # 07:00 정각은 넘지 않음
 
 
 # ---------------------------------------------------------------- 국내 다리

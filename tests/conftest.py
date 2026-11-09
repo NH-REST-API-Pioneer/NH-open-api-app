@@ -238,16 +238,19 @@ class _파이썬_전략_api_막힘:
 
 @pytest.fixture(autouse=True)
 def _파이썬_전략_실행은_임시_자리로(tmp_path_factory, monkeypatch):
-    """팀: `registry()` 싱글턴을 시험마다 임시 폴더의 `Registry` 로 둡니다(스레드 없음, api 는 부르면 실패).
+    """팀: `registry()` 싱글턴을 시험마다 임시 폴더의 `Registry` 로 둡니다(스레드 없음, api 는 부르면 실패, 종목 찾기는
+    마스터를 읽지 않고 거부).
 
     자리를 직접 바꿔 쓰는 시험(`monkeypatch.setattr(registry, "_registry", …)`)은 그 위에 덮어쓰고,
     끝나면 이 값으로 돌아왔다가 시험이 끝날 때 원래 값으로 돌아갑니다."""
     from backend.team_pyrun import registry as registry_lib
+    # 종목 찾기도 거부하는 가짜 — 기본(`products.find_product`)은 사용자의 `~/NHFutures/master` 를 읽는다
+    from tests.test_team_pyrun_live_overseas import no_master_find
 
     자리 = tmp_path_factory.mktemp("pyrun")
     monkeypatch.setattr(registry_lib, "_registry", registry_lib.Registry(
         자리 / "pyruns", 자리 / "strategies", start_thread=False, api_module=_파이썬_전략_api_막힘(),
-        sleep=lambda _초: None))
+        sleep=lambda _초: None, find=no_master_find))
     # 팀: 매일 자동 시작도 임시 자리로 — 앱을 켜는(lifespan) 시험이 사용자 홈에 예약 파일을 쓰거나
     # 진짜 예약으로 실행을 세우지 않게. 실행 관리는 위의 임시 `Registry`.
     from backend.team_pyrun import autostart as autostart_lib

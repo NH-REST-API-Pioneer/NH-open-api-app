@@ -7,9 +7,11 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from backend.sessions.hours import KST
 from backend.team_pyrun.journal import Journal
-from backend.team_pyrun.live import LiveRun, RunSpec, _trading_clock
+from backend.team_pyrun.live import LiveRun, RunSpec, StartRefused, _trading_clock
 from backend.team_pyrun.runner import Runner, _plus_minute
 from tests.test_team_pyrun_live_any import HO, FakeHO, FakeJudge, write
 from tests.test_team_pyrun_live_overseas import MKU_SRC, FakeLive, journal, ovs_bar, read_json, texts
@@ -87,7 +89,7 @@ class NightJudge(FakeJudge):
 
 
 def make_night(tmp_path, *, src=NIGHT_SRC, file="night.py", leg=HO, mode="paper", start=(MON, "222500"),
-               judge=None, warmup=()):
+               judge=None, warmup=(), **kw):
     loaded = write(tmp_path, src, file)
     clock = {"now": when(*start)}
     fake = FakeHO(clock) if leg is not None else FakeLive(clock)
@@ -96,7 +98,7 @@ def make_night(tmp_path, *, src=NIGHT_SRC, file="night.py", leg=HO, mode="paper"
     fake.chart = list(warmup)
     out = tmp_path / "run"
     run = LiveRun(f"{start[0]}_{loaded.name}_{mode}", out, loaded, RunSpec(file=file, mode=mode, sym=None),
-                  api_module=fake, now=lambda: clock["now"], sleep=lambda s: None, leg=leg, judge=judge)
+                  api_module=fake, now=lambda: clock["now"], sleep=lambda s: None, leg=leg, judge=judge, **kw)
     return run, fake, out, clock
 
 
@@ -285,6 +287,82 @@ def test_자정_뒤_판정이_쉼이면_주문_없고_열리면_진입_판정엔
     assert run.runner.pos["entry_time"] == "251004"
     # 판정에는 거래일 시계를 실제 한국시간으로 되돌려 넘긴다(하루 늦게 묻지 않음)
     assert judge.calls and all(abs(c[2] - clock["now"]) <= timedelta(seconds=1) for c in judge.calls)
+
+
+class ClosedFrom(FakeJudge):
+    """`since` 부터 닫힘(`closed`), 그 전은 열림 — 실제 시각으로 답한다."""
+
+    def __init__(self, since: datetime):
+        super().__init__()
+        self.since = since
+
+    def __call__(self, market, sym, now):
+        self.calls.append((market, sym, now))
+        return {"state": "closed" if now >= self.since else "open", "source": "table"}
+
+
+class UnknownBetween(FakeJudge):
+    """[since, until) 동안 종목을 모르는 판정(`source` unknown), 나머지는 열림."""
+
+    def __init__(self, since: datetime, until: datetime):
+        super().__init__()
+        self.since, self.until = since, until
+
+    def __call__(self, market, sym, now):
+        self.calls.append((market, sym, now))
+        if self.since <= now < self.until:
+            return {"state": "closed", "source": "unknown"}
+        return {"state": "open", "source": "table"}
+
+
+def test_거래일이_지나_깬_보유_모의_계좌_실행은_판정이_닫혔으면_정리하지_않고_확인_필요(tmp_path):
+    """R8 — 자정 넘는 모의 계좌 실행이 보유한 채 잠들었다 다음 날 08:00(거래일이 지남)에 깸. 그때 판정이 닫힘이면
+    정리 주문을 내지 않고 「확인 필요」로 끝낸다(다음 날 자동 시작도 막힘)."""
+    from backend.team_pyrun.autostart import blocked_reason, summary_reason
+    src = NIGHT_SRC.replace("hold_min: int = 45", "hold_min: int = 600")
+    run, fake, out, clock = make_night(tmp_path, src=src, mode="orders", judge=ClosedFrom(when(TUE, "050000")))
+    run.prepare()
+    walk(run, fake, clock, when(MON, "223004"), when(TUE, "000004"))
+    assert run.runner.pos is not None and [o[1] for o in fake.orders] == ["buy"]
+    tick(run, fake, clock, when(TUE, "080000"), bar=False)
+    assert run.state == "끝" and [o[1] for o in fake.orders] == ["buy"]          # 정리 주문 없음
+    assert run.ended_reason.startswith("장 끝 · 정리 안 함 — 확인 필요: 장 닫힘(장 마감) 끝 — 정리 주문을 내지 않음")
+    assert run.runner.pos is not None and run.runner.trades == []
+    s = read_json(out / "summary.json")
+    assert "정리 주문을 내지 않음 · 보유 +1" in s["halted"]
+    assert blocked_reason(run.state, run.ended_reason) and summary_reason(s)
+
+
+def test_자정_뒤_판정이_종목을_모르게_되면_그동안_주문_없고_기록은_한_번(tmp_path):
+    judge = UnknownBetween(when(TUE, "000000"), when(TUE, "003000"))
+    run, fake, out, clock = make_night(tmp_path, mode="orders", judge=judge)
+    run.prepare()
+    run.runner.strat.script = {"240500": "buy"}       # 00:05 봉 (거래일 시계) — 판정이 종목을 모르는 동안
+    walk(run, fake, clock, when(MON, "223004"), when(TUE, "002904"))
+    assert fake.orders == [] and run.runner.pending is not None
+    lines = texts(out)
+    assert lines.count("장 시간표 모름 — 주문 멈춤") == 1
+    tick(run, fake, clock, when(TUE, "003004"))
+    assert [o[1] for o in fake.orders] == ["buy"] and fake.order_clocks == ["003004"]
+    lines = texts(out)
+    assert lines.count("장 시간표 모름 — 주문 멈춤") == 1 and lines.count("장 시간표 다시 확인 — 주문 받음") == 1
+
+
+def test_registry_가_정한_거래일과_준비_때_거래일이_다르면_거부(tmp_path):
+    """07:00 에 걸친 시작 — 실행 관리는 월요일 거래일로 폴더·손절 수를 정했는데 준비는 화요일 07:00:01 이면 거부(조회·주문 없음)."""
+    src = (NIGHT_SRC.replace('session_end: str = "050000"', 'session_end: str = "065900"')
+           .replace('flatten_at: str = "045500"', 'flatten_at: str = "065500"'))
+    run, fake, out, clock = make_night(tmp_path, src=src, mode="orders", start=(TUE, "070001"), trading_date=MON)
+    with pytest.raises(StartRefused, match="^거래일이 바뀌는 07:00 에 걸쳐 시작했습니다 — 다시 시작하세요$"):
+        run.prepare()
+    assert fake.calls == [] and fake.orders == []
+    j = read_json(out / "run.json")
+    assert j["state"] == "끝" and j["ended_reason"] == "시작 거부: 거래일이 바뀌는 07:00 에 걸쳐 시작했습니다 — 다시 시작하세요"
+    # 같은 거래일이면 그대로 선다 · 주지 않으면(None) 지금처럼 스스로 셈
+    for given in (TUE, None):
+        ok, _, _, _ = make_night(tmp_path / str(given), src=src, start=(TUE, "070001"), trading_date=given)
+        ok.prepare()
+        assert ok.trading_date == TUE and ok.state == "대기"
 
 
 # ---------------------------------------------------------------- 자정을 넘지 않는 실행은 그대로

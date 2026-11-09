@@ -16,8 +16,9 @@
 **종목 칸(설계 4.6)** — 실행 관리(`registry._minute_target`)와 같은 세 갈래로 시장·품목을 정합니다(만들 때 한 번).
 빈칸은 `live.run_market`, 정확한 `A75…`·`MKU…` 코드(`registry.legacy_code`)는 지금 길(`run_market` 의 시장 가드 — 품목은 A75·MKU), 그 밖(품목
 뿌리·다른 종목 코드)은 `Registry.resolve_product` 로 찾은 `Leg` 와 틱 확인(`products.strategy_tick_refusal`). 실시간 전략은
-실행 관리처럼 빈칸·`MKU…` 코드만 받습니다. 국내 종목에 자정을 넘는 전략, MKU 아닌 품목에 장 시간 칸이 빠진 전략은
-실행 준비와 같은 글로 만들 때 거부합니다(`live.plan_refusal` — 아침마다 소리 없이 거부되지 않게).
+실행 관리처럼 빈칸·`MKU…` 코드만 받습니다. 국내 종목에 자정을 넘는 전략, MKU 아닌 품목에 장 시간 칸이 빠진 전략,
+해외 실행 끝이 다음 날 07:00 을 넘는 전략은 실행 준비와 같은 글로 만들 때 거부합니다(`live.plan_refusal` — 아침마다
+소리 없이 거부되지 않게).
 
 **「그날」은 실행의 거래일** — 예약에 `overnight`·`end`(= `live.run_plan` 의 값)를 남겨 `tradeday.RunClock(overnight)` 로
 요일·「그날 이미 세움」·「그날 건너뜀」·늦음을 셉니다. 자정을 넘는 전략은 07:00 에 거래일이 바뀌어, 금요일 거래일의 토요일
@@ -31,6 +32,7 @@
 - 앞선 실행이 「확인 필요」·「오류」로 끝났거나, `summary.json` 에 결과 모름 주문(`unresolved_order`)·멈춤(`halted`)이
   남았거나, 끝내기가 실패했거나, 기록을 못 찾으면(**모르면 막는다**) **다음 날 시작하지 않고 예약을 막아 둡니다**(`blocked`).
   화면에서 계좌를 확인한 뒤 「다시 켜기」를 눌러야 풉니다 — 그날 시작 시각이 지난 뒤 켜면 그날은 건너뜁니다(`skip_day`).
+  막히지 않은 예약에 「다시 켜기」를 보내면 아무것도 바꾸지 않습니다(앞선 실행 연결을 끊어 다음 날 확인을 건너뛰지 않게).
   앞선 실행이 아직 도는 중이면(대기·진행 중) 그날은 기다립니다.
 - 앱을 끌 때는 `Registry.close_starts()` 로 새 실행을 먼저 막고 이 루프를 멈춥니다(준비 조회 중이던 시작도 등록 전에 거부).
 - 그날 이미 세운 실행이 있으면(앱을 다시 켰더라도) 그날은 다시 세우지 않습니다 — 하루 중간에 끊긴 실행을 이어 돌리는
@@ -126,7 +128,7 @@ def _timing(loaded: Loaded, market: Market, product: str) -> tuple[str, bool, st
     Params 의 `session_start` 5분 전(실행의 시계, 07:00 보다 이르지 않게). 실시간은 지금처럼 시장 값(달력 날짜).
 
     실행 준비가 날마다 거부할 것이 계획만으로 보이면(`live.plan_refusal` — 국내에 자정 넘는 전략, MKU 아닌 품목에 빠진
-    장 시간 칸) 만들 때 같은 글로 거부한다 — 예약이 아침마다 소리 없이 거부되지 않게."""
+    장 시간 칸, 해외 실행 끝이 다음 날 07:00 을 넘음) 만들 때 같은 글로 거부한다 — 예약이 아침마다 소리 없이 거부되지 않게."""
     if loaded.kind != "minute":
         return fire_time(market), False, market.end_time
     try:
@@ -281,11 +283,16 @@ class Schedules:
             self._write(kept)
 
     def resume(self, sid: str) -> dict:
-        """막힌 예약을 푼다(사람이 계좌·기록을 확인한 뒤). 앞선 실행 연결도 끊어, 같은 끝으로 다시 막히지 않게."""
+        """막힌 예약을 푼다(사람이 계좌·기록을 확인한 뒤). 앞선 실행 연결도 끊어, 같은 끝으로 다시 막히지 않게.
+
+        **막히지 않은 예약은 아무것도 바꾸지 않고 그대로 돌려준다** — 앞선 실행이 「확인 필요」로 끝났지만 다음 날 첫 시도
+        전이라 아직 안 막힌 예약에서 연결(`last_run_id`)을 끊으면, 다음 날 첫 시도가 그 끝을 보지 않고 새 실행을 세운다."""
         with self._lock:
             items = self._read()
             for s in items:
                 if s["id"] == sid:
+                    if not s.get("blocked"):
+                        return {**s, "next_start": self._next_start(s, to_kst(self._now()))}
                     # 오늘 시작 시각이 이미 지났으면 오늘은 세우지 않는다 — 다시 켜는 순간 확인 없이 실행이 서지 않게
                     # (시작 도중 꺼진 날이면 같은 날 두 번째 실행이 되기도 한다). 장 전에 켜면 오늘 시작 시각에 선다
                     today, hhmmss = _clock(s).label(to_kst(self._now()))

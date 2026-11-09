@@ -45,9 +45,11 @@ week02 와 다른 점
 
 **실행 끝·시작 검사** (`run_plan`) — 실행 끝은 국내 15:31(모든 품목), 해외 `flatten_at` + 5분(`markets.run_end`).
 장 시각 칸이 07:00 보다 이르거나 끝이 24시를 넘으면 자정 넘는 실행(`overnight`, Params 의 07:00 전 시각에 24시간을 더함).
-조회·주문 전에 거부하는 것: 국내인데 자정 넘는 전략(국내는 주간만), MKU 가 아닌 품목인데 Params 장 시간 칸이 빠짐,
-해외 실행 끝이 다음 날 07:00 을 넘음, 판정이 종목을 모름(`known`), 해외 거래일 마지막 장 끝(`day_end`)이 `flatten_at`
-보다 이름(전략 장 시작 시각으로 물어 모르면 건너뜀). 종이 수수료는 전략 `PAPER_FEE`, 없으면 시장 값(`paper_fee_of`).
+조회·주문 전에 거부하는 것: 실행 관리가 정한 거래일(`trading_date`)과 준비 때의 거래일이 다름(07:00 에 걸쳐 시작),
+국내인데 자정 넘는 전략(국내는 주간만), MKU 가 아닌 품목인데 Params 장 시간 칸이 빠짐, 해외 실행 끝이 다음 날 07:00 을
+넘음(이 셋은 `plan_refusal` 한 곳), 판정이 종목을 모름(`known` — 글은 `opening.unknown_text`: 마스터 색인에 그 종목 줄이
+없으면 「종목 마스터를 아직 읽지 못했습니다」), 해외 거래일 마지막 장 끝(`day_end`)이 `flatten_at` 보다 이름(전략 장 시작
+시각으로 물어 모르면 건너뜀). 종이 수수료는 전략 `PAPER_FEE`, 없으면 시장 값(`paper_fee_of`).
 
 **자정을 넘는 실행(`plan.overnight`, 설계 4.4)** — 전략과 실행기가 비교하는 시각·날짜를 거래일 시계(`plan.clock`)로 적습니다.
 07:00 전 시각은 24를 더하고(00:01 → `"240100"`), 날짜는 그 거래일(자정 뒤 봉도 앞 날짜). 준비 봉·장중 봉(`RunClock.bar`),
@@ -117,7 +119,7 @@ from backend.team_pyrun.journal import Journal, summarize, write_summary
 from backend.team_pyrun.loader import Loaded
 from backend.team_pyrun.markets import (DOMESTIC, Market, adapter_for, in_break, market_of, market_of_tick,
                                         paper_fee_of, run_end)
-from backend.team_pyrun.opening import DayEnd, Judge, known, order_open, span_text
+from backend.team_pyrun.opening import DayEnd, Judge, MasterKnows, known, order_open, span_text, unknown_text
 from backend.team_pyrun.products import account_market, is_mku, strategy_tick_refusal
 from backend.team_pyrun.runner import Minute, PaperBroker, Runner, _entry_args, minute_of
 from backend.team_pyrun.tradeday import RunClock, clock_text, is_overnight
@@ -234,12 +236,17 @@ def plan_refusal(loaded: Loaded, market: Market, product: str | None, plan: RunP
     (`autostart.Schedules.create`)이 같은 글을 쓴다.
 
     - 국내 종목에 자정을 넘는 계획(07:00 전 시각이 있는 전략) — 국내는 주간만
-    - Params 에 장 시간 칸이 빠졌는데 품목이 MKU 가 아님 — 빠진 칸을 시장 시간표로 채우는 것은 MKU 만(week03 ORB)"""
+    - Params 에 장 시간 칸이 빠졌는데 품목이 MKU 가 아님 — 빠진 칸을 시장 시간표로 채우는 것은 MKU 만(week03 ORB)
+    - 해외 실행 끝이 다음 날 07:00(`tradeday.DAY_ENDS`)을 넘음 — 거래일이 바뀐 뒤까지 한 실행으로 돌지 않게
+
+    실행 관리(`registry._minute_target`)도 폴더를 만들기 전에 이것을 먼저 본다(끝 시각 검사보다 앞 — 진짜 까닭이 보이게)."""
     if market.id == "domestic" and plan.overnight:
         return "국내는 주간(08:45~15:45)만 돕니다 — 07:00 전 시각이 있는 전략은 국내 종목에 걸 수 없습니다"
     if loaded.params_missing and not is_mku(product):
         return (f"Params 에 장 시간 칸이 없습니다 ({', '.join(loaded.params_missing)}) — "
                 "이 품목은 Params 에 적어야 합니다")
+    if market.id == "overseas" and plan.end > tradeday.DAY_ENDS:
+        return f"실행 끝({clock_text(plan.end)})이 다음 날 07:00 을 넘습니다 — flatten_at 을 당기세요"
     return None
 
 
@@ -302,7 +309,8 @@ class LiveRun:
                  api_module: ModuleType | Any = default_api, now: Callable[[], datetime] = now_kst,
                  sleep: Callable[[float], None] = time.sleep, stops_before: int = 0,
                  windows_before: tuple | list | set | frozenset = (), leg: Leg | None = None,
-                 judge: Judge | None = None, day_end: DayEnd | None = None):
+                 judge: Judge | None = None, day_end: DayEnd | None = None,
+                 master_knows: MasterKnows | None = None, trading_date: str | None = None):
         self.run_id, self.folder, self.loaded, self.spec = run_id, Path(folder), loaded, spec
         self.now, self.sleep = now, sleep
         self.kind = "minute"
@@ -313,6 +321,11 @@ class LiveRun:
         self.leg = leg
         #: 장 판정(`opening.Judge`)·해외 거래일 끝(`opening.DayEnd`). judge 가 None 이면 지금 규칙(고정 휴장 `in_break`)
         self.judge, self.day_end = judge, day_end
+        #: 판정이 종목을 모를 때 거부 글을 가르는 마스터 확인(`opening.MasterKnows`). None 이면 시간표 글 그대로
+        self.master_knows = master_knows
+        #: 실행 관리가 이 실행의 폴더 이름·앞선 손절 수를 정한 거래일(`registry._minute_target`). 주면 준비 때의 거래일과
+        #: 같아야 한다(07:00 에 걸쳐 시작하면 거부). None 이면 지금처럼 준비 때 스스로 센다
+        self._expected_date = trading_date
         # 팀: 시장과 그 어댑터 — 1분봉·현재가·틱·브로커·예수금은 전부 이 어댑터로
         if leg is not None:
             # 계좌는 종목을 따라(국내/해외), 해외 조회는 그 종목의 거래소·통화로. 틱은 종목 찾기가 이미 확인했다
@@ -400,14 +413,16 @@ class LiveRun:
         self._clock_date = today
         market = self.market
         # 0. 이 실행기로 돌릴 수 있는 전략인가 — 조회·주문 전에 거부
+        if self._expected_date is not None and today != self._expected_date:
+            # 실행 관리가 앞 거래일로 폴더·손절 수를 정한 뒤 거래일이 바뀌었다 — 다른 날의 기록으로 돌지 않게
+            boundary = "07:00" if plan.overnight else "00:00"
+            raise StartRefused(f"거래일이 바뀌는 {boundary} 에 걸쳐 시작했습니다 — 다시 시작하세요")
         if loaded.kind != "minute":
             raise StartRefused("실시간 전략(on_krx·on_quote)은 1분봉 실행으로 시작할 수 없습니다")
         if self._market_refusal:        # 시장 가드·틱 확인 — 조회 전에 (모듈 문서 「시장 고르기」)
             raise StartRefused(self._market_refusal)
-        if (why := plan_refusal(loaded, market, self.product, plan)):
+        if (why := plan_refusal(loaded, market, self.product, plan)):     # 국내 자정 넘음·빠진 칸·07:00 넘는 끝
             raise StartRefused(why)
-        if market.id == "overseas" and plan.end > tradeday.DAY_ENDS:
-            raise StartRefused(f"실행 끝({clock_text(plan.end)})이 다음 날 07:00 을 넘습니다 — flatten_at 을 당기세요")
         # 1. 어디로·무엇을
         j.write("event", text=f"서버 paper · 주문 {'모의계좌' if self.orders else '종이'}")
         if market is not DOMESTIC:
@@ -531,11 +546,12 @@ class LiveRun:
                 day.in_position = False     # 되살리기만 — 이 실행은 보유가 없다
 
     def _check_timetable(self, sym: str, now: datetime) -> None:
-        """시작 때 장 판정 (설계 4.3) — 시간표가 이 종목을 모르면 거부(조용히 주문 안 하는 실행이 서지 않게).
+        """시작 때 장 판정 (설계 4.3) — 시간표가 이 종목을 모르면 거부(조용히 주문 안 하는 실행이 서지 않게). 글은
+        `opening.unknown_text` — 운영자 마스터 색인에 그 종목 줄이 없으면(앱이 뜬 직후) 「종목 마스터를 아직 읽지 못했습니다」.
         해외는 그 거래일 마지막 장 끝이 `flatten_at` 보다 이르면 거부. 장 시작 시각이 거래 창 밖이라 끝을 모르면(None) 건너뜀."""
         mid = self.market.id
         if self.judge is not None and not known(self.judge, mid, sym, now):
-            raise StartRefused("장 시간표에 이 종목이 없습니다 — 화면 「장 시간」에서 확인하세요")
+            raise StartRefused(unknown_text(self.master_knows, mid, sym))
         if mid != "overseas" or self.day_end is None:
             return
         p, date = self.runner.p, self.trading_date or self._today

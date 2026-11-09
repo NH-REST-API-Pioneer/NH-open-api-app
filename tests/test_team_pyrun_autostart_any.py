@@ -259,6 +259,19 @@ def test_MKU_아닌_품목에_장_시간_칸이_빠진_전략은_만들_때_거�
     assert "session_start" in str(e.value) and sch.list() == []
 
 
+def test_해외_실행_끝이_다음_날_07시를_넘는_전략은_만들_때_거부(tmp_path):
+    sch, reg, clock = setup(tmp_path)
+    late = DAWN_SRC.replace('session_end: str = "050000"', 'session_end: str = "065900"')
+    (reg.strategies / "past7.py").write_text(late.replace('flatten_at: str = "045500"', 'flatten_at: str = "065800"'),
+                                             encoding="utf-8")
+    with pytest.raises(ScheduleError, match=r"실행 끝\(07:03 \(\+1\)\)이 다음 날 07:00 을 넘습니다 — flatten_at 을 당기세요"):
+        sch.create("past7.py", "paper", sym="HO")                        # 실행 준비와 같은 글 (`live.plan_refusal`)
+    assert sch.list() == []
+    (reg.strategies / "edge7.py").write_text(late.replace('flatten_at: str = "045500"', 'flatten_at: str = "065500"'),
+                                             encoding="utf-8")
+    assert sch.create("edge7.py", "paper", sym="HO")["end"] == "310000"  # 07:00 정각은 넘지 않음
+
+
 # ---------------------------------------------------------------- 라우트
 @pytest.fixture
 def api(tmp_path, monkeypatch):

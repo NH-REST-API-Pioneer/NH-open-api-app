@@ -29,7 +29,18 @@ HO_NIGHT_SRC = (HO_SRC.replace('NAME = "fakeho"', 'NAME = "fakehon"')
                 .replace('entry_end: str = "230000"', 'entry_end: str = "040000"')
                 .replace('flatten_at: str = "233000"', 'flatten_at: str = "045500"'))
 KOSPI_FILE_SRC = KOSPI_SRC.replace('NAME = "fake"', 'NAME = "fakekospi"')
+#: 07:00 에 끝나는 자정 넘는 HO 전략 — 06:55 정리 → 실행 끝 07:00(거래일 시계 `"310000"`, 넘지 않음)
+HO_DAWN_SRC = (HO_NIGHT_SRC.replace('NAME = "fakehon"', 'NAME = "fakehod"')
+               .replace('session_end: str = "050000"', 'session_end: str = "065900"')
+               .replace('flatten_at: str = "045500"', 'flatten_at: str = "065500"'))
+#: 07:03 에 끝나는 자정 넘는 HO 전략 — 06:58 정리 → 실행 끝 `"310300"`(다음 날 07:00 을 넘음)
+HO_LATE_SRC = (HO_NIGHT_SRC.replace('NAME = "fakehon"', 'NAME = "fakehol"')
+               .replace('session_end: str = "050000"', 'session_end: str = "065900"')
+               .replace('flatten_at: str = "045500"', 'flatten_at: str = "065800"'))
+#: 장 시간 칸이 빠진(MKU 시험 전략) 채 틱가치만 HO 값인 전략 — 빠진 칸을 채우는 것은 MKU 만
+HOBARE_SRC = MKU_SRC.replace("TICK_VALUE = 2.5", "TICK_VALUE = 4.2").replace('NAME = "fakemku"', 'NAME = "hobare"')
 assert '"045500"' in HO_NIGHT_SRC and '"fakehon"' in HO_NIGHT_SRC and '"fakekospi"' in KOSPI_FILE_SRC
+assert '"065500"' in HO_DAWN_SRC and '"065800"' in HO_LATE_SRC and '"hobare"' in HOBARE_SRC
 
 
 class FakeFind:
@@ -220,6 +231,54 @@ def test_자정_넘는_전략을_화요일_0659_에_시작하면_끝_시각_뒤(
     assert reg.start(RunSpec("fakehon.py", "paper", "HO"))["id"] == "20261116_fakehon_paper"
 
 
+class CrossingFind(FakeFind):
+    """찾는 동안 시계가 07:00 을 넘는 종목 찾기 — 실행 관리가 정한 거래일과 실행 준비의 거래일이 갈리는 때."""
+
+    clock: dict | None = None
+
+    def __call__(self, spec, *, api_module, today):
+        leg = super().__call__(spec, api_module=api_module, today=today)
+        self.clock["now"] = at("070001", "20261104")
+        return leg
+
+
+def test_07시에_걸쳐_시작하면_준비가_거부한다(tmp_path):
+    """실행 관리는 06:59:58(수요일 = 화요일 거래일)로 폴더 이름·앞선 손절을 정했는데 실행 준비는 07:00:01(수요일 거래일) —
+    다른 거래일로 정한 폴더·손절 수로 돌지 않게 준비가 거부한다(조회·주문 없음, run.json 은 「시작 거부」)."""
+    find = CrossingFind()
+    reg, fake, _, clock = make_reg(tmp_path, now="065958", date="20261104", find=find)
+    find.clock = clock
+    (reg.strategies / "fakehod.py").write_text(HO_DAWN_SRC, encoding="utf-8")
+    with pytest.raises(StartRefused, match="거래일이 바뀌는 07:00 에 걸쳐 시작했습니다 — 다시 시작하세요"):
+        reg.start(RunSpec("fakehod.py", "orders", "HO"))
+    data = read_json(reg.root / f"{TODAY}_fakehod_orders" / "run.json")      # 폴더는 실행 관리가 정한 거래일(화요일)
+    assert data["state"] == "끝" and data["ended_reason"].startswith("시작 거부: 거래일이 바뀌는 07:00")
+    assert fake.calls == [] and fake.orders == [] and reg.list()[0]["state"] == "끝"
+    # 걸치지 않으면(07:00:01 에 바로) 수요일 거래일로 선다
+    reg, _, _, _ = make_reg(tmp_path / "ok", now="070001", date="20261104")
+    (reg.strategies / "fakehod.py").write_text(HO_DAWN_SRC, encoding="utf-8")
+    run = reg.get(reg.start(RunSpec("fakehod.py", "paper", "HO"))["id"])
+    assert run.trading_date == "20261104" and run.state == "대기"
+
+
+# ---------------------------------------------------------------- 계획만으로 보이는 거부 (`live.plan_refusal`) — 폴더 전에
+def test_MKU_아닌_품목에_장_시간_칸이_빠지면_끝_시각_글이_아니라_그_까닭으로_폴더_없이(tmp_path):
+    for now in ("235800", "100000"):        # 채운 칸의 끝(23:55) 뒤여도 진짜 까닭 · 앞이어도 폴더 없이
+        reg, fake, _, _ = make_reg(tmp_path / now, now=now)
+        (reg.strategies / "hobare.py").write_text(HOBARE_SRC, encoding="utf-8")
+        with pytest.raises(StartRefused, match=r"Params 에 장 시간 칸이 없습니다 \(.*\) — 이 품목은 Params 에 적어야 합니다"):
+            reg.start(RunSpec("hobare.py", "paper", "HO"))
+        assert not (tmp_path / now / "pyruns").exists() and fake.calls == []
+
+
+def test_해외_실행_끝이_다음_날_07시를_넘으면_폴더_없이_거부(tmp_path):
+    reg, fake, _, _ = make_reg(tmp_path, now="100000")
+    (reg.strategies / "holate.py").write_text(HO_LATE_SRC, encoding="utf-8")
+    with pytest.raises(StartRefused, match=r"실행 끝\(07:03 \(\+1\)\)이 다음 날 07:00 을 넘습니다 — flatten_at 을 당기세요"):
+        reg.start(RunSpec("holate.py", "paper", "HO"))
+    assert not (tmp_path / "pyruns").exists() and fake.calls == []
+
+
 # ---------------------------------------------------------------- 같은 종목 하나 — 뿌리·코드·스프레드 탭 통틀어
 def test_같은_HOZ26_모의_계좌_실행은_뿌리·코드_통틀어_하나(tmp_path):
     reg, fake, _, _ = make_reg(tmp_path)
@@ -311,6 +370,28 @@ def test_Registry_의_판정을_LiveRun_에_그대로_넘긴다(tmp_path):
     judge.source = "unknown"
     with pytest.raises(StartRefused, match="장 시간표에 이 종목이 없습니다"):
         reg.start(RunSpec("fakeho.py", "paper", "HO"))
+
+
+def test_Registry_의_마스터_확인을_LiveRun_에_그대로_넘긴다(tmp_path):
+    judge = FakeJudge(source="unknown")
+
+    def unread(market, sym):
+        return False
+    reg, fake, _, _ = make_reg(tmp_path, judge=judge, master_knows=unread)
+    with pytest.raises(StartRefused, match="종목 마스터를 아직 읽지 못했습니다 — 잠시 뒤 다시 시작하세요"):
+        reg.start(RunSpec("fakeho.py", "paper", "HO"))
+    judge.source = "table"
+    run = reg.get(reg.start(RunSpec("fakeho.py", "paper", "HO"))["id"])
+    assert run.master_knows is unread
+    plain, _, _, _ = make_reg(tmp_path / "plain")
+    assert plain.get(plain.start(RunSpec("fakeho.py", "paper", "HO"))["id"]).master_knows is None
+
+
+def test_앱의_registry_공장은_운영자_마스터_확인도_꽂는다(tmp_path, monkeypatch):
+    monkeypatch.setattr(registry_lib, "_registry", None)
+    monkeypatch.setattr(registry_lib.storage, "state_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr(registry_lib, "strategies_dir", lambda: tmp_path / "strategies")
+    assert registry_lib.registry()._master_knows is opening.default_master_knows
 
 
 def test_판정을_안_주면_지금_규칙(tmp_path):

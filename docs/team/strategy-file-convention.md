@@ -625,7 +625,7 @@ MKU 는 빠진 장 시간 칸(`session_start` `session_end` `entry_start` `entry
 
 Params 에 07:00 전 값(`"010000"`)을 적으면 앱이 **+24 한 값**(`"250000"`)으로 바꿔 전략에 넘깁니다. 전략은 바뀐 `self.p` 를 읽습니다.
 
-```python
+```text
 @dataclass
 class Params:
     session_start: str = "220000"   # 22:00 에 시작

@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Modal } from '../../app/Modal'
 import { resolve } from '../../data/instruments'
 import {
+  clockText as pyClock,
   currencyOf,
   downloadUrl,
   flattenRun,
@@ -55,11 +56,12 @@ const SIDE_WORD: Record<string, string> = { buy: '매수', sell: '매도' }
 
 /* ── 글자로 옮기기 ─────────────────────────────────────── */
 
-/** `093000` → `09:30`, 초가 있으면 `09:30:15`. */
+/** `093000` → `09:30`, 초가 있으면 `09:30:15`. 자정을 넘긴 시각(`253000`)은 `01:30 (+1)` — 분까지는 서버 `clock_text` 와 같은 `pyClock` 입니다. */
 export function clockText(time: unknown): string {
   if (typeof time !== 'string' || time.length < 4) return '—'
-  const base = `${time.slice(0, 2)}:${time.slice(2, 4)}`
-  return time.length >= 6 && time.slice(4, 6) !== '00' ? `${base}:${time.slice(4, 6)}` : base
+  const base = pyClock(time)
+  const sec = time.length >= 6 ? time.slice(4, 6) : '00'
+  return sec !== '00' ? base.replace(/^(\d{2}:\d{2})/, `$1:${sec}`) : base
 }
 
 /** 기록의 `at`(`2026-10-30T09:24:33`) → `09:24:33`. */
@@ -105,7 +107,7 @@ function verdictText(side: unknown, reason: unknown): string {
 /** 받은 시각 — 초까지(`093005` → `09:30:05`). */
 function secondsText(time: unknown): string {
   if (typeof time !== 'string' || time.length < 6) return clockText(time)
-  return `${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`
+  return pyClock(time).replace(/^(\d{2}:\d{2})/, `$1:${time.slice(4, 6)}`)
 }
 
 /** 보유 초 → `45초` · `3분 05초`. */
@@ -240,6 +242,8 @@ export function PyRunMain({ view, files }: { view: PyRunView; files: PyStrategyF
     /* 실시간은 신호 종목(KRX) → 주문 종목(MKU). */
     realtime && run.signal_sym ? `신호 ${run.signal_sym} → 주문 ${run.sym ?? '—'}` : run.sym,
     run.bar_min ? `판정 봉 ${run.bar_min}분` : null,
+    /* 자정을 넘기는 실행은 거래일(07:00 기준)을 함께 — 기록 시각이 `01:30 (+1)` 로 읽히는 까닭입니다. */
+    run.overnight && run.trading_date ? `거래일 ${shortDate(run.trading_date)} (자정 넘김)` : null,
     run.next_decision_at && !finished ? `다음 판정 ${clockText(run.next_decision_at)}` : null,
     realtime && run.end_at && !finished ? `실행 끝 ${clockText(run.end_at)}` : null,
     finished && run.ended_reason ? `끝 · ${run.ended_reason}` : null,

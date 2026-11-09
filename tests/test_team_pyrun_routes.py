@@ -973,3 +973,15 @@ def test_시작_본문의_모르는_칸은_422_이고_실행을_세우지_않는
 def test_화면이_보내는_본문_file_mode_sym_은_그대로_받는다(rt_reg):
     r = TestClient(app).post(f"{BASE}/runs", json={"file": "fakemku.py", "mode": "paper", "sym": None})
     assert r.status_code == 201 and r.json()["kind"] == "minute"
+
+
+# ---------------------------------------------------------------- 품목 목록 (종목 고르기)
+def test_품목_목록(client, reg):
+    from backend.team_pyrun.products import domestic_roots
+
+    r = client.get(f"{BASE}/products")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["domestic"] == domestic_roots()
+    assert {"root": "A01", "name": "코스피200선물"} in body["domestic"]
+    assert body["domestic_excluded"] == "주식선물·일부 섹터지수(세부정보 없음)·야간"

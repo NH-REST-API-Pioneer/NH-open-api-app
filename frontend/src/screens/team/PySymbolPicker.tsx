@@ -7,8 +7,11 @@ import {
   USD_PRODUCT,
   autoSymGuess,
   autoSymLabel,
+  rootAutoLabel,
+  rootOf,
   symLabel,
   symVerdict,
+  usePyProducts,
   type SymAllow,
 } from '../../data/pyrun'
 import {
@@ -26,8 +29,10 @@ import { useMasterStatus } from '../../lib/useMaster'
 import { foldUnwatchable, type PickerRow } from '../home/WatchPicker'
 
 /* 팀: 「실행 세우기」의 종목 고르기 — 종목 마스터 전체에서 이름·코드로 찾되, 고를 수 있는 것은
- * 국내 미국달러선물(`A75…`)과 해외 SGX 미니 원달러(`MKU…`)뿐입니다. 실시간 전략은 칸이 둘이라
- * 「신호 종목(KRX)」 칸은 `A75…` 만, 「주문 종목(MKU)」 칸은 `MKU…` 만 고릅니다(`allow`).
+ * 1분봉 칸(`any`)은 모든 선물 — 해외 선물, 국내는 서버 틱 확인 표의 품목(`GET /products`)입니다. 옵션·스프레드·
+ * 주식선물·표에 없는 품목·야간 줄은 까닭과 함께 못 고릅니다. 품목 뿌리(`HO`)를 고르면 서버가 최근월물을 고르고,
+ * 종목 줄을 고르면 그 코드입니다. 실시간 전략은 칸이 둘이라
+ * 「신호 종목(KRX)」 칸은 `A75…` 만, 「주문 종목(MKU)」 칸은 `MKU…` 만 고릅니다(`allow`) — 이쪽은 예전 그대로입니다.
  *
  * 찾는 규칙·줄 모양·접기는 상단 검색·관심종목 담기 창과 같은 부품입니다(`lib/instrumentSearch.ts`,
  * `home/WatchPicker.tsx`). 같은 글자에 창마다 다른 것을 찾아 주면 어느 쪽이 맞는지 알 수 없습니다.
@@ -64,6 +69,8 @@ function autoCodeOf(refs: ContractRef[]): string | null {
 /** 지금 고른 종목을 글로. 확인 얼굴과 입력칸이 같은 문장을 씁니다. `market` 은 비워 둘 때 서버가 고를 시장입니다. */
 export function symText(sym: string, market: Market = 'domestic'): string {
   const code = sym.trim()
+  /* 품목 뿌리(`HO`)는 종목이 아니라 「뿌리 + 최근월물 (자동)」으로 적습니다. */
+  if (code !== '' && code.length <= 3 && !resolve(code)) return rootAutoLabel(code)
   return symLabel(code, code ? (resolve(code)?.name ?? null) : null, autoCodeOf(monthsOf(market)))
 }
 
@@ -90,6 +97,7 @@ export function PySymbolPicker({
   market?: Market
 }) {
   const master = useMasterStatus()
+  const products = usePyProducts()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   /** 펼쳐 둔 품목·상품군. **각각 한 번에 하나**입니다 — 상단 검색과 같은 규칙입니다. */
@@ -109,7 +117,7 @@ export function PySymbolPicker({
         .map((at) => ({ market: at, product: productOf(at, PRODUCT_OF[at]), months: monthsOf(at) }))
         .filter((head) => head.product !== null && head.months.length > 0)
     : []
-  const verdictOf = (code: string) => symVerdict(code, allow)
+  const verdictOf = (code: string) => symVerdict(code, allow, products)
 
   const term = query.trim().toLowerCase()
   const { groups, more } = searchInstruments(term, LIMIT)
@@ -192,9 +200,27 @@ export function PySymbolPicker({
           (() => {
             /* 초록은 「비워 두면 이 줄이 선다」는 뜻이라 한 품목에 하나뿐입니다(다른 창과 같은 말). */
             const front = frontCode(hit.refs)
-            return hit.refs.map((ref) =>
-              contractRow(ref, null, ref.code, true, ref.code === front ? '최근 만기' : undefined),
-            )
+            /* 1분봉 칸의 선물 품목은 맨 위에 「뿌리 최근월물 (자동)」 줄이 섭니다 — 값이 뿌리라 서버가 시작할 때(그리고
+               예약이면 매일) 그날의 최근월물을 고릅니다. */
+            const root = allow === 'any' && hit.kind === 'futures' && hit.refs[0] ? rootOf(hit.refs[0].code) : null
+            return [
+              root && (
+                <button
+                  key={`root:${root}`}
+                  type="button"
+                  className={`search-row pyrun-sym-row search-row-month${sym.trim() === root ? ' is-picked' : ''}`}
+                  aria-current={sym.trim() === root ? 'true' : undefined}
+                  onClick={() => pick(root)}
+                >
+                  <span className="search-row-name">{rootAutoLabel(root)}</span>
+                  {sym.trim() === root && <span className="pyrun-sym-check" aria-hidden="true">✓</span>}
+                  {front && <span className="search-row-code">{front}</span>}
+                </button>
+              ),
+              ...hit.refs.map((ref) =>
+                contractRow(ref, null, ref.code, true, ref.code === front ? '최근 만기' : undefined),
+              ),
+            ]
           })()}
       </div>
     )

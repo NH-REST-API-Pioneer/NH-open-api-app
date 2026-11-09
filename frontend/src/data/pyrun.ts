@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MINUS, moneyIn } from '../lib/number'
+import { resolve } from './instruments'
 
 /* 팀: 파이썬 전략 실행(`/api/team/pyrun/...`)을 부르는 자리.
  *
@@ -67,14 +68,56 @@ export function isMku(code: string): boolean {
 /** 칸마다 고를 수 있는 종목 — `any` 1분봉(국내·MKU), `usd` 실시간 신호(KRX), `mku` 실시간 주문. */
 export type SymAllow = 'any' | 'usd' | 'mku'
 
-/** 고를 수 있는 코드인지. 못 고르면 줄 오른쪽에 설 까닭이 함께 옵니다. */
-export function symVerdict(code: string, allow: SymAllow = 'any'): { ok: true } | { ok: false; reason: string } {
+/** 국내 품목 표 — 서버(`GET /products`)가 주는 틱 확인 표의 품목 뿌리. 이 표에 든 국내 선물만 고를 수 있습니다. */
+export interface PyProducts {
+  domestic: { root: string; name: string }[]
+  domestic_excluded: string
+}
+
+/** 「최근월물 (자동)」을 뿌리로 말할 때의 줄 글 — `HO 최근월물 (자동)`. */
+export function rootAutoLabel(root: string): string {
+  return `${root} ${SYM_AUTO}`
+}
+
+/** 고를 수 있는 코드인지. 못 고르면 줄 오른쪽에 설 까닭이 함께 옵니다.
+ *  `any`(1분봉 칸)는 해외 선물이면 OK, 국내 선물은 앞 세 자리가 `products.domestic` 의 뿌리면 OK 입니다.
+ *  `products` 를 아직 못 받았으면 국내는 미국달러선물만 됩니다(예전 그대로). `usd`·`mku`(실시간 칸)는 예전 그대로입니다. */
+export function symVerdict(
+  code: string,
+  allow: SymAllow = 'any',
+  products?: PyProducts | null,
+): { ok: true } | { ok: false; reason: string } {
   const usd = isUsdFutures(code)
   const mku = isMku(code)
-  if (!usd && !mku) return { ok: false, reason: SYM_REFUSED }
-  if (allow === 'usd' && !usd) return { ok: false, reason: SIGNAL_REFUSED }
-  if (allow === 'mku' && !mku) return { ok: false, reason: ORDER_REFUSED }
-  return { ok: true }
+  if (allow === 'usd') return usd ? { ok: true } : { ok: false, reason: mku ? SIGNAL_REFUSED : SYM_REFUSED }
+  if (allow === 'mku') return mku ? { ok: true } : { ok: false, reason: usd ? ORDER_REFUSED : SYM_REFUSED }
+
+  const inst = resolve(code)
+  if (!inst) {
+    /* 마스터를 아직 모르면 예전 규칙 — 미국달러선물·MKU 만. */
+    return usd || mku ? { ok: true } : { ok: false, reason: SYM_REFUSED }
+  }
+  if (inst.kind === 'option') return { ok: false, reason: '옵션은 안 됩니다' }
+  if (inst.kind === 'spread') return { ok: false, reason: '스프레드 종목은 안 됩니다' }
+  if (inst.market === 'overseas') return { ok: true }
+  if (inst.name.includes('야간')) return { ok: false, reason: '야간 종목은 안 됩니다' }
+  if (!products) return usd ? { ok: true } : { ok: false, reason: '국내 품목 표를 받는 중입니다' }
+  if (products.domestic.some((one) => one.root === code.slice(0, 3))) return { ok: true }
+  return { ok: false, reason: '틱 확인 표에 없는 품목입니다 (주식선물 등)' }
+}
+
+/** 코드의 품목 뿌리 — 국내는 앞 세 자리, 해외는 마스터의 품목 코드. 모르면 null. */
+export function rootOf(code: string): string | null {
+  const inst = resolve(code)
+  if (!inst) return null
+  return inst.market === 'domestic' ? code.slice(0, 3) : inst.product.code
+}
+
+/** `HHMMSS`(자정을 넘으면 `253000`) → `HH:MM`, 다음 날이면 ` (+1)`. 서버 `tradeday.clock_text` 와 같은 결과입니다. */
+export function clockText(hhmmss: string): string {
+  const hour = Number(hhmmss.slice(0, 2))
+  const text = `${String(hour % 24).padStart(2, '0')}:${hhmmss.slice(2, 4)}`
+  return hour >= 24 ? `${text} (+1)` : text
 }
 
 /* ── 금액·날짜 ────────────────────────────────────────── */
@@ -174,6 +217,14 @@ export interface PyJournalRow {
  *  `summary` 가 붙습니다(보유·손절 같은 지금 상태 칸이 없습니다). */
 export interface PyRunStatus {
   id: string
+  /* 1분봉 실행의 종목·시계 칸(모든 선물) — 옛 기록에는 없습니다. */
+  product?: string | null
+  exchange?: string | null
+  tick?: number | null
+  tick_value?: number | null
+  overnight?: boolean | null
+  trading_date?: string | null
+  end?: string | null
   file: string
   name: string
   title: string
@@ -355,6 +406,11 @@ export async function loadConvention(signal?: AbortSignal): Promise<PyResult<str
   return got.ok ? { ok: true, data: got.data.markdown } : got
 }
 
+/** 종목 고르기용 국내 품목 표. */
+export function loadProducts(signal?: AbortSignal): Promise<PyResult<PyProducts>> {
+  return call<PyProducts>('/products', undefined, signal)
+}
+
 export async function loadRuns(signal?: AbortSignal): Promise<PyResult<PyRunStatus[]>> {
   const got = await call<{ runs: PyRunStatus[] }>('/runs', undefined, signal)
   return got.ok ? { ok: true, data: got.data.runs } : got
@@ -425,6 +481,8 @@ export interface PySchedule {
   mode: 'orders' | 'paper'
   market: 'domestic' | 'overseas'
   at: string
+  /** 종목 칸 — 품목 뿌리(`HO`)·종목 코드·비면 자동(옛 예약은 칸이 없음). */
+  sym?: string | null
   blocked: string | null
   last_run_id: string | null
   last_result: string | null
@@ -437,8 +495,17 @@ export async function loadSchedules(signal?: AbortSignal): Promise<PyResult<PySc
 }
 
 /** 자동 시작 만들기. `runId` = 방금 세운 실행 — 그날은 그 실행으로 치고 다음 장 날부터 세웁니다. 거부(409)는 서버 문장 그대로. */
-export function createSchedule(file: string, mode: 'orders' | 'paper', runId?: string | null): Promise<PyResult<PySchedule>> {
-  return post<PySchedule>('/schedules', runId ? { file, mode, run_id: runId } : { file, mode })
+export function createSchedule(
+  file: string,
+  mode: 'orders' | 'paper',
+  runId?: string | null,
+  sym?: string | null,
+): Promise<PyResult<PySchedule>> {
+  const body: { file: string; mode: string; run_id?: string; sym?: string } = { file, mode }
+  if (runId) body.run_id = runId
+  const code = sym?.trim()
+  if (code) body.sym = code
+  return post<PySchedule>('/schedules', body)
 }
 
 export function deleteSchedule(id: string): Promise<PyResult<void>> {
@@ -455,6 +522,24 @@ export function scheduleTimeText(iso: string | null): string {
   if (!iso) return ''
   const m = /^\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso)
   return m ? `${m[1]}/${m[2]} ${m[3]}:${m[4]}` : iso
+}
+
+/** 국내 품목 표를 한 번 받아 모든 종목 칸이 나눠 씁니다. 못 받으면 `null` 이고 다음에 다시 시도합니다. */
+let productsCache: PyProducts | null = null
+
+export function usePyProducts(): PyProducts | null {
+  const [products, setProducts] = useState<PyProducts | null>(productsCache)
+  useEffect(() => {
+    if (productsCache) return
+    const ctrl = new AbortController()
+    void loadProducts(ctrl.signal).then((got) => {
+      if (!got.ok) return
+      productsCache = got.data
+      setProducts(got.data)
+    })
+    return () => ctrl.abort()
+  }, [])
+  return products
 }
 
 /* ── 화면이 쓰는 훅 ─────────────────────────────────────── */

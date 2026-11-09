@@ -234,6 +234,14 @@ def strategy_convention() -> dict[str, str]:
     return {"markdown": text}
 
 
+@router.get("/products")
+def list_products() -> dict[str, Any]:
+    """종목 고르기 화면용 — 국내 품목 뿌리 목록(틱 확인 표)과 빠지는 것."""
+    from backend.team_pyrun.products import domestic_roots   # 순환 import 를 피해 함수 안에서
+
+    return {"domestic": domestic_roots(), "domestic_excluded": "주식선물·일부 섹터지수(세부정보 없음)·야간"}
+
+
 # ---------------------------------------------------------------- 실행
 @router.get("/runs")
 def list_runs() -> dict[str, Any]:

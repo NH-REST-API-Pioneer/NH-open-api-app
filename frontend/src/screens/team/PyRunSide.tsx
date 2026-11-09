@@ -23,7 +23,7 @@ import {
   type PyStrategyFile,
 } from '../../data/pyrun'
 import { useMasterStatus } from '../../lib/useMaster'
-import { PySymbolPicker, symConfirmText } from './PySymbolPicker'
+import { PySymbolPicker, symConfirmText, symText } from './PySymbolPicker'
 
 /* 팀: 「파이썬 전략」 왼쪽 열 — ① 전략 파일 ② 실행 목록, 그리고 「+ 실행 세우기」 폼.
  * 얼굴은 「전략 진행」의 실행 카드(`.run-runs` · `.run-row`)를 그대로 씁니다. */
@@ -521,7 +521,9 @@ export function PySchedulesCard({
               {one.blocked ? (
                 <span className="run-sub is-error">멈춤 — {one.blocked}</span>
               ) : (
-                <span className="run-sub">다음 시작 {scheduleTimeText(one.next_start) || '—'}</span>
+                <span className="run-sub">
+                  {one.sym ? `${symText(one.sym)} · ` : ''}다음 시작 {scheduleTimeText(one.next_start) || '—'}
+                </span>
               )}
               {one.last_result && <span className="run-sub">{one.last_result}</span>}
             </div>
@@ -616,7 +618,7 @@ export function PyAddForm({
     const got = await startRun(file, mode, sym, realtime ? signalSym : undefined)
     if (got.ok) {
       /* 실행은 섰습니다. 예약이 거부돼도 실행은 그대로 두고 까닭만 알립니다. */
-      const made = daily ? await createSchedule(file, mode, got.data.id) : null
+      const made = daily ? await createSchedule(file, mode, got.data.id, realtime ? null : sym) : null
       setSending(false)
       onStarted(got.data, daily, made && !made.ok ? made.why : null)
     } else {

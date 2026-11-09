@@ -276,7 +276,7 @@ def _won(x: float) -> float | int:
 
 def _money(x: float, currency: str) -> str:
     """기록 글에 쓰는 금액 — 원은 week02 그대로 `+19,000원`, USD 는 `+22.50 USD`."""
-    return f"{x:+,}원" if currency == "KRW" else f"{x:+,.2f} USD"
+    return f"{x:+,}원" if currency == "KRW" else f"{x:+,.2f} {currency}"
 
 
 # ---------------------------------------------------------------- 체결 담당
@@ -585,7 +585,8 @@ class Runner:
         if self.currency == "KRW":
             fee_txt = "" if fee is None else f" · 수수료 {fee:,.0f}원 → {t['pnl_after_fee']:+,.0f}원"
         else:
-            fee_txt = "" if fee is None else f" · 수수료 {fee:,.2f} USD → {t['pnl_after_fee']:+,.2f} USD"
+            fee_txt = ("" if fee is None else
+                       f" · 수수료 {fee:,.2f} {self.currency} → {t['pnl_after_fee']:+,.2f} {self.currency}")
         row = {k: t[k] for k in ("side", "entry", "exit", "entry_time", "exit_time", "ticks", "pnl",
                                  "fee", "pnl_after_fee", "reason", "exit_date")}
         if "window" in t:

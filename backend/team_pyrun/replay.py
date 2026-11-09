@@ -84,6 +84,7 @@ class _DefaultFee(float):
     """`replay()` 의 `fee` 기본값 표지 — 값은 국내 `PAPER_FEE`(옛 호출·시험이 보는 값)이지만, 안 준 것을 알아본다(`is`)."""
 
 
+# 기존 시험(test_team_pyrun_orb)이 replay() 의 fee 기본값 == 690.0 을 고정해서, 값은 690 이되 안 준 것을 알아보는 표지.
 DEFAULT_FEE = _DefaultFee(PAPER_FEE)
 
 

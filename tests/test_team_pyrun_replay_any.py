@@ -53,3 +53,12 @@ def test_시장_지정이면_품목_코드_가드_없이_봉_한_개_날도_쓴�
     assert replay_mod.load_minutes(csv, market=replay_mod.DOMESTIC) == []          # 국내 기본 250봉
     assert len(replay_mod.load_minutes(csv, market=replay_mod.DOMESTIC, min_bars=1)) == 5
     assert len(replay_mod.load_minutes(csv, market=replay_mod.OVERSEAS)) == 5
+
+
+def test_기록_글의_통화는_지정한_통화로(tmp_path, monkeypatch):
+    state, csv = setup(tmp_path, monkeypatch, "bars_1m_HOZ26_20261109.csv")
+    assert replay_mod.main(["night.py", "20261109", str(csv), "--market", "overseas", "--currency", "JPY"]) == 0
+    out = state / "pyruns" / "20261109_night_replay"
+    lines = [json.loads(x) for x in (out / "journal.jsonl").read_text(encoding="utf-8").splitlines()]
+    text = next(x for x in lines if x.get("kind") == "trade")["text"]
+    assert "JPY" in text and "USD" not in text and "수수료" in text

@@ -1,4 +1,4 @@
-"""leadlag 실시간 예제 파일(`docs/team/examples/strategy_leadlag.py`)과 녹화 리플레이(`replay.replay_realtime`) 시험.
+"""leadlag 실시간 예제 파일(`backend/team_pyrun/guide/examples/strategy_leadlag.py`)과 녹화 리플레이(`replay.replay_realtime`) 시험.
 
 - 예제 파일: 로더가 실시간 전략으로 읽고, 표준 라이브러리만 쓰고, `Engine`·`LiveParams`·상수의 소스가 week03
   `ws_trader.py` 와 **글자 그대로** 같다(복사 확인). ws_trader 는 `websockets`·`nh_client` 를 import 해서 불러올 수
@@ -28,7 +28,7 @@ from backend.team_pyrun import realtime
 from backend.team_pyrun.realtime import RealtimeRun
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLES = ROOT / "docs/team/examples"
+EXAMPLES = ROOT / "backend/team_pyrun/guide/examples"
 EXAMPLE = EXAMPLES / "strategy_leadlag.py"
 WEEK03 = Path(__file__).parent / "fixtures/team_pyrun/week03/leadlag"
 WS_TRADER = WEEK03 / "ws_trader.py"         # week03 원본 사본(깃허브 11/04 판) — 여기선 글로만 읽는다. 그대로 불러오기는 test_team_pyrun_decision

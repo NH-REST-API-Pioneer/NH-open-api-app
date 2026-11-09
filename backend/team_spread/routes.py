@@ -47,7 +47,7 @@ router = APIRouter(prefix="/api/team/spread", tags=["team-spread"], dependencies
 DOWNLOAD_FILES = ("journal.jsonl", "summary.json", "api_log.jsonl")
 #: 앱을 끌 때 두 탭(스프레드·파이썬 전략)이 함께 쓰는 기다림 마감(초) — 도커 `stop_grace_period`(30초) 안
 SHUTDOWN_SECONDS = 20.0
-CONVENTION_DOC = Path(__file__).resolve().parents[2] / "docs" / "team" / "spread-runner-convention.md"
+CONVENTION_DOC = Path(__file__).resolve().parent / "guide" / "spread-runner-convention.md"
 
 
 class StartBody(BaseModel):

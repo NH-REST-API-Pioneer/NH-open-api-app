@@ -29,7 +29,7 @@ week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 �
 `sys.modules` 에서 빠지므로 실패합니다.
 
 지켜야 할 약속(전략 클래스 하나, dataclass `Params` 와 필수 칸, 전략 인스턴스의 `on_minute`·`p`)은 불러올 때
-한 번에 검사하고, 빠진 이름을 메시지에 모두 적습니다. 작성 규칙은 `docs/team/strategy-file-convention.md`.
+한 번에 검사하고, 빠진 이름을 메시지에 모두 적습니다. 작성 규칙은 `backend/team_pyrun/guide/strategy-file-convention.md`.
 
 **실행기 종류(`Loaded.kind`)** — 전략 클래스에 `on_minute` 이 있으면 `"minute"`(1분봉 실행기), `on_krx`·`on_quote`
 가 있으면 `"realtime"`(실시간 실행기), 둘 다면 `LoadError`. 실시간 전략의 필수 이름은 `on_krx` `on_quote`

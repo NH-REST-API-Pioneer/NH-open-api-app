@@ -2,8 +2,8 @@
 
 「전략주문 › 스프레드」에 올리는 `.py` 파일 하나(실행기)를 어떻게 쓰는지 적은 문서입니다.
 파이썬 전략 탭과 달리 **실행기가 매매 흐름 전체를 직접 씁니다** — 두 종목 이상을 보고 `ctx.target` 으로 짝 주문을 냅니다.
-앱은 시세 공급·주문 안전장치·잔고 대조·정리·기록을 맡습니다. 예제는 `docs/team/examples/spread_rolling_beta.py`(모양을 보이려는 예제, 수익 전략 아님).
-AI 에게 쓰게 할 때는 `strategy-file-prompt.md` 의 「스프레드 실행기」 절을 붙여 넣으세요.
+앱은 시세 공급·주문 안전장치·잔고 대조·정리·기록을 맡습니다. 예제는 `backend/team_spread/guide/examples/spread_rolling_beta.py`(모양을 보이려는 예제, 수익 전략 아님).
+AI 에게 쓰게 할 때는 팀이 따로 나누는 AI 프롬프트 문서(`strategy-file-prompt.md`)의 「스프레드 실행기」 절을 붙여 넣으세요.
 
 ## 1. 파일의 약속
 

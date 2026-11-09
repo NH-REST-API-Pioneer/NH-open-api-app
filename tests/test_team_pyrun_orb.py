@@ -24,7 +24,7 @@ from backend.team_pyrun.runner import Minute, PaperBroker, Runner
 
 HERE = Path(__file__).parent
 WEEK03 = HERE / "fixtures/team_pyrun/week03"
-APP_FILE = HERE.parent / "docs/team/examples/strategy_orb_app.py"
+APP_FILE = HERE.parent / "backend/team_pyrun/guide/examples/strategy_orb_app.py"
 CSV = WEEK03 / "bars_1m_MKUX26.csv"
 GOLDEN = WEEK03 / "start_all.json"
 DATA_FROM, DATA_TO = "20261012", "20261102"     # week03 backtest.py DATA_FROM·DATA_TO

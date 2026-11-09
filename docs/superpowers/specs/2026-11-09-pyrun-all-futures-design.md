@@ -1,6 +1,6 @@
 # 파이썬 전략 탭 — 모든 선물 (1분봉 실행기) 설계
 
-- 상태: 초안 2판 (2026-11-09 — 빌더 확인 질문 8개를 반영, 「(내 판단)」 표시) · 브랜치 `feat/pyrun-all-futures` (`feat/spread-tab` 위 — 스프레드 탭 부품을 같이 씀)
+- 상태: 구현됨 (2026-11-09) — 작성 규칙 `docs/team/strategy-file-convention.md` 14~17장이 기준 문서입니다. 구현에서 코드가 이 설계와 다른 곳은 코드와 그 문서가 맞습니다. · 브랜치 `feat/pyrun-all-futures` (`feat/spread-tab` 위 — 스프레드 탭 부품을 같이 씀)
 - 관련: 파이썬 전략 탭(`backend/team_pyrun/`, `docs/team/strategy-file-convention.md`), 스프레드 탭(`backend/team_spread/`,
   `docs/superpowers/specs/2026-11-08-spread-tab-design.md`)
 

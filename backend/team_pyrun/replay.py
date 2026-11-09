@@ -3,7 +3,10 @@
 코드 점검과 week02·week03 결과 비교용입니다(해외 MKU 는 `market=OVERSEAS` — `tests/test_team_pyrun_orb.py` 골든). 순서는 week02 `replay()` 와 같습니다: 그 분의 시가로
 `on_price`(진입·정리) → 종가와 고저로 `on_price`(손절·익절) → `on_minute_closed`(그 봉으로 신호).
 
-    python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv>
+    python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv> [--market domestic|overseas] [--currency XXX]
+
+`--market` 을 주면 csv 이름의 종목으로 시장 가드를 하지 않고(아무 품목) 그 시장으로 돕니다 — 통화는 기록·글에만(`--currency`,
+수수료는 그대로), 하루 최소 봉 수는 A75 가 아니면 1. 자정을 넘는 전략이면 `<YYYYMMDD>` 는 거래일(봉은 거래일 시계로).
 
 시장은 장중 실행과 같은 규칙(`live.run_market`: csv 이름의 종목, 없으면 전략 TICK)으로 정하고, 하루 봉 수 거르기·
 종이 수수료·슬리피지·끝 정리 시각을 그 시장 값으로 씁니다(국내는 week02 그대로).
@@ -46,9 +49,9 @@ from typing import Any
 from backend import storage
 from backend.sessions.hours import KST, now_kst
 from backend.team_pyrun.journal import Journal, summarize, write_summary
-from backend.team_pyrun.live import RunSpec, StartRefused
+from backend.team_pyrun.live import RunSpec, StartRefused, run_plan
 from backend.team_pyrun.loader import DEFAULT_FLATTEN, Loaded, load, strategies_dir
-from backend.team_pyrun.markets import DOMESTIC, OVERSEAS, Market
+from backend.team_pyrun.markets import DOMESTIC, OVERSEAS, Market, paper_fee_of
 from backend.team_pyrun.rawfeed import RawMessage
 from backend.team_pyrun.realtime import RealtimeRun
 from backend.team_pyrun.runner import PAPER_FEE, PAPER_SLIP_TICKS, Minute, PaperBroker, Runner
@@ -57,11 +60,12 @@ MIN_BARS_PER_DAY = DOMESTIC.min_day_bars   # 국내: 이보다 봉이 적은 날
 DEFAULT_SYM = "A756B000"
 
 
-def load_minutes(csv_path: Path, *, market: Market = DOMESTIC) -> list[Minute]:
+def load_minutes(csv_path: Path, *, market: Market = DOMESTIC, min_bars: int | None = None) -> list[Minute]:
     """1분봉 csv(`ref_dt exch_tm open_pric …`)를 읽는다. 하루 봉이 `market.min_day_bars` 미만인 날은 뺀다.
 
     국내는 250봉(week02 그대로), 해외 MKU 는 빼지 않습니다(1봉) — 토요일 새벽처럼 봉이 적은 날도 열린 날이고,
-    week03 백테스트도 빼지 않습니다."""
+    week03 백테스트도 빼지 않습니다. `min_bars` 를 주면 그 값이 먼저입니다(`--market` 으로 아무 품목을 돌릴 때 1)."""
+    floor = market.min_day_bars if min_bars is None else min_bars
     with Path(csv_path).open(encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     per_day: dict[str, int] = {}
@@ -69,15 +73,23 @@ def load_minutes(csv_path: Path, *, market: Market = DOMESTIC) -> list[Minute]:
         per_day[r["ref_dt"]] = per_day.get(r["ref_dt"], 0) + 1
     return [Minute(r["ref_dt"], r["exch_tm"], float(r["open_pric"]), float(r["high_pric"]),
                    float(r["low_pric"]), float(r["close_pric"]), float(r["cum_trd_qty"] or 0))
-            for r in rows if per_day[r["ref_dt"]] >= market.min_day_bars]
+            for r in rows if per_day[r["ref_dt"]] >= floor]
 
 
 def _stamp() -> str:
     return now_kst().isoformat(timespec="seconds").removesuffix("+09:00")
 
 
+class _DefaultFee(float):
+    """`replay()` 의 `fee` 기본값 표지 — 값은 국내 `PAPER_FEE`(옛 호출·시험이 보는 값)이지만, 안 준 것을 알아본다(`is`)."""
+
+
+DEFAULT_FEE = _DefaultFee(PAPER_FEE)
+
+
 def replay(loaded: Loaded, date: str | None, minutes: list[Minute], folder: Path, sym: str = DEFAULT_SYM, *,
-           market: Market = DOMESTIC, fee: float = PAPER_FEE, slip_ticks: int = PAPER_SLIP_TICKS) -> dict:
+           market: Market = DOMESTIC, fee: float = DEFAULT_FEE, slip_ticks: int = PAPER_SLIP_TICKS,
+           currency: str | None = None) -> dict:
     """`date` 하루를 다시 돌려 `folder` 에 기록하고 `{"trades", "summary"}` 를 돌려준다.
 
     그 전 날들은 준비 봉으로 전략에만 넣습니다. `date` 가 None 이면 `minutes` 의 **모든 날을 날마다 이어** 돕니다
@@ -86,15 +98,22 @@ def replay(loaded: Loaded, date: str | None, minutes: list[Minute], folder: Path
 
     `market` 은 빠진 Params 장 시간 칸을 채우고(`loaded.new(market)`), 하루 끝 정리 시각(국내 153000 · 해외 235000,
     `loader.DEFAULT_FLATTEN`)을 정합니다. `fee`(체결마다, 그 시장 통화)·`slip_ticks`(불리한 쪽 틱)는 종이 체결 값.
-    기본값은 모두 국내(week02) 그대로입니다."""
+    `fee` 를 안 주면(`DEFAULT_FEE`) `paper_fee_of(market, loaded.paper_fee)`(전략 `PAPER_FEE` 가 먼저). `currency` 는 기록·글에 적을 통화만
+    바꿉니다(수수료는 그대로). 자정을 넘는 전략(`live.run_plan`)이면 봉을 거래일 시계로 바꾼 뒤 날을 묶습니다 — `date` 는
+    거래일이고, 하루 끝 정리는 (바뀐) `flatten_at`. 기본값은 모두 국내(week02) 그대로입니다."""
     folder = Path(folder)
     started = _stamp()
     j = Journal(folder / "journal.jsonl")
-    r = Runner(loaded.new(market), j, PaperBroker(j, loaded.tick, fee=fee, slip_ticks=slip_ticks),
-               loaded.tick, loaded.tick_value)
-    r.currency = market.currency      # 기록 글의 손익 통화 (값은 TICK_VALUE 단위 그대로)
+    fee = paper_fee_of(market, loaded.paper_fee) if fee is DEFAULT_FEE else fee
+    currency = currency or market.currency
+    plan = run_plan(loaded, market)
+    r = Runner(loaded.new(market, overnight=plan.overnight), j,
+               PaperBroker(j, loaded.tick, fee=fee, slip_ticks=slip_ticks), loaded.tick, loaded.tick_value)
+    r.currency = currency      # 기록 글의 손익 통화 (값은 TICK_VALUE 단위 그대로)
+    if plan.overnight:      # 자정 뒤 봉은 앞 거래일에 24시를 더한 시각으로 (설계 4.4)
+        minutes = [plan.clock.bar(m) for m in minutes]
     days = sorted({m.date for m in minutes}) if date is None else [date]
-    flat_at = DEFAULT_FLATTEN[market.id]
+    flat_at = r.p.flatten_at if plan.overnight else DEFAULT_FLATTEN[market.id]
     if days:
         r.warmup([m for m in minutes if m.date < days[0]])
     for day in days:
@@ -113,14 +132,14 @@ def replay(loaded: Loaded, date: str | None, minutes: list[Minute], folder: Path
         r.force_flat(flat_at)
     result = {"trades": r.trades, "summary": summarize(r.trades)}
     # 실시간 실행의 summary.json 과 같은 꼴로 전략 정보도 남긴다 — 지난 실행 화면이 그때의 Params 를 보인다
-    write_summary(folder, {**result, "market": market.id, "currency": market.currency, "strategy": {
+    write_summary(folder, {**result, "market": market.id, "currency": currency, "strategy": {
         "file": loaded.file, "name": loaded.name, "title": loaded.title,
         "sha256": loaded.sha256, "params": asdict(r.p)}})
     (folder / "run.json").write_text(json.dumps({
         "id": folder.name, "file": loaded.file, "name": loaded.name, "title": loaded.title,
         "sha256": loaded.sha256, "mode": "replay", "sym": sym, "state": "끝",
         "started_at": started, "ended_at": _stamp(), "ended_reason": "리플레이",
-        "market": market.id, "currency": market.currency, "kind": "minute",
+        "market": market.id, "currency": currency, "kind": "minute",
     }, indent=1, ensure_ascii=False), encoding="utf-8")
     return result
 
@@ -257,11 +276,23 @@ def _is_raw(path: Path) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 3 or not re.fullmatch(r"\d{8}", args[1]):
-        print("사용법: python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv | raw.jsonl[.gz]>\n"
-              "  1분봉 전략은 1분봉 csv, 실시간 전략(leadlag)은 원문 녹화 <raw.jsonl[.gz]>", file=sys.stderr)
+    usage = ("사용법: python -m backend.team_pyrun.replay <전략파일> <YYYYMMDD> <csv | raw.jsonl[.gz]> "
+             "[--market domestic|overseas] [--currency XXX]\n"
+             "  1분봉 전략은 1분봉 csv, 실시간 전략(leadlag)은 원문 녹화 <raw.jsonl[.gz]>. "
+             "자정을 넘는 전략이면 <YYYYMMDD> 는 거래일")
+    flags: dict[str, str] = {}
+    pos: list[str] = []
+    it = iter(args)
+    for a in it:
+        if a in ("--market", "--currency"):
+            flags[a] = next(it, "")
+        else:
+            pos.append(a)
+    if (len(pos) != 3 or not re.fullmatch(r"\d{8}", pos[1]) or flags.get("--market", "overseas") not in ("domestic", "overseas")
+            or ("--currency" in flags and not re.fullmatch(r"[A-Z]{3}", flags["--currency"]))):
+        print(usage, file=sys.stderr)
         return 2
-    file, date, data = args
+    file, date, data = pos
     from backend.team_pyrun.live import run_market     # 장중 실행과 같은 시장 규칙 (명령줄에서만 쓰므로 여기서)
     path = Path(file)
     folder, name = (path.parent, path.name) if path.parent != Path(".") else (strategies_dir(), file)
@@ -286,15 +317,21 @@ def main(argv: list[str] | None = None) -> int:
     # 종목은 csv 이름(`bars_1m_<종목>[_<날짜>].csv`)에서, 시장은 실행과 같은 규칙(`live.run_market`)으로
     m = re.search(r"bars_1m_([A-Za-z0-9]+?)(?:_\d{8})?\.csv$", Path(data).name)
     sym = m.group(1) if m else None
-    market, refusal = run_market(sym, loaded)
-    if refusal:
-        print(f"시장이 맞지 않습니다: {refusal}", file=sys.stderr)
-        return 2
+    if "--market" in flags:     # 시장을 직접 줌 — csv 종목으로 시장 가드를 하지 않는다 (아무 품목)
+        market = DOMESTIC if flags["--market"] == "domestic" else OVERSEAS
+    else:
+        market, refusal = run_market(sym, loaded)
+        if refusal:
+            print(f"시장이 맞지 않습니다: {refusal}", file=sys.stderr)
+            return 2
+    currency = flags.get("--currency") or market.currency
+    # 하루 최소 봉 수 (설계 4.2): 시장을 줬고 A75 가 아닌 종목이면 1 — 아니면 그 시장 값
+    min_bars = 1 if "--market" in flags and not (sym or "").startswith("A75") else None
     record_sym = sym or (DEFAULT_SYM if market is DOMESTIC else "MKU")
-    result = replay(loaded, date, load_minutes(Path(data), market=market), out, sym=record_sym, market=market,
-                    fee=market.paper_fee, slip_ticks=market.paper_slip_ticks)
+    result = replay(loaded, date, load_minutes(Path(data), market=market, min_bars=min_bars), out, sym=record_sym,
+                    market=market, slip_ticks=market.paper_slip_ticks, currency=currency)
     s = result["summary"]
-    money = f"{s['net_pnl']:+,}원" if market.currency == "KRW" else f"{s['net_pnl']:+,.2f} USD"
+    money = f"{s['net_pnl']:+,}원" if currency == "KRW" else f"{s['net_pnl']:+,.2f} {currency}"
     print(f"{loaded.name} {date}: 거래 {s['trades']}건 · 손익 {money} · {out}")
     return 0
 

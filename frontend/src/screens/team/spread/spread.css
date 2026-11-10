@@ -22,6 +22,12 @@
   stroke-width: 1;
 }
 
+/* 팀: 축선 — 색은 그 축 선의 색(인라인 style), 흐리게 */
+.spread-axis {
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
 .spread-tick {
   fill: var(--text-dim);
   font-size: 11px;

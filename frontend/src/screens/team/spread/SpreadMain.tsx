@@ -36,6 +36,35 @@ function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+/** 사건 표의 「내용」. `leg`(다리 확인·월물 교체)와 `gap`(빠진 분)은 `text` 가 없어 칸에서 글을 만듭니다. */
+function eventText(row: PyJournalRow): string {
+  if (row.kind === 'leg') {
+    const sym = row.old ? `${String(row.old)} → ${String(row.sym ?? '')}` : String(row.sym ?? '')
+    const tick = num(row.tick)
+    const value = num(row.tick_value)
+    const parts = [
+      `${String(row.leg ?? '')} ${sym}`.trim(),
+      row.exchange ? String(row.exchange) : '',
+      tick !== null && value !== null ? `틱 ${tick} = ${value} ${String(row.currency ?? '')}`.trim() : '',
+      row.expiry ? `만기 ${String(row.expiry)}` : '',
+      row.why ? String(row.why) : '',
+    ]
+    return parts.filter(Boolean).join(' · ')
+  }
+  if (row.kind === 'gap') {
+    // `first`·`last` 는 「YYYYMMDD HHMMSS」(분 시작) — 시:분만 보입니다.
+    const hm = (v: unknown) => {
+      const t = String(v ?? '').trim().split(' ').pop() ?? ''
+      return t.length >= 4 ? `${t.slice(0, 2)}:${t.slice(2, 4)}` : t
+    }
+    const first = hm(row.first)
+    const last = hm(row.last)
+    const span = first && last && first !== last ? `${first}~${last}` : first
+    return [span ? `${span} 봉 빠짐` : '', String(row.cause ?? '')].filter(Boolean).join(' · ')
+  }
+  return String(row.text ?? row.reason ?? row.cause ?? '')
+}
+
 /** 가격 — 받은 자릿수 그대로(최대 6), 천 단위 구분. */
 function priceText(value: unknown): string {
   const v = num(value)
@@ -524,7 +553,7 @@ function BottomTable({
               <td className="col-text">{rowClock(row)}</td>
               <td className="col-text">{row.kind === 'event' ? '' : <span className="badge">{row.kind}</span>}</td>
               <td className="col-text pyrun-wrap">
-                {String(row.text ?? row.reason ?? row.cause ?? '')}
+                {eventText(row)}
                 {row.error && <span className="pyrun-warn"> · {String(row.error)}</span>}
               </td>
             </tr>

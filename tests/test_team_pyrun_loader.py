@@ -339,3 +339,33 @@ def test_부를_수_없는_exit_reason_은_LoadError(tmp_path):
 def test_TICK_오류_메시지에_TICK_USD(tmp_path):
     with pytest.raises(LoadError, match="TICK_USD"):
         load(_put(tmp_path, "e.py", ENGINE.replace("TICK_USD = 2.5", 'TICK_USD = "x"')), "e.py")
+
+
+# ---------------------------------------------------------------- QTY (주문 계약 수)
+def _bb_with(tmp_path, line: str):
+    """week02 볼린저 전략에 한 줄을 더한 파일(옆의 strategy.py 도 함께)."""
+    (tmp_path / "strategy.py").write_text((FOLDER / "strategy.py").read_text(encoding="utf-8"), encoding="utf-8")
+    src = (FOLDER / "strategy_bb.py").read_text(encoding="utf-8")
+    (tmp_path / "strategy_bb.py").write_text(src.replace('NAME = "bb"', f'NAME = "bb"\n{line}'), encoding="utf-8")
+    return tmp_path
+
+
+def test_QTY_가_없으면_1계약():
+    assert load(FOLDER, "strategy_bb.py").qty == 1
+
+
+def test_QTY_는_1에서_8까지(tmp_path):
+    assert load(_bb_with(tmp_path, "QTY = 8"), "strategy_bb.py").qty == 8
+
+
+@pytest.mark.parametrize("bad", ["0", "9", "-1", "2.5", "True", '"3"', "None"])
+def test_QTY_가_1에서_8_사이_정수가_아니면_LoadError(tmp_path, bad):
+    folder = _bb_with(tmp_path, f"QTY = {bad}")
+    with pytest.raises(LoadError, match="QTY"):
+        load(folder, "strategy_bb.py")
+
+
+def test_실시간_전략은_QTY_를_받지_않는다(tmp_path):
+    src = ENGINE.replace("TICK_USD = 2.5", "TICK_USD = 2.5\nQTY = 2")
+    with pytest.raises(LoadError, match="QTY"):
+        load(_put(tmp_path, "leadlag.py", src), "leadlag.py")

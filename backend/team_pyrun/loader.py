@@ -36,6 +36,9 @@ week02 처럼 **파일 하나가 전략 하나**입니다. **week02 파일을 �
 `on_timer` `filled_entry` `filled_exit` `p` 이고, Params 는 `Params` 또는 `LiveParams`(dataclass — 찾는 순서는
 `_params_class` 와 같음)입니다. 실시간 전략엔 필수 Params 칸이 없습니다. 틱 가치는 `TICK_VALUE`, 없으면 `TICK_USD`.
 
+**주문 계약 수(`QTY`)** — 1분봉 전략 모듈의 `QTY`(1~`MAX_QTY` 정수, 없으면 1)가 진입·청산 한 번에 내는 계약 수
+(`Loaded.qty`). 실시간 전략은 늘 1계약이라 `QTY` 가 1 이 아니면 `LoadError`.
+
 **Params 시간 칸 채우기** — 1분봉 실행기가 읽는 6칸(`REQUIRED_PARAMS`) 중 장 시간 5칸(`SCHEDULE_PARAMS`)은
 없어도 불러옵니다. 빠진 칸은 `Loaded.params_missing` 에 적고, 실행을 시작할 때 시장(`markets.Market`)으로
 `Loaded.new(market)` 가 채웁니다(`fill_params`). 채우는 값:
@@ -88,6 +91,8 @@ REALTIME_METHODS = ("on_krx", "on_quote")
 PARAMS_NAMES = {"minute": ("Params",), "realtime": ("Params", "LiveParams")}
 #: `TICK`·`TICK_VALUE` 가 없을 때 쓰는 값 — 미국달러선물(틱 0.1원 = 1,000원).
 DEFAULT_TICK, DEFAULT_TICK_VALUE = 0.1, 1000
+#: 전략 `QTY`(주문 계약 수)의 상한 — 해외 모의 예탁 10만 달러로 구리(HG) 증거금 8계약까지
+MAX_QTY = 8
 #: 익절 목표가 없을 때 목록에 남기는 알림(오류가 아님). 청산 판단 함수(`exit_reason`)가 있으면 남기지 않는다.
 NO_TARGET_NOTE = "target·current_vwap 이 없어 익절 없이 돕니다"
 #: 장 시간 칸이 빠졌을 때 목록에 남기는 알림(오류가 아님).
@@ -135,6 +140,7 @@ class Loaded:
     kind: str = "minute"                        # "minute"(1분봉) | "realtime"(실시간)
     params_missing: tuple[str, ...] = ()        # Params 에 없는 장 시간 칸 — `new(market)` 가 채운다
     paper_fee: float | None = None              # 전략 모듈의 `PAPER_FEE`(종이 체결 수수료). 없으면 None
+    qty: int = 1                                # 전략 모듈의 `QTY`(진입·청산 한 번의 계약 수). 없으면 1
 
     def params_for(self, market: Market | None, *, overnight: bool = False) -> type:
         """Params 클래스. `market` 을 주면 빠진 장 시간 칸을 채우고, `overnight` 면 07:00 전 시각에 24시간을 더한다."""
@@ -378,6 +384,17 @@ class _Checked:
     kind: str
     params_missing: tuple[str, ...]
     paper_fee: float | None = None
+    qty: int = 1
+
+
+def _qty_of(module: ModuleType) -> int:
+    """전략 모듈의 `QTY` — 1~`MAX_QTY` 정수(bool·실수·문자열은 안 받음), 없으면 1."""
+    if not hasattr(module, "QTY"):
+        return 1
+    qty = module.QTY
+    if isinstance(qty, bool) or not isinstance(qty, int) or not 1 <= qty <= MAX_QTY:
+        raise LoadError(f"QTY 는 1~{MAX_QTY} 정수여야 합니다: {qty!r}")
+    return qty
 
 
 def _check(module: ModuleType, file: str) -> _Checked:
@@ -410,6 +427,9 @@ def _check(module: ModuleType, file: str) -> _Checked:
         if not math.isfinite(paper_fee) or paper_fee < 0:
             raise LoadError(f"PAPER_FEE 는 0 이상의 숫자여야 합니다: {module.PAPER_FEE!r}")
     kind = _kind(strategy_cls)
+    qty = _qty_of(module)
+    if kind != "minute" and qty != 1:
+        raise LoadError(f"QTY 는 1분봉 전략에서만 씁니다 — 실시간 전략은 1계약입니다: {qty!r}")
     params_cls = _params_class(module, strategy_cls, PARAMS_NAMES[kind])
     notes: list[str] = []
     picked = getattr(module, decision.DECISION_ATTR, None)
@@ -442,7 +462,8 @@ def _check(module: ModuleType, file: str) -> _Checked:
         raise
     except Exception as e:
         raise LoadError(f"{type(e).__name__}: {e}") from e
-    return _Checked(strategy_cls, params_cls, instance, name, title, tick, tick_value, notes, kind, absent, paper_fee)
+    return _Checked(strategy_cls, params_cls, instance, name, title, tick, tick_value, notes, kind, absent, paper_fee,
+                    qty)
 
 
 def load(folder: Path, file: str) -> Loaded:
@@ -461,6 +482,7 @@ def load(folder: Path, file: str) -> Loaded:
         kind=c.kind,
         params_missing=c.params_missing,
         paper_fee=c.paper_fee,
+        qty=c.qty,
     )
 
 

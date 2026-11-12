@@ -566,3 +566,99 @@ def test_지표_자릿수는_틱을_따른다_국내는_3자리_그대로(tmp_pa
     r2.strat.on_minute = lambda m: [SimpleNamespace(bar=Bar(ema=55.55555), side=None, reason="", stop_ticks=None)]
     r2.on_minute_closed(Minute("20261030", "100400", 1, 1, 1, 1, 0))
     assert Journal(tmp_path / "d" / "journal.jsonl").read()[-1]["ema"] == 55.556
+
+
+# ---------------------------------------------------------------- 여러 계약 (전략 QTY)
+class QtyBroker(FakeBroker):
+    """fill 의 qty 인자까지 적는 가짜."""
+
+    def fill(self, side, ref_price, clock, why, qty=1):
+        self.fills.append((side, ref_price, clock, why, qty))
+        return self.fill_px
+
+
+def _qty_runner(tmp_path, broker, qty, side="buy"):
+    r = _runner(tmp_path, broker, side)
+    r.qty = qty
+    return r
+
+
+def test_여러_계약이면_진입_청산을_그_수로_내고_보유도_그_수(tmp_path):
+    b = QtyBroker(fill_px=1335.0)
+    r = _qty_runner(tmp_path, b, 8)
+    r.pos = None
+    r.pending = {"side": "buy", "stop_ticks": 5, "signal": "100000"}
+    r.on_price("100100", 1335.0)
+    assert b.fills[-1][4] == 8 and r.expected_position() == 8 and r.snapshot()["position"] == 8
+    b.fill_px = 1337.0
+    r.on_price("153000", 1337.0)                         # 장 마감 정리
+    assert b.fills[-1][0] == "sell" and b.fills[-1][4] == 8
+    t = r.trades[0]
+    assert t["ticks"] == 20 and t["pnl"] == 20 * 1000 * 8 and t["qty"] == 8
+    assert r.expected_position() == 0
+
+
+def test_매도_여러_계약이면_보유는_음수(tmp_path):
+    r = _qty_runner(tmp_path, QtyBroker(), 3, side="sell")
+    assert r.expected_position() == -3
+
+
+def test_1계약이면_fill_에_qty_를_넘기지_않고_trade_에_qty_칸도_없다(tmp_path):
+    b = FakeBroker(fill_px=1333.0)                       # qty 인자가 없는 옛 꼴 — 그대로 불린다
+    r = _runner(tmp_path, b)
+    r.on_price("100100", 1333.0)
+    assert len(b.fills) == 1 and "qty" not in r.trades[0]
+
+
+def test_여러_계약_진입_체결가를_못_받아도_잔고가_그_수면_보유로(tmp_path):
+    b = QtyBroker(fill_px=None, held=8)
+    r = _qty_runner(tmp_path, b, 8)
+    r.pos = None
+    r.pending = {"side": "buy", "stop_ticks": 5, "signal": "100000"}
+    r.on_price("100100", 1335.0)
+    assert r.halted is None and r.pos is not None and r.expected_position() == 8
+
+
+def test_여러_계약_진입_뒤_잔고가_일부면_멈춘다(tmp_path):
+    b = QtyBroker(fill_px=None, held=3)                  # 8 중 3만 — 남의 주문인지 일부 체결인지 모름
+    r = _qty_runner(tmp_path, b, 8)
+    r.pos = None
+    r.pending = {"side": "buy", "stop_ticks": 5, "signal": "100000"}
+    r.on_price("100100", 1335.0)
+    assert r.halted and "잔고 불일치" in r.halted and r.pos is None
+
+
+def test_여러_계약_청산_뒤_잔고가_그대로면_다시_시도_일부면_멈춘다(tmp_path):
+    b = QtyBroker(fill_px=None, held=8)
+    r = _qty_runner(tmp_path, b, 8)
+    r.on_price("100100", 1333.0)
+    assert r.halted is None and r.retry_after == "100110"
+    b.held = 5
+    r.on_price("100110", 1333.0)
+    assert r.halted and "기대 +8" in r.halted and "+5" in r.halted
+
+
+def test_종이_체결_여러_계약은_수수료도_그_수만큼(tmp_path):
+    j = Journal(tmp_path / "journal.jsonl")
+    b = PaperBroker(j, 0.1, fee=8.0)
+    assert b.fill("buy", 1335.0, "100000", "진입", qty=8) == 1335.1
+    assert b.last_fill_fee == 64.0
+    row = j.read()[-1]
+    assert row["fee"] == 64.0 and row["qty"] == 8
+    b.fill("sell", 1335.0, "100100", "청산")
+    assert b.last_fill_fee == 8.0 and "qty" not in j.read()[-1]
+
+
+def test_리플레이도_QTY_만큼_손익이_커진다(tmp_path):
+    one = tmp_path / "one"
+    _, r1 = _trades("strategy_bb.py", one)
+    folder = tmp_path / "strategies"
+    folder.mkdir()
+    (folder / "strategy.py").write_text((FOLDER / "strategy.py").read_text(encoding="utf-8"), encoding="utf-8")
+    src = (FOLDER / "strategy_bb.py").read_text(encoding="utf-8").replace('NAME = "bb"', 'NAME = "bb"\nQTY = 8')
+    (folder / "strategy_bb.py").write_text(src, encoding="utf-8")
+    r8 = replay(load(folder, "strategy_bb.py"), "20261030", load_minutes(DATA), tmp_path / "eight")
+    assert [(t["entry"], t["exit"], t["reason"]) for t in r8["trades"]] == \
+        [(t["entry"], t["exit"], t["reason"]) for t in r1["trades"]]
+    assert r8["summary"]["net_pnl"] == r1["summary"]["net_pnl"] * 8 == 432000
+    assert r8["summary"]["fee_total"] == r1["summary"]["fee_total"] * 8

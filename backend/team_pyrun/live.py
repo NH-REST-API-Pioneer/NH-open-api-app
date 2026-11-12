@@ -354,7 +354,7 @@ class LiveRun:
             slip_ticks=self.market.paper_slip_ticks)
         # 빠진 Params 장 시간 칸은 시장 값으로 채운다(MKU 가 아니면 prepare 가 거부)
         self.runner = Runner(loaded.new(self.market, overnight=self.plan.overnight), self.j, self.broker,
-                             loaded.tick, loaded.tick_value)
+                             loaded.tick, loaded.tick_value, qty=loaded.qty)    # 전략 `QTY` 계약씩
         self.runner.stops_before = self.stops_before   # 화면의 오늘 손절 수용(전략에 day 가 없을 때)
         self.runner.currency = self.currency
         self.runner.blocked = self._in_break    # 주문이 닫힌 동안엔 체결을 부르지 않음 (step 시각과 지금 시각 둘 다 봄)
@@ -432,6 +432,8 @@ class LiveRun:
         if plan.overnight:
             j.write("event", text=self._overnight_text(today))
         j.write("event", text=f"전략 {loaded.file} · sha256 {loaded.sha256[:12]} · Params {asdict(r.p)}")
+        if r.qty != 1:
+            j.write("event", text=f"주문 수량 {r.qty}계약 (전략 QTY) — 진입·청산 한 번에 {r.qty}계약, 보유는 0 · ±{r.qty}")
         # 2. 종목과 틱 — registry 가 같은 종목 검사에 쓴 종목(`self.sym`)이 먼저. 다시 고르면 월물이 넘어가는 날
         #    검사한 종목과 주문하는 종목이 달라질 수 있다(RealtimeRun 과 같은 규칙)
         sym = self.sym or self.spec.sym

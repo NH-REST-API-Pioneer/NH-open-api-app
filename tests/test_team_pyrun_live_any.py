@@ -542,3 +542,20 @@ def test_journal_은_계좌번호를_남기지_않는다(tmp_path):
     run.finish("중지")
     assert "123456789" not in (out / "journal.jsonl").read_text(encoding="utf-8")
     assert [r for r in journal(out) if r["kind"] == "trade"]
+
+
+# ---------------------------------------------------------------- 여러 계약 (전략 QTY) — 모의 계좌
+def test_QTY_8_모의_계좌는_8계약으로_진입_정리하고_잔고를_8로_대조한다(tmp_path):
+    src = HO_SRC.replace("TICK = 0.0001", "TICK = 0.0001\nQTY = 8")
+    run, fake, out, clock = entered_ho(tmp_path, mode="orders", judge=FakeJudge(), src=src)
+    assert fake.orders == [(HO.sym, "buy", 8)] and fake.held == 8
+    assert run.runner.expected_position() == 8 and run.runner.halted is None
+    assert any("주문 수량 8계약" in x for x in texts(out))
+    go(run, clock, "100200")                    # 잔고 대조가 +8 로 맞아 멈추지 않는다
+    assert run.runner.halted is None
+    go(run, clock, "233000")                    # 장 마감 정리도 8계약
+    assert fake.orders[-1] == (HO.sym, "sell", 8) and fake.held == 0
+    t = run.runner.trades[-1]
+    assert t["qty"] == 8 and t["pnl"] == pytest.approx(t["ticks"] * 4.2 * 8)
+    go(run, clock, "233500")
+    assert run.state == "끝" and run.runner.halted is None

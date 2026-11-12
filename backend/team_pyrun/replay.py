@@ -109,7 +109,8 @@ def replay(loaded: Loaded, date: str | None, minutes: list[Minute], folder: Path
     currency = currency or market.currency
     plan = run_plan(loaded, market)
     r = Runner(loaded.new(market, overnight=plan.overnight), j,
-               PaperBroker(j, loaded.tick, fee=fee, slip_ticks=slip_ticks), loaded.tick, loaded.tick_value)
+               PaperBroker(j, loaded.tick, fee=fee, slip_ticks=slip_ticks), loaded.tick, loaded.tick_value,
+               qty=loaded.qty)      # 전략 `QTY` — 손익·수수료가 그 수만큼
     r.currency = currency      # 기록 글의 손익 통화 (값은 TICK_VALUE 단위 그대로)
     if plan.overnight:      # 자정 뒤 봉은 앞 거래일에 24시를 더한 시각으로 (설계 4.4)
         minutes = [plan.clock.bar(m) for m in minutes]

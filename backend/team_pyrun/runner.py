@@ -287,6 +287,7 @@ class Broker(Protocol):
     last_fill_fee: float | None
 
     def fill(self, side: str, ref_price: float, clock: str, why: str) -> float | None: ...
+    # 여러 계약(`Runner.qty` > 1)이면 `fill(..., qty=N)` 으로 부른다 — 1계약이면 qty 를 넘기지 않음(옛 꼴 그대로)
 
     def position(self) -> int | None: ...
 
@@ -311,11 +312,15 @@ class PaperBroker:
     def account(self, clock: str = "", why: str = "") -> dict | None:
         return None
 
-    def fill(self, side: str, ref_price: float, clock: str, why: str) -> float | None:
+    def fill(self, side: str, ref_price: float, clock: str, why: str, qty: int = 1) -> float | None:
+        """종이 체결 qty계약 — 가격은 불리한 쪽 슬리피지, 수수료는 체결마다 계약당 `fee` × qty."""
         slip = self.slip_ticks * self.tick
         px = round(ref_price + slip if side == "buy" else ref_price - slip, _digits(self.tick))
-        self.j.write("fill", clock=clock, side=side, price=px, source="paper", fee=self.fee,
-                     text=f"종이 체결 · {why}")
+        fee = self.fee if qty == 1 else round(self.fee * qty, 2)
+        self.last_fill_fee = fee
+        extra = {"qty": qty} if qty != 1 else {}
+        self.j.write("fill", clock=clock, side=side, price=px, source="paper", fee=fee,
+                     text=f"종이 체결 · {why}", **extra)
         return px
 
     def position(self) -> int | None:
@@ -326,11 +331,12 @@ class PaperBroker:
 class Runner:
     """전략 객체 하나를 돌린다. 시세를 넣어 주는 쪽(리플레이·실시간 반복)이 `feed`·`on_minute_closed`·`on_price` 를 부른다."""
 
-    def __init__(self, strategy, journal: Journal, broker: Broker, tick: float, tick_value: float):
+    def __init__(self, strategy, journal: Journal, broker: Broker, tick: float, tick_value: float, qty: int = 1):
         self.strat = strategy
         self.p = strategy.p
         self.j, self.broker = journal, broker
         self.tick, self.tick_value = tick, tick_value
+        self.qty = qty                        # 진입·청산 한 번의 계약 수 (전략 `QTY`, 기본 1) — 보유는 0 · ±qty
         # 신호 줄 자릿수 — 국내(틱 0.1)는 지표 3·봉 4 그대로, 틱이 잘면(MKU 0.0001) 지표 6·봉 4
         self.ind_digits = max(3, _digits(tick) + 2)
         self.ohlc_digits = max(4, _digits(tick))
@@ -508,7 +514,7 @@ class Runner:
         fn = getattr(self.strat, "on_entry", None)
         # on_entry 인자 대응은 주문 전에 맞춰 본다 — 틀리면 주문을 내지 않고 오류(체결 뒤 오류면 정리 주문이 또 나간다)
         entry_call = None if fn is None else _entry_args(fn, sig)
-        px = self.broker.fill(e["side"], price, clock, f"진입 ({e['side']})")
+        px = self._fill(e["side"], price, clock, f"진입 ({e['side']})")
         if px is None and getattr(self.broker, "held_back", False):
             # 팀: 보내기 직전 휴장이 시작돼 안 보냄(확실) — 신호를 들고 있다가 휴장이 끝난 첫 가격에 진입
             self.pending = e
@@ -522,7 +528,7 @@ class Runner:
             if not held:
                 self.j.write("event", clock=clock, text="진입 체결 없음 (잔고 0) — 이 신호는 건너뜀")
                 return
-            if not self._mine(held, sent_needed=True, want=1 if e["side"] == "buy" else -1):
+            if not self._mine(held, sent_needed=True, want=self.qty if e["side"] == "buy" else -self.qty):
                 # 관문에 걸려 안 보냈거나(남의 잔고), 알려진 거절이거나, 방향이 다르다 — 남의 포지션을 인수하지 않는다
                 self.halt(f"잔고 불일치 · 기대 {self.expected_position():+d} · 계좌 {held:+d}")
                 return
@@ -531,6 +537,8 @@ class Runner:
         self.pos = {"side": e["side"], "entry": px, "entry_time": clock, "signal_time": e["signal"],
                     "stop_ticks": e["stop_ticks"], "stop": stop_price(e["side"], px, e["stop_ticks"], self.tick),
                     "entry_fee": getattr(self.broker, "last_fill_fee", None)}
+        if self.qty != 1:
+            self.pos["qty"] = self.qty      # trade 줄까지 간다 — 1계약이면 칸을 두지 않음(옛 기록과 같게)
         window = getattr(sig, "window", None)
         if isinstance(window, (str, int)) and not isinstance(window, bool):
             self.pos["window"] = window     # trade 줄에 남겨 같은 날 다시 세운 실행이 이어받게
@@ -540,12 +548,13 @@ class Runner:
             fn(*args, **kwargs)
         # 진입 줄에도 window — trade 없이 끝난 실행(확인 필요·앱 꺼짐)도 같은 날 다시 세운 실행이 이어받게
         tag = {"window": self.pos["window"]} if "window" in self.pos else {}
-        self.j.write("event", clock=clock, text=f"진입 {e['side']} {px} · 손절 {self.pos['stop']} ({e['stop_ticks']}틱)",
+        lots = f" {self.qty}계약" if self.qty != 1 else ""
+        self.j.write("event", clock=clock, text=f"진입 {e['side']}{lots} {px} · 손절 {self.pos['stop']} ({e['stop_ticks']}틱)",
                      **tag)
 
     def _exit(self, clock: str, ref: float, reason: str) -> None:
         side = "sell" if self.pos["side"] == "buy" else "buy"
-        px = self.broker.fill(side, ref, clock, f"청산 · {reason}")
+        px = self._fill(side, ref, clock, f"청산 · {reason}")
         if px is None and getattr(self.broker, "held_back", False):
             # 팀: 보내기 직전 휴장이 시작돼 안 보냄(확실) — 휴장 중 정한 청산처럼 그 사유로 휴장이 끝난 첫 가격에
             if self.break_exit is None:
@@ -573,7 +582,7 @@ class Runner:
                 self.halt(f"잔고 불일치 · 기대 {self.expected_position():+d} · 계좌 {got}")
                 return
         ticks = pnl_ticks(self.pos["side"], self.pos["entry"], px, self.tick)
-        pnl = _won(ticks * self.tick_value)
+        pnl = _won(ticks * self.tick_value * self.qty)
         exit_fee = getattr(self.broker, "last_fill_fee", None)
         entry_fee = self.pos.get("entry_fee")
         fee = None if entry_fee is None or exit_fee is None else entry_fee + exit_fee
@@ -591,6 +600,8 @@ class Runner:
                                  "fee", "pnl_after_fee", "reason", "exit_date")}
         if "window" in t:
             row["window"] = t["window"]
+        if "qty" in t:
+            row["qty"] = t["qty"]
         self.j.write("trade", clock=clock, text=f"{reason} {ticks:+d}틱 ({_money(pnl, self.currency)}){fee_txt}", **row)
         # 보유를 먼저 비운다 — 전략의 on_exit 가 예외를 내도 끝내기 정리가 이미 닫은 보유를 또 닫지 않게
         self.pos = None
@@ -599,6 +610,12 @@ class Runner:
         self.break_exit = None
         self.entry_signal = None
         self._hook("on_exit", pnl, stopped=reason == "손절")
+
+    def _fill(self, side: str, ref: float, clock: str, why: str) -> float | None:
+        """broker 에 체결을 맡긴다 — 1계약이면 qty 없이(옛 꼴 그대로), 여러 계약이면 `qty=`."""
+        if self.qty == 1:
+            return self.broker.fill(side, ref, clock, why)
+        return self.broker.fill(side, ref, clock, why, qty=self.qty)
 
     def _hook(self, name: str, *args, **kwargs) -> None:
         """전략의 고를 수 있는 메서드(`end_of_day` `on_exit`)를 부른다. 없으면 아무것도 하지 않는다.
@@ -610,7 +627,7 @@ class Runner:
     def _mine(self, held: int, *, sent_needed: bool = False, want: int | None = None) -> bool:
         """체결가 없이 받은 잔고 held 를 이 실행의 체결로 따라도 되는가(`fill` 이 None 을 돌려준 바로 뒤).
 
-        want 가 있으면 잔고가 그 값이어야 하고(진입: 신호 방향 1계약), sent_needed 면 이번 fill 에서 주문을 실제로
+        want 가 있으면 잔고가 그 값이어야 하고(진입: 신호 방향 qty계약), sent_needed 면 이번 fill 에서 주문을 실제로
         보냈어야 한다. 브로커가 `explains` 를 가지면 그 잔고가 이 실행의 결과 모름 주문으로 설명돼야 한다."""
         if want is not None and held != want:
             return False
@@ -631,10 +648,10 @@ class Runner:
 
     # ---- 상태
     def expected_position(self) -> int:
-        """실행기가 생각하는 보유 계약 수: 0 · +1(매수) · −1(매도)."""
+        """실행기가 생각하는 보유 계약 수: 0 · +qty(매수) · −qty(매도)."""
         if self.pos is None:
             return 0
-        return 1 if self.pos["side"] == "buy" else -1
+        return self.qty if self.pos["side"] == "buy" else -self.qty
 
     def halt(self, reason: str) -> None:
         """실행을 멈춘다(첫 까닭만 남김). 이후 진입·청산·정리 주문을 내지 않는다."""
